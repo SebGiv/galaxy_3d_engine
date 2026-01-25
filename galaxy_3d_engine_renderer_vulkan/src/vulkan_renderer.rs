@@ -4,7 +4,7 @@
 /// It manages all Vulkan resources and provides factory methods for creating GPU resources.
 
 use galaxy_3d_engine::{
-    Renderer, RendererTexture, RendererBuffer, RendererShader, RendererPipeline, RendererFrame,
+    Renderer, RendererTexture, RendererBuffer, RendererShader, RendererPipeline,
     TextureDesc, BufferDesc, ShaderDesc, PipelineDesc,
     RenderResult, RenderError, RendererConfig, RendererStats,
     BufferUsage, ShaderStage, PrimitiveTopology, Format,
@@ -21,7 +21,6 @@ use crate::vulkan_renderer_texture::VulkanRendererTexture;
 use crate::vulkan_renderer_buffer::VulkanRendererBuffer;
 use crate::vulkan_renderer_shader::VulkanRendererShader;
 use crate::vulkan_renderer_pipeline::VulkanRendererPipeline;
-use crate::vulkan_renderer_frame::VulkanRendererFrame;
 
 /// Vulkan renderer implementation
 pub struct VulkanRenderer {

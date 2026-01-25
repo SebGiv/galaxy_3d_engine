@@ -1,7 +1,7 @@
 /// RendererPipeline trait and pipeline descriptor
 
 use std::sync::Arc;
-use crate::renderer::{RendererShader, Format};
+use crate::renderer::{RendererShader, Format, ShaderStage};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +67,17 @@ impl Default for VertexLayout {
     }
 }
 
+/// Push constant range descriptor
+#[derive(Debug, Clone)]
+pub struct PushConstantRange {
+    /// Shader stages that can access these push constants
+    pub stages: Vec<ShaderStage>,
+    /// Offset in bytes
+    pub offset: u32,
+    /// Size in bytes
+    pub size: u32,
+}
+
 /// Descriptor for creating a graphics pipeline
 #[derive(Clone)]
 pub struct PipelineDesc {
@@ -78,6 +89,8 @@ pub struct PipelineDesc {
     pub vertex_layout: VertexLayout,
     /// Primitive topology
     pub topology: PrimitiveTopology,
+    /// Push constant ranges (optional)
+    pub push_constant_ranges: Vec<PushConstantRange>,
 }
 
 /// Pipeline resource trait

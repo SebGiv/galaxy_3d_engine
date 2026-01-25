@@ -3,7 +3,7 @@
 > **Project**: Multi-API 3D Rendering Engine in Rust
 > **Author**: Claude & User collaboration
 > **Date**: 2026-01-25
-> **Status**: Phase 3 - Graphics Pipeline ✅
+> **Status**: Phase 7 - Architecture Moderne (Proposition 2) ✅
 
 ---
 
@@ -11,99 +11,129 @@
 
 Create a modern 3D rendering engine in Rust with:
 - **Multi-API abstraction**: Support for Vulkan (and future Direct3D 12)
-- **Plugin architecture**: Backends loaded as plugins
+- **Modern architecture**: Séparation render/présentation pour render-to-texture
 - **High performance**: Zero-cost abstractions with trait-based polymorphism
 - **Safety**: Leverage Rust's memory safety guarantees
-- **Modern features**: Full graphics pipeline, multi-screen support, proper resource management
+- **Advanced features**: Push constants, render targets, multi-pass rendering
 
 ---
 
 ## 📋 Core Design Decisions
 
-### 1. Trait-Based Polymorphism (C++-Style Dynamic Inheritance)
+### 1. Architecture Moderne (Proposition 2)
 
-**Architecture**: Traits with `Arc<dyn Trait>` for polymorphic GPU resources
+**Changement majeur**: Séparation complète du rendu et de la présentation
 
-**Key Design**:
-- **Core Engine** (`galaxy_3d_engine`): Platform-agnostic trait definitions
-- **Backend Plugins** (`galaxy_3d_engine_renderer_vulkan`): Concrete implementations
-- **Runtime Polymorphism**: All resources use `Arc<dyn Trait>` for backend flexibility
-- **Plugin Registration**: Factory function pattern for renderer creation
+**Ancienne architecture** (obsolète):
+- `Renderer` trait avec `begin_frame()` / `end_frame()`
+- `RendererFrame` pour l'enregistrement des commandes
+- Couplage fort entre swapchain et rendering
+
+**Nouvelle architecture** (actuelle):
+- `RendererDevice` - Factory pour créer ressources et commander
+- `RenderCommandList` - Enregistrement de commandes (remplace RendererFrame)
+- `RendererSwapchain` - Gestion swapchain séparée
+- `RendererRenderTarget` - Cible de rendu (texture ou swapchain)
+- `RendererRenderPass` - Configuration du render pass
 
 **Resource Traits**:
-- `Renderer` - Main renderer interface (factory for all resources)
+- `RendererDevice` - Main device interface (factory pour ressources + submit)
+- `RenderCommandList` - Command recording interface
+- `RendererSwapchain` - Swapchain management (acquire/present)
+- `RendererRenderTarget` - Render target (texture ou swapchain image)
+- `RendererRenderPass` - Render pass configuration
 - `RendererTexture` - GPU texture handle
 - `RendererBuffer` - GPU buffer handle (vertex, index, uniform)
 - `RendererShader` - Compiled shader module handle
-- `RendererPipeline` - Graphics pipeline state handle
-- `RendererFrame` - Per-frame command recording interface
+- `RendererPipeline` - Graphics pipeline state handle (avec push constants)
 
-**Key Benefits**:
-- Complete backend isolation at compile time
-- Runtime backend selection via plugins
-- Clean API similar to C++ virtual inheritance
-- Automatic resource cleanup via RAII (Drop trait)
+**Avantages**:
+- ✅ Render-to-texture possible
+- ✅ Multi-pass rendering
+- ✅ Post-processing effects
+- ✅ Deferred shading ready
+- ✅ Découplage rendu/présentation
 
 ---
 
-### 2. Plugin System
+### 2. Push Constants Support
 
-**Registration Pattern**:
+**Implémentation**: Support natif des push constants Vulkan
+
+**Définition**:
 ```rust
-// In galaxy_3d_engine_renderer_vulkan/src/lib.rs
-pub fn register() {
-    galaxy_3d_engine::register_renderer_plugin("vulkan", create_vulkan_renderer);
+pub struct PushConstantRange {
+    pub stages: Vec<ShaderStage>,
+    pub offset: u32,
+    pub size: u32,
 }
 
-fn create_vulkan_renderer(
-    window: &Window,
-    config: RendererConfig,
-) -> RenderResult<Arc<Mutex<dyn Renderer>>> {
-    let renderer = VulkanRenderer::new(window, config)?;
-    Ok(Arc::new(Mutex::new(renderer)))
+// Dans PipelineDesc
+pub struct PipelineDesc {
+    // ... autres champs ...
+    pub push_constant_ranges: Vec<PushConstantRange>,
 }
 ```
 
 **Usage**:
 ```rust
-// In your application
-galaxy_3d_engine_renderer_vulkan::register();
+// Créer pipeline avec push constants
+let pipeline = device.create_pipeline(PipelineDesc {
+    push_constant_ranges: vec![
+        PushConstantRange {
+            stages: vec![ShaderStage::Vertex],
+            offset: 0,
+            size: 4, // sizeof(float)
+        },
+    ],
+    // ...
+})?;
 
-let renderer = galaxy_3d_engine::renderer_plugin_registry()
-    .lock().unwrap()
-    .as_ref().unwrap()
-    .create_renderer("vulkan", &window, config)?;
+// Pousser les données
+let time = elapsed.to_le_bytes();
+command_list.push_constants(0, &time)?;
 ```
 
 ---
 
 ### 3. Memory Management
 
-**Decision**: Integrate `gpu-allocator` with proper lifecycle management
+**Decision**: Integrate `gpu-allocator` avec gestion du cycle de vie
 
-**Implementation**:
-- All GPU resources use `Arc<Mutex<Allocator>>` for shared memory management
-- Resources implement `Drop` trait for automatic cleanup
-- `ManuallyDrop` used in renderer to control destruction order
-- Allocator destroyed BEFORE Vulkan device to prevent validation errors
+**Framebuffer Lifecycle** (CRITIQUE):
+- Les framebuffers sont créés dans `begin_render_pass()`
+- Stockés dans `Vec<vk::Framebuffer>` du command list
+- Détruits soit dans `begin()` (prochain frame), soit dans `Drop`
+- **Raison**: Un framebuffer doit rester valide tant que le command buffer l'utilise
 
-**Critical Pattern** (Vulkan):
+**Pattern de destruction**:
 ```rust
-pub struct VulkanRenderer {
-    // ... other fields ...
-    allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
-    device: Arc<ash::Device>,
+pub struct VulkanRendererCommandList {
+    framebuffers: Vec<vk::Framebuffer>,
+    // ...
 }
 
-impl Drop for VulkanRenderer {
+impl RendererCommandList for VulkanRendererCommandList {
+    fn begin(&mut self) -> RenderResult<()> {
+        // Détruire les framebuffers du frame précédent
+        for framebuffer in self.framebuffers.drain(..) {
+            self.device.destroy_framebuffer(framebuffer, None);
+        }
+        // ...
+    }
+
+    fn begin_render_pass(...) -> RenderResult<()> {
+        let framebuffer = create_framebuffer(...)?;
+        self.framebuffers.push(framebuffer); // Stocké pour plus tard
+        // ...
+    }
+}
+
+impl Drop for VulkanRendererCommandList {
     fn drop(&mut self) {
-        unsafe {
-            // ... destroy other resources ...
-
-            // CRITICAL: Drop allocator before device
-            ManuallyDrop::drop(&mut self.allocator);
-
-            self.device.destroy_device(None);
+        // Cleanup final
+        for framebuffer in self.framebuffers.drain(..) {
+            self.device.destroy_framebuffer(framebuffer, None);
         }
     }
 }
@@ -111,23 +141,37 @@ impl Drop for VulkanRenderer {
 
 ---
 
-### 4. Multi-Screen Support & Swapchain Recreation
+### 4. Synchronisation Vulkan
 
-**Implementation**:
-- Window resize detection via `WindowEvent::Resized`
-- Automatic swapchain recreation when window moves between monitors
-- Proper handling of `VK_ERROR_OUT_OF_DATE_KHR` and `VK_SUBOPTIMAL_KHR`
-- Frame skipping during swapchain recreation
+**Architecture**: Séparation swapchain et device submission
 
-**Key Method**:
+**VulkanRendererSwapchain**:
+- `image_available_semaphores[image_count]`
+- `render_finished_semaphores[image_count]`
+- Gère acquire/present avec semaphores
+
+**VulkanRendererDevice**:
+- `submit_with_sync()` pour synchroniser avec swapchain
+- Fences pour CPU-GPU sync
+
+**Flow de rendu**:
 ```rust
-fn recreate_swapchain(&mut self) -> RenderResult<()> {
-    // Wait for GPU idle
-    // Destroy old framebuffers and image views
-    // Query new surface capabilities
-    // Recreate swapchain with new dimensions
-    // Recreate framebuffers and image views
-}
+// 1. Acquérir image swapchain
+let (image_idx, swapchain_target) = swapchain.acquire_next_image()?;
+
+// 2. Enregistrer commandes
+command_list.begin()?;
+command_list.begin_render_pass(&render_pass, &swapchain_target, &clear)?;
+// ... draw calls ...
+command_list.end_render_pass()?;
+command_list.end()?;
+
+// 3. Soumettre avec sync swapchain
+let sync_info = swapchain.sync_info();
+device.submit_with_sync(&command_list, &sync_info, image_idx)?;
+
+// 4. Présenter
+swapchain.present(image_idx)?;
 ```
 
 ---
@@ -137,155 +181,154 @@ fn recreate_swapchain(&mut self) -> RenderResult<()> {
 ### Cargo Workspace Structure
 
 ```
-Galaxy3DEngine/                          # Workspace root
-├── Cargo.toml                           # Workspace manifest
+Galaxy/                                  # Workspace root
+├── Tools/
+│   └── galaxy_3d_engine/               # Core engine
+│       ├── Cargo.toml
+│       └── src/
+│           ├── lib.rs
+│           ├── plugin.rs               # Plugin registry (deprecated)
+│           └── renderer/
+│               ├── mod.rs
+│               ├── renderer.rs         # Ancien trait (en cours de dépréciation)
+│               ├── renderer_device.rs  # RendererDevice trait ✨ NOUVEAU
+│               ├── renderer_command_list.rs  # RenderCommandList trait ✨
+│               ├── renderer_render_target.rs # RendererRenderTarget trait ✨
+│               ├── renderer_render_pass.rs   # RendererRenderPass trait ✨
+│               ├── renderer_swapchain.rs     # RendererSwapchain trait ✨
+│               ├── renderer_texture.rs
+│               ├── renderer_buffer.rs
+│               ├── renderer_shader.rs
+│               └── renderer_pipeline.rs (avec PushConstantRange ✨)
 │
-├── galaxy_3d_engine/                    # Core engine (trait definitions)
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs                       # Public API exports
-│       ├── plugin.rs                    # Plugin registry for backends
-│       └── renderer/
-│           ├── mod.rs
-│           ├── renderer.rs              # Renderer trait (main interface)
-│           ├── renderer_texture.rs      # Texture trait & descriptor
-│           ├── renderer_buffer.rs       # Buffer trait & descriptor
-│           ├── renderer_shader.rs       # Shader trait & descriptor
-│           ├── renderer_pipeline.rs     # Pipeline trait & descriptor
-│           └── renderer_frame.rs        # Frame trait (command recording)
+│   └── galaxy_3d_engine_renderer_vulkan/  # Vulkan backend
+│       ├── Cargo.toml
+│       └── src/
+│           ├── lib.rs
+│           ├── vulkan_renderer_device.rs    # VulkanRendererDevice ✨
+│           ├── vulkan_renderer_command_list.rs  # VulkanRendererCommandList ✨
+│           ├── vulkan_renderer_render_target.rs # VulkanRendererRenderTarget ✨
+│           ├── vulkan_renderer_render_pass.rs   # VulkanRendererRenderPass ✨
+│           ├── vulkan_renderer_swapchain.rs     # VulkanRendererSwapchain ✨
+│           ├── vulkan_renderer_texture.rs
+│           ├── vulkan_renderer_buffer.rs
+│           ├── vulkan_renderer_shader.rs
+│           └── vulkan_renderer_pipeline.rs
 │
-└── galaxy_3d_engine_renderer_vulkan/   # Vulkan backend plugin
-    ├── Cargo.toml
-    └── src/
-        ├── lib.rs                       # Plugin registration
-        ├── vulkan_renderer.rs           # VulkanRenderer (implements Renderer)
-        ├── vulkan_renderer_texture.rs   # VulkanRendererTexture
-        ├── vulkan_renderer_buffer.rs    # VulkanRendererBuffer
-        ├── vulkan_renderer_shader.rs    # VulkanRendererShader
-        ├── vulkan_renderer_pipeline.rs  # VulkanRendererPipeline
-        └── vulkan_renderer_frame.rs     # VulkanRendererFrame
+└── Games/
+    └── galaxy3d_demo/                  # Demo application
+        ├── Cargo.toml
+        ├── shaders/
+        │   ├── triangle_animated.vert  # Vertex shader avec push constants ✨
+        │   └── triangle.frag
+        └── src/
+            └── main.rs                 # Utilise nouvelle architecture
 ```
 
-### Key Architecture Principles
+### Architecture Principles
 
-1. **Trait-Based Polymorphism**: All resources are `Arc<dyn Trait>` for runtime flexibility
-2. **Plugin Registry**: Global registry for backend factory functions
+1. **Séparation des responsabilités**: Device / Swapchain / Command Lists / Render Targets
+2. **Trait-Based Polymorphism**: All resources are `Arc<dyn Trait>`
 3. **RAII Resource Management**: Drop trait ensures proper cleanup
-4. **Frame-in-Flight Synchronization**: 2 frames in flight with fences and semaphores
-5. **Proper Destruction Order**: ManuallyDrop ensures GPU resources freed before device
+4. **Framebuffer Lifecycle**: Destroyed after command buffer usage
+5. **Flexible Rendering**: Render-to-texture et swapchain avec même API
 
 ---
 
-## 🎨 Rendering Pipeline - Current Implementation
+## 🎨 Rendering Pipeline - Implementation Actuelle
 
-### ✅ Phase 1-3: Complete Graphics Pipeline (DONE)
+### ✅ Phase 7: Architecture Moderne (DONE)
 
 **Implemented Features**:
-- [x] Vulkan instance, device, and queue management
-- [x] Swapchain with automatic recreation
-- [x] Render pass and framebuffers
-- [x] Command buffers (2 frames in flight)
-- [x] Synchronization (fences, semaphores)
-- [x] GPU memory allocation (gpu-allocator)
-- [x] Vertex buffers with staging
-- [x] SPIR-V shader loading (vertex + fragment)
-- [x] Graphics pipeline with vertex input layout
-- [x] Multi-screen support (4K ↔ HD tested)
-- [x] Proper resource cleanup (no validation errors)
+- [x] RendererDevice trait (remplace Renderer)
+- [x] RenderCommandList trait (remplace RendererFrame)
+- [x] RendererSwapchain séparé
+- [x] RendererRenderTarget (texture et swapchain)
+- [x] RendererRenderPass configurables
+- [x] Push constants support (vertex shader)
+- [x] Animation avec push constants (rotation)
+- [x] Framebuffer lifecycle management (memory leak fixed)
+- [x] Synchronisation Vulkan correcte
+- [x] Command list double buffering
 
-**Demo Status**: `galaxy3d_demo` renders a colored triangle with multi-screen support ✅
+**Demo Status**: `galaxy3d_demo` affiche 3 triangles colorés animés (rotation) ✅
 
-**Vulkan Validation**: All layers pass with zero errors ✅
+**Vulkan Validation**: Zero errors (framebuffer leaks fixed) ✅
 
 ---
 
 ## 🔧 Vulkan Implementation Details
 
+### Command List Architecture
+
+**VulkanRendererCommandList**:
+- Possède son propre command pool et command buffer
+- Réutilisable (reset dans `begin()`)
+- Gère le cycle de vie des framebuffers
+
+**Double Buffering**:
+```rust
+// Demo utilise 2 command lists
+let command_lists = [
+    device.create_command_list()?,
+    device.create_command_list()?,
+];
+
+// Alterne entre les deux
+let cmd = &mut command_lists[current_frame];
+```
+
 ### Synchronization Model
 
-**Frames in Flight**: 2 concurrent frames
+**Swapchain Semaphores** (dans VulkanRendererSwapchain):
+- `image_available_semaphores[image_count]`
+- `render_finished_semaphores[image_count]`
 
-**Semaphores**:
-- `image_available_semaphores[2]` - Indexed by `current_frame`
-- `render_finished_semaphores[image_count]` - Indexed by `image_idx`
-
-**Fences**:
-- `in_flight_fences[2]` - Indexed by `current_frame`
+**Device Fences**:
+- Une fence par `submit_with_sync()`
 
 **Frame Flow**:
 ```rust
-fn begin_frame() {
-    // 1. Wait for fence from 2 frames ago
-    wait_for_fences(&in_flight_fences[current_frame]);
-    reset_fences(&in_flight_fences[current_frame]);
+// 1. Acquire image
+let (image_idx, target) = swapchain.acquire_next_image()?;
 
-    // 2. Acquire next swapchain image
-    let image_idx = acquire_next_image(
-        semaphore: image_available_semaphores[current_frame]
-    );
+// 2. Record commands
+cmd.begin()?;
+cmd.begin_render_pass(&render_pass, &target, &clear)?;
+cmd.set_viewport(viewport)?;
+cmd.bind_pipeline(&pipeline)?;
+cmd.push_constants(0, &data)?;  // ✨ Push constants
+cmd.draw(9, 0)?;
+cmd.end_render_pass()?;
+cmd.end()?;
 
-    // 3. Reset and begin command buffer
-    reset_command_buffer(command_buffers[current_frame]);
-    begin_command_buffer(command_buffers[current_frame]);
-}
+// 3. Submit with sync
+let sync = swapchain.sync_info();
+device.submit_with_sync(&cmd, &sync, image_idx)?;
 
-fn end_frame() {
-    // 1. End command buffer
-    end_command_buffer(command_buffers[current_frame]);
-
-    // 2. Submit to queue
-    queue_submit(
-        wait_semaphore: image_available_semaphores[current_frame],
-        signal_semaphore: render_finished_semaphores[image_idx],
-        fence: in_flight_fences[current_frame]
-    );
-
-    // 3. Present
-    queue_present(
-        wait_semaphore: render_finished_semaphores[image_idx],
-        image_index: image_idx
-    );
-
-    // 4. Advance frame
-    current_frame = (current_frame + 1) % 2;
-}
+// 4. Present
+swapchain.present(image_idx)?;
 ```
 
 ### Resource Destruction Order
 
-**Critical**: GPU resources must be destroyed before the Vulkan device.
+**VulkanRendererDevice Drop**:
+1. Wait device idle
+2. Drop user-created resources (textures, buffers, etc.)
+3. Drop allocator (ManuallyDrop)
+4. Destroy device
+5. Destroy instance
 
-**VulkanRenderer Drop Order**:
-1. Wait for device idle
-2. Destroy synchronization primitives (semaphores, fences)
-3. Destroy command pool (frees command buffers)
-4. Destroy framebuffers
-5. Destroy render pass
-6. Destroy image views
-7. Destroy swapchain
-8. Destroy surface
-9. **Drop allocator** (ManuallyDrop::drop)
-10. Destroy device
-11. Destroy instance
+**VulkanRendererSwapchain Drop**:
+1. Wait device idle
+2. Destroy framebuffers (si encore présents)
+3. Destroy image views
+4. Destroy swapchain
+5. Destroy semaphores
 
-**VulkanRendererBuffer Drop**:
-```rust
-impl Drop for VulkanRendererBuffer {
-    fn drop(&mut self) {
-        unsafe {
-            // 1. Free GPU memory (while device still valid)
-            if let Some(allocation) = self.allocation.take() {
-                if let Ok(mut allocator) = self.allocator.lock() {
-                    allocator.free(allocation).ok();
-                }
-            }
-
-            // 2. Destroy Vulkan buffer
-            self.device.destroy_buffer(self.buffer, None);
-        }
-    }
-}
-```
+**VulkanRendererCommandList Drop**:
+1. Destroy remaining framebuffers
+2. Destroy command pool (libère command buffer)
 
 ---
 
@@ -318,35 +361,65 @@ cd F:/dev/rust/Galaxy/Games/galaxy3d_demo
 cargo run
 ```
 
-### Using the Engine
-
-See [USAGE.md](./USAGE.md) (English) or [USAGE.fr.md](./USAGE.fr.md) (French) for complete API documentation.
+### Using the Engine (New Architecture)
 
 **Quick Example**:
 ```rust
-use galaxy_3d_engine::{Renderer, RendererConfig};
-use galaxy_3d_engine_renderer_vulkan;
+use galaxy_3d_engine::{
+    RendererDevice, RenderCommandList, RendererSwapchain,
+    PipelineDesc, PushConstantRange, ShaderStage,
+};
+use galaxy_3d_engine_renderer_vulkan::{
+    VulkanRendererDevice, VulkanRendererSwapchain,
+};
 
-// Register Vulkan backend
-galaxy_3d_engine_renderer_vulkan::register();
+// Créer device
+let mut device = VulkanRendererDevice::new(&window, config)?;
 
-// Create renderer
-let renderer = galaxy_3d_engine::renderer_plugin_registry()
-    .lock().unwrap()
-    .as_ref().unwrap()
-    .create_renderer("vulkan", &window, config)?;
+// Créer swapchain
+let mut swapchain = device.create_swapchain(&window)?;
 
-// Create resources
-let vertex_buffer = renderer.lock().unwrap().create_buffer(desc)?;
-let pipeline = renderer.lock().unwrap().create_pipeline(desc)?;
+// Créer render pass
+let render_pass = device.create_render_pass(&render_pass_desc)?;
+
+// Créer command list
+let mut cmd = device.create_command_list()?;
+
+// Créer pipeline avec push constants
+let pipeline = device.create_pipeline(PipelineDesc {
+    vertex_shader,
+    fragment_shader,
+    vertex_layout,
+    topology: PrimitiveTopology::TriangleList,
+    push_constant_ranges: vec![
+        PushConstantRange {
+            stages: vec![ShaderStage::Vertex],
+            offset: 0,
+            size: 4,
+        },
+    ],
+})?;
 
 // Render loop
 loop {
-    let frame = renderer.lock().unwrap().begin_frame()?;
-    frame.bind_pipeline(&pipeline)?;
-    frame.bind_vertex_buffer(&vertex_buffer, 0)?;
-    frame.draw(3, 0)?;
-    renderer.lock().unwrap().end_frame(frame)?;
+    // Acquire swapchain image
+    let (image_idx, swapchain_target) = swapchain.acquire_next_image()?;
+
+    // Record commands
+    cmd.begin()?;
+    cmd.begin_render_pass(&render_pass, &swapchain_target, &clear)?;
+    cmd.set_viewport(viewport)?;
+    cmd.bind_pipeline(&pipeline)?;
+    cmd.push_constants(0, &time_bytes)?;  // Animation
+    cmd.bind_vertex_buffer(&vertex_buffer, 0)?;
+    cmd.draw(3, 0)?;
+    cmd.end_render_pass()?;
+    cmd.end()?;
+
+    // Submit and present
+    let sync_info = swapchain.sync_info();
+    device.submit_with_sync(&cmd, &sync_info, image_idx)?;
+    swapchain.present(image_idx)?;
 }
 ```
 
@@ -355,9 +428,9 @@ loop {
 ## 📝 Code Style Guidelines
 
 ### Naming Conventions
-- **Traits**: `Renderer`, `RendererBuffer` (PascalCase with "Renderer" prefix)
-- **Structs**: `VulkanRenderer`, `VulkanRendererBuffer` (backend prefix + trait name)
-- **Functions**: `create_buffer`, `begin_frame` (snake_case)
+- **Traits**: `RendererDevice`, `RenderCommandList` (PascalCase avec "Renderer" prefix)
+- **Structs**: `VulkanRendererDevice`, `VulkanRendererCommandList` (backend prefix)
+- **Functions**: `create_buffer`, `begin_render_pass` (snake_case)
 - **Constants**: `MAX_FRAMES_IN_FLIGHT` (SCREAMING_SNAKE_CASE)
 
 ### Documentation
@@ -374,27 +447,64 @@ loop {
 
 ## ✅ Changelog
 
+### 2026-01-25 - Phase 7: Architecture Moderne (Proposition 2)
+- **Breaking Changes**:
+  - ❌ Supprimé `RendererFrame` trait et `vulkan_renderer_frame.rs`
+  - ❌ Supprimé `begin_frame()` / `end_frame()` du trait `Renderer`
+  - ✅ Nouveau `RendererDevice` trait (remplace `Renderer` progressivement)
+  - ✅ Nouveau `RenderCommandList` trait (remplace `RendererFrame`)
+  - ✅ Nouveau `RendererSwapchain` trait (séparation présentation)
+  - ✅ Nouveau `RendererRenderTarget` trait (texture ou swapchain)
+  - ✅ Nouveau `RendererRenderPass` trait (configuration)
+- **Features**:
+  - ✅ Push constants support (PushConstantRange dans PipelineDesc)
+  - ✅ Animation avec push constants (rotation triangle)
+  - ✅ Framebuffer lifecycle management (memory leak fixed)
+  - ✅ Synchronisation Vulkan séparée (device vs swapchain)
+  - ✅ Command list double buffering (2 lists)
+- **Bugfixes**:
+  - ✅ Framebuffer memory leaks corrigés
+  - ✅ Validation Vulkan errors: zero errors
+  - ✅ Proper cleanup à la fermeture
+- **Architecture**:
+  - ✅ Séparation complète rendu/présentation
+  - ✅ Ready for render-to-texture
+  - ✅ Ready for multi-pass rendering
+  - ✅ Ready for post-processing
+
 ### 2026-01-25 - Complete Graphics Pipeline Implementation
 - **Architecture Refactor**: Renamed crates to `galaxy_3d_engine` and `galaxy_3d_engine_renderer_vulkan`
-- **Trait-Based Polymorphism**: Implemented C++-style dynamic inheritance with `Arc<dyn Trait>`
-- **Vulkan Backend**: Full implementation with:
-  - ✅ Triangle rendering with vertex buffers
-  - ✅ SPIR-V shader loading (vertex + fragment)
-  - ✅ Graphics pipeline with vertex input layouts
-  - ✅ 2 frames in flight synchronization
-  - ✅ Multi-screen support with swapchain recreation
-  - ✅ Proper resource cleanup (zero validation errors)
-- **Memory Management**:
-  - ✅ `gpu-allocator` integration
-  - ✅ `ManuallyDrop` for correct destruction order
-  - ✅ RAII pattern for automatic cleanup
-- **Demo**: `galaxy3d_demo` renders colored triangle, tested across 4K and HD monitors
+- **Trait-Based Polymorphism**: Implemented C++-style dynamic inheritance
+- **Vulkan Backend**: Full implementation with triangle rendering
+- **Memory Management**: `gpu-allocator` integration
+- **Demo**: `galaxy3d_demo` renders colored triangle
 
 ### 2026-01-24 - Initial Design & Workspace Setup
 - Created project structure
 - Defined core trait abstractions
 - Set up plugin system architecture
 - Basic Vulkan initialization
+
+---
+
+## 🎯 Next Steps (Roadmap)
+
+### Phase 8: Render-to-Texture (TODO)
+- [ ] Descriptor sets support
+- [ ] Texture sampling in shaders
+- [ ] Offscreen render target creation
+- [ ] Post-processing demo (blur, bloom, etc.)
+
+### Phase 9: Index Buffers (TODO)
+- [ ] Index buffer creation
+- [ ] `draw_indexed()` support
+- [ ] Complex geometry (quads, pentagones, etc.)
+
+### Phase 10: Advanced Features (TODO)
+- [ ] Uniform buffers
+- [ ] Texture arrays
+- [ ] Compute shaders
+- [ ] Multi-pass deferred rendering
 
 ---
 

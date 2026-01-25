@@ -7,7 +7,7 @@ use std::fmt;
 use winit::window::Window;
 
 use crate::renderer::{
-    RendererBuffer, RendererTexture, RendererShader, RendererPipeline, RendererFrame,
+    RendererBuffer, RendererTexture, RendererShader, RendererPipeline,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
 };
 
@@ -129,19 +129,7 @@ pub trait Renderer: Send + Sync {
     /// A shared pointer to the created pipeline
     fn create_pipeline(&mut self, desc: PipelineDesc) -> RenderResult<Arc<dyn RendererPipeline>>;
 
-    /// Begin a new frame
-    ///
-    /// # Returns
-    ///
-    /// A frame object for recording rendering commands
-    fn begin_frame(&mut self) -> RenderResult<Arc<dyn RendererFrame>>;
-
-    /// End the current frame and present to screen
-    ///
-    /// # Arguments
-    ///
-    /// * `frame` - The frame to end
-    fn end_frame(&mut self, frame: Arc<dyn RendererFrame>) -> RenderResult<()>;
+    // NOTE: begin_frame() and end_frame() removed - use RendererDevice + RenderCommandList instead
 
     /// Wait for all GPU operations to complete
     fn wait_idle(&self) -> RenderResult<()>;

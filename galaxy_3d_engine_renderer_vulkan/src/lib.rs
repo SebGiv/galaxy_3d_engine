@@ -10,47 +10,41 @@ The backend is registered as a plugin and can be selected at runtime.
 */
 
 // Vulkan implementation modules
-mod vulkan_renderer;
+// mod vulkan_renderer; // OLD - commented out, using VulkanRendererDevice now
 mod vulkan_renderer_texture;
 mod vulkan_renderer_buffer;
 mod vulkan_renderer_shader;
 mod vulkan_renderer_pipeline;
-mod vulkan_renderer_frame;
 
-use galaxy_3d_engine::{Renderer, RendererConfig, RenderResult};
+// New architecture modules
+mod vulkan_renderer_device;
+mod vulkan_renderer_command_list;
+mod vulkan_renderer_render_target;
+mod vulkan_renderer_render_pass;
+mod vulkan_renderer_swapchain;
+
+use galaxy_3d_engine::{RendererConfig, RenderResult};
 use std::sync::{Arc, Mutex};
 use winit::window::Window;
 
-pub use vulkan_renderer::VulkanRenderer;
+pub use vulkan_renderer_device::VulkanRendererDevice;
+pub use vulkan_renderer_swapchain::VulkanRendererSwapchain;
 
 /// Register the Vulkan backend with the plugin system
 ///
-/// This function should be called during application initialization to make
-/// the Vulkan backend available for use.
+/// # Note
+///
+/// This function is temporarily disabled during refactoring.
+/// The new architecture uses VulkanRendererDevice instead of the old Renderer trait.
 ///
 /// # Example
 ///
 /// ```no_run
-/// galaxy_3d_engine_renderer_vulkan::register();
+/// // OLD: galaxy_3d_engine_renderer_vulkan::register();
+/// // NEW: Use VulkanRendererDevice directly
+/// use galaxy_3d_engine_renderer_vulkan::VulkanRendererDevice;
 /// ```
 pub fn register() {
-    galaxy_3d_engine::register_renderer_plugin("vulkan", create_vulkan_renderer);
-}
-
-/// Factory function to create a Vulkan renderer instance
-///
-/// # Arguments
-///
-/// * `window` - Window to render to
-/// * `config` - Renderer configuration
-///
-/// # Returns
-///
-/// A shared, thread-safe Vulkan renderer instance
-fn create_vulkan_renderer(
-    window: &Window,
-    config: RendererConfig,
-) -> RenderResult<Arc<Mutex<dyn Renderer>>> {
-    let renderer = VulkanRenderer::new(window, config)?;
-    Ok(Arc::new(Mutex::new(renderer)))
+    // TODO: Update plugin system to support RendererDevice
+    // galaxy_3d_engine::register_renderer_plugin("vulkan", create_vulkan_renderer);
 }

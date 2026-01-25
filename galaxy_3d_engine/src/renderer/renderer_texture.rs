@@ -29,6 +29,8 @@ pub enum TextureUsage {
     RenderTarget,
     /// Texture can be used for both
     SampledAndRenderTarget,
+    /// Texture can be used as depth/stencil attachment
+    DepthStencil,
 }
 
 /// Descriptor for creating a texture
