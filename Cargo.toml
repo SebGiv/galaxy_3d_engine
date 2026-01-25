@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "galaxy_3d_engine",
+    "galaxy_3d_engine_renderer_vulkan",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Galaxy3D Contributors"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Math library
+glam = "0.29"
+
+# Window handling
+winit = "0.30"
+raw-window-handle = "0.6"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Vulkan (used by vulkan plugin)
+ash = "0.38"
+ash-window = "0.13"
+gpu-allocator = "0.27"

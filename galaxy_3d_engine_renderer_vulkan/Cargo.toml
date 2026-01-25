@@ -1,0 +1,12 @@
+[package]
+name = "galaxy_3d_engine_renderer_vulkan"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+galaxy_3d_engine = { path = "../galaxy_3d_engine" }
+ash = "0.38"
+ash-window = "0.13"
+gpu-allocator = "0.27"
+winit = "0.30"
+raw-window-handle = "0.6"
