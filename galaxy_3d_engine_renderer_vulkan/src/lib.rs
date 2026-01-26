@@ -15,6 +15,7 @@ mod vulkan_renderer_texture;
 mod vulkan_renderer_buffer;
 mod vulkan_renderer_shader;
 mod vulkan_renderer_pipeline;
+mod vulkan_debug;
 
 // New architecture modules
 mod vulkan_renderer_command_list;

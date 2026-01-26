@@ -52,6 +52,11 @@ pub struct VulkanRenderer {
     /// Fences for submit synchronization
     submit_fences: Vec<vk::Fence>,
     current_submit_fence: usize,
+
+    /// Debug utils loader (for validation layers)
+    debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
+    /// Debug messenger handle
+    debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
 
 impl VulkanRenderer {
@@ -141,9 +146,14 @@ impl VulkanRenderer {
             // Get required extensions
             let display_handle = window.display_handle()
                 .map_err(|e| RenderError::InitializationFailed(format!("Failed to get display handle: {}", e)))?;
-            let extension_names = ash_window::enumerate_required_extensions(display_handle.as_raw())
+            let mut extension_names = ash_window::enumerate_required_extensions(display_handle.as_raw())
                 .map_err(|e| RenderError::InitializationFailed(format!("Failed to get required extensions: {}", e)))?
                 .to_vec();
+
+            // Add debug utils extension if validation is enabled
+            if config.enable_validation {
+                extension_names.push(ash::ext::debug_utils::NAME.as_ptr());
+            }
 
             // Validation layers
             let layer_names = if config.enable_validation {
@@ -160,6 +170,53 @@ impl VulkanRenderer {
             let instance = entry
                 .create_instance(&create_info, None)
                 .map_err(|e| RenderError::InitializationFailed(format!("Failed to create instance: {:?}", e)))?;
+
+            // Setup debug messenger if validation is enabled
+            let (debug_utils_loader, debug_messenger) = if config.enable_validation {
+                let debug_utils = ash::ext::debug_utils::Instance::new(&entry, &instance);
+
+                // Initialize debug config
+                crate::vulkan_debug::init_debug_config(crate::vulkan_debug::DebugConfig {
+                    severity: config.debug_severity,
+                    output: config.debug_output.clone(),
+                    break_on_error: config.break_on_validation_error,
+                });
+
+                // Determine severity flags based on config
+                let severity_flags = match config.debug_severity {
+                    galaxy_3d_engine::DebugSeverity::ErrorsOnly => {
+                        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                    }
+                    galaxy_3d_engine::DebugSeverity::ErrorsAndWarnings => {
+                        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                            | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                    }
+                    galaxy_3d_engine::DebugSeverity::All => {
+                        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                            | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                            | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+                            | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+                    }
+                };
+
+                // Create debug messenger
+                let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
+                    .message_severity(severity_flags)
+                    .message_type(
+                        vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                            | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                            | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
+                    )
+                    .pfn_user_callback(Some(crate::vulkan_debug::vulkan_debug_callback));
+
+                let messenger = debug_utils
+                    .create_debug_utils_messenger(&debug_info, None)
+                    .map_err(|e| RenderError::InitializationFailed(format!("Failed to create debug messenger: {:?}", e)))?;
+
+                (Some(debug_utils), Some(messenger))
+            } else {
+                (None, None)
+            };
 
             // Create Surface (temporary for queue selection)
             let window_handle = window.window_handle()
@@ -276,6 +333,8 @@ impl VulkanRenderer {
                 allocator: ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
                 submit_fences,
                 current_submit_fence: 0,
+                debug_utils_loader,
+                debug_messenger,
             })
         }
     }
@@ -1006,6 +1065,11 @@ impl Drop for VulkanRenderer {
 
             // Destroy device
             self.device.destroy_device(None);
+
+            // Destroy debug messenger if present
+            if let (Some(debug_utils), Some(debug_messenger)) = (&self.debug_utils_loader, self.debug_messenger) {
+                debug_utils.destroy_debug_utils_messenger(debug_messenger, None);
+            }
 
             // Destroy instance
             self.instance.destroy_instance(None);

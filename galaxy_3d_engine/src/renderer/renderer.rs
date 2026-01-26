@@ -46,6 +46,44 @@ impl fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
+/// Debug severity level for validation messages
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugSeverity {
+    /// Only critical errors
+    ErrorsOnly,
+    /// Errors and warnings (recommended for development)
+    ErrorsAndWarnings,
+    /// All messages including info and verbose (very detailed)
+    All,
+}
+
+impl Default for DebugSeverity {
+    fn default() -> Self {
+        if cfg!(debug_assertions) {
+            DebugSeverity::ErrorsAndWarnings
+        } else {
+            DebugSeverity::ErrorsOnly
+        }
+    }
+}
+
+/// Debug output destination
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DebugOutput {
+    /// Console output only
+    Console,
+    /// File output only
+    File(String),
+    /// Both console and file
+    Both(String),
+}
+
+impl Default for DebugOutput {
+    fn default() -> Self {
+        DebugOutput::Console
+    }
+}
+
 /// Renderer configuration
 #[derive(Debug, Clone)]
 pub struct RendererConfig {
@@ -55,6 +93,12 @@ pub struct RendererConfig {
     pub app_name: String,
     /// Application version (major, minor, patch)
     pub app_version: (u32, u32, u32),
+    /// Debug message severity filter
+    pub debug_severity: DebugSeverity,
+    /// Debug output destination
+    pub debug_output: DebugOutput,
+    /// Break on validation error (useful for debugging)
+    pub break_on_validation_error: bool,
 }
 
 impl Default for RendererConfig {
@@ -63,6 +107,9 @@ impl Default for RendererConfig {
             enable_validation: cfg!(debug_assertions),
             app_name: "Galaxy3D Application".to_string(),
             app_version: (1, 0, 0),
+            debug_severity: DebugSeverity::default(),
+            debug_output: DebugOutput::default(),
+            break_on_validation_error: false,
         }
     }
 }
