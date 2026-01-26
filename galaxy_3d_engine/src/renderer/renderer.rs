@@ -9,6 +9,8 @@ use winit::window::Window;
 use crate::renderer::{
     RendererBuffer, RendererTexture, RendererShader, RendererPipeline,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
+    RendererCommandList, RendererRenderPass, RendererRenderTarget, RendererSwapchain,
+    RendererRenderPassDesc, RendererRenderTargetDesc,
 };
 
 // ============================================================================
@@ -129,7 +131,52 @@ pub trait Renderer: Send + Sync {
     /// A shared pointer to the created pipeline
     fn create_pipeline(&mut self, desc: PipelineDesc) -> RenderResult<Arc<dyn RendererPipeline>>;
 
-    // NOTE: begin_frame() and end_frame() removed - use RendererDevice + RenderCommandList instead
+    /// Create a command list for recording rendering commands
+    ///
+    /// # Returns
+    ///
+    /// A boxed command list
+    fn create_command_list(&self) -> RenderResult<Box<dyn RendererCommandList>>;
+
+    /// Create a render target (texture that can be rendered to)
+    ///
+    /// # Arguments
+    ///
+    /// * `desc` - Render target descriptor
+    ///
+    /// # Returns
+    ///
+    /// A shared pointer to the created render target
+    fn create_render_target(&self, desc: &RendererRenderTargetDesc) -> RenderResult<Arc<dyn RendererRenderTarget>>;
+
+    /// Create a render pass
+    ///
+    /// # Arguments
+    ///
+    /// * `desc` - Render pass descriptor
+    ///
+    /// # Returns
+    ///
+    /// A shared pointer to the created render pass
+    fn create_render_pass(&self, desc: &RendererRenderPassDesc) -> RenderResult<Arc<dyn RendererRenderPass>>;
+
+    /// Create a swapchain for window presentation
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - Window to create swapchain for
+    ///
+    /// # Returns
+    ///
+    /// A boxed swapchain
+    fn create_swapchain(&self, window: &Window) -> RenderResult<Box<dyn RendererSwapchain>>;
+
+    /// Submit command lists for execution on the GPU
+    ///
+    /// # Arguments
+    ///
+    /// * `commands` - Slice of command lists to submit
+    fn submit(&self, commands: &[&dyn RendererCommandList]) -> RenderResult<()>;
 
     /// Wait for all GPU operations to complete
     fn wait_idle(&self) -> RenderResult<()>;

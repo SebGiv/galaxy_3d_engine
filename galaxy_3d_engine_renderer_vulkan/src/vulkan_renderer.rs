@@ -1,102 +1,139 @@
-/// VulkanRenderer - Vulkan implementation of the Renderer trait
-///
-/// This is the main Vulkan backend that implements the galaxy_3d_engine Renderer trait.
-/// It manages all Vulkan resources and provides factory methods for creating GPU resources.
+/// VulkanRenderer - Vulkan implementation of Renderer trait
 
 use galaxy_3d_engine::{
-    Renderer, RendererTexture, RendererBuffer, RendererShader, RendererPipeline,
+    Renderer, RendererCommandList, RendererRenderTarget, RendererRenderPass, RendererSwapchain,
+    RendererTexture, RendererBuffer, RendererShader, RendererPipeline,
+    RendererRenderTargetDesc, RendererRenderPassDesc,
     TextureDesc, BufferDesc, ShaderDesc, PipelineDesc,
-    RenderResult, RenderError, RendererConfig, RendererStats,
-    BufferUsage, ShaderStage, PrimitiveTopology, Format,
+    RenderResult, RenderError, Format, ShaderStage, BufferUsage, PrimitiveTopology,
+    LoadOp, StoreOp, ImageLayout,
 };
 use ash::vk;
-use std::ffi::CString;
 use std::sync::{Arc, Mutex};
+use std::ffi::CString;
 use std::mem::ManuallyDrop;
-use winit::window::Window;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use winit::window::Window;
 
 use crate::vulkan_renderer_texture::VulkanRendererTexture;
 use crate::vulkan_renderer_buffer::VulkanRendererBuffer;
 use crate::vulkan_renderer_shader::VulkanRendererShader;
 use crate::vulkan_renderer_pipeline::VulkanRendererPipeline;
+use crate::vulkan_renderer_command_list::VulkanRendererCommandList;
+use crate::vulkan_renderer_render_target::VulkanRendererRenderTarget;
+use crate::vulkan_renderer_render_pass::VulkanRendererRenderPass;
+use crate::vulkan_renderer_swapchain::VulkanRendererSwapchain;
 
-/// Vulkan renderer implementation
+/// Vulkan device implementation
+///
+/// Central object for creating resources and submitting commands.
+/// Completely separated from swapchain and presentation logic.
 pub struct VulkanRenderer {
-    // Core Vulkan objects
+    /// Vulkan entry
     _entry: ash::Entry,
+    /// Vulkan instance
     instance: ash::Instance,
+    /// Physical device
     physical_device: vk::PhysicalDevice,
+    /// Logical device
     device: Arc<ash::Device>,
 
-    // Queues
+    /// Graphics queue
     graphics_queue: vk::Queue,
     graphics_queue_family: u32,
+    /// Present queue (may be same as graphics)
     present_queue: vk::Queue,
+    present_queue_family: u32,
 
-    // Surface and swapchain
-    surface: vk::SurfaceKHR,
-    surface_loader: ash::khr::surface::Instance,
-    swapchain: vk::SwapchainKHR,
-    swapchain_loader: ash::khr::swapchain::Device,
-    swapchain_images: Vec<vk::Image>,
-    swapchain_image_views: Vec<vk::ImageView>,
-    swapchain_format: vk::Format,
-    swapchain_extent: vk::Extent2D,
-
-    // Memory allocator (ManuallyDrop to control destruction order)
+    /// GPU memory allocator
     allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
 
-    // Synchronization
-    image_available_semaphores: Vec<vk::Semaphore>,
-    render_finished_semaphores: Vec<vk::Semaphore>,
-    in_flight_fences: Vec<vk::Fence>,
-    current_frame: usize,
-
-    // Command buffers
-    command_pool: vk::CommandPool,
-    command_buffers: Vec<vk::CommandBuffer>,
-
-    // Rendering
-    render_pass: vk::RenderPass,
-    framebuffers: Vec<vk::Framebuffer>,
-
-    // Window state
-    window_width: u32,
-    window_height: u32,
-    framebuffer_resized: bool,
+    /// Fences for submit synchronization
+    submit_fences: Vec<vk::Fence>,
+    current_submit_fence: usize,
 }
 
 impl VulkanRenderer {
-    /// Create a new Vulkan renderer
+    /// Submit command lists with synchronization for swapchain presentation
     ///
     /// # Arguments
     ///
-    /// * `window` - Window to render to
-    /// * `config` - Renderer configuration
-    ///
-    /// # Returns
-    ///
-    /// A new VulkanRenderer instance
-    pub fn new(window: &Window, config: RendererConfig) -> RenderResult<Self> {
+    /// * `commands` - Slice of command lists to submit
+    /// * `wait_semaphore` - Semaphore to wait on before execution (from swapchain)
+    /// * `signal_semaphore` - Semaphore to signal after execution (for present)
+    pub fn submit_with_sync(
+        &self,
+        commands: &[&dyn RendererCommandList],
+        wait_semaphore: vk::Semaphore,
+        signal_semaphore: vk::Semaphore,
+    ) -> RenderResult<()> {
         unsafe {
-            // Create Entry
+            // Wait for previous submit with this fence
+            self.device
+                .wait_for_fences(
+                    &[self.submit_fences[self.current_submit_fence]],
+                    true,
+                    u64::MAX,
+                )
+                .map_err(|e| RenderError::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
+
+            // Reset fence
+            self.device
+                .reset_fences(&[self.submit_fences[self.current_submit_fence]])
+                .map_err(|e| RenderError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
+
+            // Collect command buffers
+            let command_buffers: Vec<vk::CommandBuffer> = commands
+                .iter()
+                .map(|cmd| {
+                    let vk_cmd = *cmd as *const dyn RendererCommandList as *const VulkanRendererCommandList;
+                    (&*vk_cmd).command_buffer()
+                })
+                .collect();
+
+            // Submit with synchronization
+            let wait_semaphores = [wait_semaphore];
+            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+            let signal_semaphores = [signal_semaphore];
+
+            let submit_info = vk::SubmitInfo::default()
+                .wait_semaphores(&wait_semaphores)
+                .wait_dst_stage_mask(&wait_stages)
+                .command_buffers(&command_buffers)
+                .signal_semaphores(&signal_semaphores);
+
+            self.device
+                .queue_submit(
+                    self.graphics_queue,
+                    &[submit_info],
+                    self.submit_fences[self.current_submit_fence],
+                )
+                .map_err(|e| RenderError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
+
+            Ok(())
+        }
+    }
+
+    /// Create a new Vulkan device
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - Window for surface creation
+    /// * `config` - Renderer configuration
+    pub fn new<W: HasDisplayHandle + HasWindowHandle>(
+        window: &W,
+        config: galaxy_3d_engine::RendererConfig,
+    ) -> RenderResult<Self> {
+        unsafe {
+            // Create Vulkan Entry
             let entry = ash::Entry::load()
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to load Vulkan: {}", e)))?;
+                .map_err(|e| RenderError::InitializationFailed(format!("Failed to load Vulkan library: {:?}", e)))?;
 
-            // Create Instance
-            let app_name = CString::new(config.app_name.as_str())
-                .map_err(|e| RenderError::InitializationFailed(format!("Invalid app name: {}", e)))?;
-
+            // Application Info
             let app_info = vk::ApplicationInfo::default()
-                .application_name(&app_name)
-                .application_version(vk::make_api_version(
-                    0,
-                    config.app_version.0,
-                    config.app_version.1,
-                    config.app_version.2,
-                ))
+                .application_name(c"Galaxy3D Application")
+                .application_version(vk::make_api_version(0, 1, 0, 0))
                 .engine_name(c"Galaxy3D")
                 .engine_version(vk::make_api_version(0, 0, 1, 0))
                 .api_version(vk::API_VERSION_1_3);
@@ -124,7 +161,7 @@ impl VulkanRenderer {
                 .create_instance(&create_info, None)
                 .map_err(|e| RenderError::InitializationFailed(format!("Failed to create instance: {:?}", e)))?;
 
-            // Create Surface
+            // Create Surface (temporary for queue selection)
             let window_handle = window.window_handle()
                 .map_err(|e| RenderError::InitializationFailed(format!("Failed to get window handle: {}", e)))?;
             let surface = ash_window::create_surface(
@@ -166,13 +203,27 @@ impl VulkanRenderer {
                 })
                 .ok_or_else(|| RenderError::InitializationFailed("No present queue family found".to_string()))?;
 
+            // Destroy temporary surface
+            surface_loader.destroy_surface(surface, None);
+
             // Create Logical Device
             let queue_priorities = [1.0];
-            let queue_create_infos = [
-                vk::DeviceQueueCreateInfo::default()
-                    .queue_family_index(graphics_family_index)
-                    .queue_priorities(&queue_priorities),
-            ];
+            let queue_create_infos = if graphics_family_index == present_family_index {
+                vec![
+                    vk::DeviceQueueCreateInfo::default()
+                        .queue_family_index(graphics_family_index)
+                        .queue_priorities(&queue_priorities),
+                ]
+            } else {
+                vec![
+                    vk::DeviceQueueCreateInfo::default()
+                        .queue_family_index(graphics_family_index)
+                        .queue_priorities(&queue_priorities),
+                    vk::DeviceQueueCreateInfo::default()
+                        .queue_family_index(present_family_index)
+                        .queue_priorities(&queue_priorities),
+                ]
+            };
 
             let device_extension_names = vec![ash::khr::swapchain::NAME.as_ptr()];
 
@@ -189,44 +240,6 @@ impl VulkanRenderer {
             let graphics_queue = device.get_device_queue(graphics_family_index, 0);
             let present_queue = device.get_device_queue(present_family_index, 0);
 
-            // Create Swapchain
-            let surface_capabilities = surface_loader
-                .get_physical_device_surface_capabilities(physical_device, surface)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e)))?;
-
-            let surface_formats = surface_loader
-                .get_physical_device_surface_formats(physical_device, surface)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get surface formats: {:?}", e)))?;
-
-            let surface_format = surface_formats
-                .iter()
-                .find(|f| f.format == vk::Format::B8G8R8A8_SRGB || f.format == vk::Format::R8G8B8A8_SRGB)
-                .unwrap_or(&surface_formats[0]);
-
-            let swapchain_extent = surface_capabilities.current_extent;
-
-            let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
-                .surface(surface)
-                .min_image_count(3.min(surface_capabilities.max_image_count))
-                .image_format(surface_format.format)
-                .image_color_space(surface_format.color_space)
-                .image_extent(swapchain_extent)
-                .image_array_layers(1)
-                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-                .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .pre_transform(surface_capabilities.current_transform)
-                .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-                .present_mode(vk::PresentModeKHR::FIFO);
-
-            let swapchain_loader = ash::khr::swapchain::Device::new(&instance, &device);
-            let swapchain = swapchain_loader
-                .create_swapchain(&swapchain_create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create swapchain: {:?}", e)))?;
-
-            let swapchain_images = swapchain_loader
-                .get_swapchain_images(swapchain)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get swapchain images: {:?}", e)))?;
-
             // Create GPU allocator
             let allocator = Allocator::new(&AllocatorCreateDesc {
                 instance: instance.clone(),
@@ -238,131 +251,18 @@ impl VulkanRenderer {
             })
             .map_err(|e| RenderError::InitializationFailed(format!("Failed to create allocator: {:?}", e)))?;
 
-            // Create swapchain image views
-            let swapchain_image_views: Vec<vk::ImageView> = swapchain_images
-                .iter()
-                .map(|&image| {
-                    let create_info = vk::ImageViewCreateInfo::default()
-                        .image(image)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(surface_format.format)
-                        .components(vk::ComponentMapping {
-                            r: vk::ComponentSwizzle::IDENTITY,
-                            g: vk::ComponentSwizzle::IDENTITY,
-                            b: vk::ComponentSwizzle::IDENTITY,
-                            a: vk::ComponentSwizzle::IDENTITY,
-                        })
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        });
-                    device.create_image_view(&create_info, None)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create image views: {:?}", e)))?;
-
-            // Create synchronization primitives
-            let image_count = swapchain_images.len();
-            let semaphore_create_info = vk::SemaphoreCreateInfo::default();
+            // Create submit fences (2 for double buffering)
+            const MAX_SUBMITS_IN_FLIGHT: usize = 2;
             let fence_create_info = vk::FenceCreateInfo::default()
                 .flags(vk::FenceCreateFlags::SIGNALED);
 
-            // Use a fixed number of frames in flight for consistent synchronization
-            const MAX_FRAMES_IN_FLIGHT: usize = 2;
-
-            let mut image_available_semaphores = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
-            let mut render_finished_semaphores = Vec::with_capacity(image_count);
-            let mut in_flight_fences = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
-
-            for _ in 0..MAX_FRAMES_IN_FLIGHT {
-                image_available_semaphores.push(
-                    device.create_semaphore(&semaphore_create_info, None)
-                        .map_err(|e| RenderError::InitializationFailed(format!("Failed to create semaphore: {:?}", e)))?
-                );
-                in_flight_fences.push(
+            let mut submit_fences = Vec::with_capacity(MAX_SUBMITS_IN_FLIGHT);
+            for _ in 0..MAX_SUBMITS_IN_FLIGHT {
+                submit_fences.push(
                     device.create_fence(&fence_create_info, None)
                         .map_err(|e| RenderError::InitializationFailed(format!("Failed to create fence: {:?}", e)))?
                 );
             }
-
-            for _ in 0..image_count {
-                render_finished_semaphores.push(
-                    device.create_semaphore(&semaphore_create_info, None)
-                        .map_err(|e| RenderError::InitializationFailed(format!("Failed to create semaphore: {:?}", e)))?
-                );
-            }
-
-            // Create command pool
-            let command_pool_create_info = vk::CommandPoolCreateInfo::default()
-                .queue_family_index(graphics_family_index)
-                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-
-            let command_pool = device.create_command_pool(&command_pool_create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create command pool: {:?}", e)))?;
-
-            // Create command buffers (one per frame in flight)
-            let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
-                .command_pool(command_pool)
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .command_buffer_count(MAX_FRAMES_IN_FLIGHT as u32);
-
-            let command_buffers = device.allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to allocate command buffers: {:?}", e)))?;
-
-            // Create render pass
-            let color_attachment = vk::AttachmentDescription::default()
-                .format(surface_format.format)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-
-            let color_attachment_ref = vk::AttachmentReference::default()
-                .attachment(0)
-                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-            let subpass = vk::SubpassDescription::default()
-                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                .color_attachments(std::slice::from_ref(&color_attachment_ref));
-
-            let dependency = vk::SubpassDependency::default()
-                .src_subpass(vk::SUBPASS_EXTERNAL)
-                .dst_subpass(0)
-                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                .src_access_mask(vk::AccessFlags::empty())
-                .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
-
-            let render_pass_info = vk::RenderPassCreateInfo::default()
-                .attachments(std::slice::from_ref(&color_attachment))
-                .subpasses(std::slice::from_ref(&subpass))
-                .dependencies(std::slice::from_ref(&dependency));
-
-            let render_pass = device.create_render_pass(&render_pass_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create render pass: {:?}", e)))?;
-
-            // Create framebuffers
-            let framebuffers: Vec<vk::Framebuffer> = swapchain_image_views
-                .iter()
-                .map(|&image_view| {
-                    let attachments = [image_view];
-                    let framebuffer_info = vk::FramebufferCreateInfo::default()
-                        .render_pass(render_pass)
-                        .attachments(&attachments)
-                        .width(swapchain_extent.width)
-                        .height(swapchain_extent.height)
-                        .layers(1);
-
-                    device.create_framebuffer(&framebuffer_info, None)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create framebuffers: {:?}", e)))?;
 
             Ok(Self {
                 _entry: entry,
@@ -372,26 +272,10 @@ impl VulkanRenderer {
                 graphics_queue,
                 graphics_queue_family: graphics_family_index,
                 present_queue,
-                surface,
-                surface_loader,
-                swapchain,
-                swapchain_loader,
-                swapchain_images,
-                swapchain_image_views,
-                swapchain_format: surface_format.format,
-                swapchain_extent,
+                present_queue_family: present_family_index,
                 allocator: ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
-                image_available_semaphores,
-                render_finished_semaphores,
-                in_flight_fences,
-                current_frame: 0,
-                command_pool,
-                command_buffers,
-                render_pass,
-                framebuffers,
-                window_width: swapchain_extent.width,
-                window_height: swapchain_extent.height,
-                framebuffer_resized: false,
+                submit_fences,
+                current_submit_fence: 0,
             })
         }
     }
@@ -431,9 +315,281 @@ impl VulkanRenderer {
             PrimitiveTopology::PointList => vk::PrimitiveTopology::POINT_LIST,
         }
     }
+
+    /// Convert LoadOp to Vulkan
+    fn load_op_to_vk(&self, load_op: LoadOp) -> vk::AttachmentLoadOp {
+        match load_op {
+            LoadOp::Load => vk::AttachmentLoadOp::LOAD,
+            LoadOp::Clear => vk::AttachmentLoadOp::CLEAR,
+            LoadOp::DontCare => vk::AttachmentLoadOp::DONT_CARE,
+        }
+    }
+
+    /// Convert StoreOp to Vulkan
+    fn store_op_to_vk(&self, store_op: StoreOp) -> vk::AttachmentStoreOp {
+        match store_op {
+            StoreOp::Store => vk::AttachmentStoreOp::STORE,
+            StoreOp::DontCare => vk::AttachmentStoreOp::DONT_CARE,
+        }
+    }
+
+    /// Convert ImageLayout to Vulkan
+    fn image_layout_to_vk(&self, layout: ImageLayout) -> vk::ImageLayout {
+        match layout {
+            ImageLayout::Undefined => vk::ImageLayout::UNDEFINED,
+            ImageLayout::ColorAttachment => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            ImageLayout::DepthStencilAttachment => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            ImageLayout::ShaderReadOnly => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ImageLayout::TransferSrc => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            ImageLayout::TransferDst => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            ImageLayout::PresentSrc => vk::ImageLayout::PRESENT_SRC_KHR,
+        }
+    }
+
+    /// Create a Vulkan swapchain (returns concrete type for Vulkan-specific methods)
+    ///
+    /// # Arguments
+    ///
+    /// * `window` - Window to create swapchain for
+    pub fn create_vulkan_swapchain(&self, window: &Window) -> RenderResult<VulkanRendererSwapchain> {
+        // Get window size
+        // TODO: Pass width/height as parameters
+        let width = 800; // Temporary default
+        let height = 600;
+
+        // Create surface
+        let display_handle = window.display_handle()
+            .map_err(|e| RenderError::InitializationFailed(format!("Failed to get display handle: {}", e)))?;
+        let window_handle = window.window_handle()
+            .map_err(|e| RenderError::InitializationFailed(format!("Failed to get window handle: {}", e)))?;
+
+        let surface = unsafe {
+            ash_window::create_surface(
+                &self._entry,
+                &self.instance,
+                display_handle.as_raw(),
+                window_handle.as_raw(),
+                None,
+            )
+            .map_err(|e| RenderError::InitializationFailed(format!("Failed to create surface: {:?}", e)))?
+        };
+
+        let surface_loader = ash::khr::surface::Instance::new(&self._entry, &self.instance);
+
+        VulkanRendererSwapchain::new(
+            self.device.clone(),
+            self.physical_device,
+            &self.instance,
+            surface,
+            surface_loader,
+            self.present_queue,
+            width,
+            height,
+        )
+    }
 }
 
 impl Renderer for VulkanRenderer {
+    fn create_command_list(&self) -> RenderResult<Box<dyn RendererCommandList>> {
+        let cmd_list = VulkanRendererCommandList::new(
+            self.device.clone(),
+            self.graphics_queue_family,
+        )?;
+        Ok(Box::new(cmd_list))
+    }
+
+    fn create_render_target(&self, desc: &RendererRenderTargetDesc) -> RenderResult<Arc<dyn RendererRenderTarget>> {
+        unsafe {
+            let format = self.format_to_vk(desc.format);
+
+            // Determine usage flags
+            let mut usage_flags = vk::ImageUsageFlags::empty();
+            match desc.usage {
+                galaxy_3d_engine::TextureUsage::Sampled => {
+                    usage_flags |= vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+                }
+                galaxy_3d_engine::TextureUsage::RenderTarget => {
+                    usage_flags |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
+                }
+                galaxy_3d_engine::TextureUsage::SampledAndRenderTarget => {
+                    usage_flags |= vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST;
+                }
+                galaxy_3d_engine::TextureUsage::DepthStencil => {
+                    usage_flags |= vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT;
+                }
+            }
+
+            // Create image
+            let image_create_info = vk::ImageCreateInfo::default()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(format)
+                .extent(vk::Extent3D {
+                    width: desc.width,
+                    height: desc.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(match desc.samples {
+                    1 => vk::SampleCountFlags::TYPE_1,
+                    2 => vk::SampleCountFlags::TYPE_2,
+                    4 => vk::SampleCountFlags::TYPE_4,
+                    8 => vk::SampleCountFlags::TYPE_8,
+                    _ => vk::SampleCountFlags::TYPE_1,
+                })
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(usage_flags)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .initial_layout(vk::ImageLayout::UNDEFINED);
+
+            let image = self.device.create_image(&image_create_info, None)
+                .map_err(|e| RenderError::BackendError(format!("Failed to create image: {:?}", e)))?;
+
+            // Allocate memory
+            let requirements = self.device.get_image_memory_requirements(image);
+
+            let allocation = self.allocator.lock().unwrap().allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                name: "render_target",
+                requirements,
+                location: gpu_allocator::MemoryLocation::GpuOnly,
+                linear: false,
+                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+            })
+            .map_err(|_e| RenderError::OutOfMemory)?;
+
+            // Bind memory
+            self.device.bind_image_memory(image, allocation.memory(), allocation.offset())
+                .map_err(|e| RenderError::BackendError(format!("Failed to bind image memory: {:?}", e)))?;
+
+            // Create image view
+            let aspect_mask = if matches!(desc.usage, galaxy_3d_engine::TextureUsage::DepthStencil) {
+                vk::ImageAspectFlags::DEPTH
+            } else {
+                vk::ImageAspectFlags::COLOR
+            };
+
+            let view_create_info = vk::ImageViewCreateInfo::default()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(format)
+                .components(vk::ComponentMapping {
+                    r: vk::ComponentSwizzle::IDENTITY,
+                    g: vk::ComponentSwizzle::IDENTITY,
+                    b: vk::ComponentSwizzle::IDENTITY,
+                    a: vk::ComponentSwizzle::IDENTITY,
+                })
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                });
+
+            let view = self.device.create_image_view(&view_create_info, None)
+                .map_err(|e| RenderError::BackendError(format!("Failed to create image view: {:?}", e)))?;
+
+            Ok(Arc::new(VulkanRendererRenderTarget::new_texture_target(
+                desc.width,
+                desc.height,
+                desc.format,
+                view,
+                (*self.device).clone(),
+            )))
+        }
+    }
+
+    fn create_render_pass(&self, desc: &RendererRenderPassDesc) -> RenderResult<Arc<dyn RendererRenderPass>> {
+        unsafe {
+            // Convert attachment descriptions
+            let mut attachments = Vec::new();
+            let mut color_attachment_refs = Vec::new();
+            let mut depth_attachment_ref: Option<vk::AttachmentReference> = None;
+
+            for (i, color_attachment) in desc.color_attachments.iter().enumerate() {
+                attachments.push(vk::AttachmentDescription::default()
+                    .format(self.format_to_vk(color_attachment.format))
+                    .samples(match color_attachment.samples {
+                        1 => vk::SampleCountFlags::TYPE_1,
+                        2 => vk::SampleCountFlags::TYPE_2,
+                        4 => vk::SampleCountFlags::TYPE_4,
+                        8 => vk::SampleCountFlags::TYPE_8,
+                        _ => vk::SampleCountFlags::TYPE_1,
+                    })
+                    .load_op(self.load_op_to_vk(color_attachment.load_op))
+                    .store_op(self.store_op_to_vk(color_attachment.store_op))
+                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    .initial_layout(self.image_layout_to_vk(color_attachment.initial_layout))
+                    .final_layout(self.image_layout_to_vk(color_attachment.final_layout)));
+
+                color_attachment_refs.push(vk::AttachmentReference::default()
+                    .attachment(i as u32)
+                    .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
+            }
+
+            if let Some(depth_attachment) = &desc.depth_attachment {
+                let depth_index = attachments.len() as u32;
+                attachments.push(vk::AttachmentDescription::default()
+                    .format(self.format_to_vk(depth_attachment.format))
+                    .samples(match depth_attachment.samples {
+                        1 => vk::SampleCountFlags::TYPE_1,
+                        2 => vk::SampleCountFlags::TYPE_2,
+                        4 => vk::SampleCountFlags::TYPE_4,
+                        8 => vk::SampleCountFlags::TYPE_8,
+                        _ => vk::SampleCountFlags::TYPE_1,
+                    })
+                    .load_op(self.load_op_to_vk(depth_attachment.load_op))
+                    .store_op(self.store_op_to_vk(depth_attachment.store_op))
+                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    .initial_layout(self.image_layout_to_vk(depth_attachment.initial_layout))
+                    .final_layout(self.image_layout_to_vk(depth_attachment.final_layout)));
+
+                depth_attachment_ref = Some(vk::AttachmentReference::default()
+                    .attachment(depth_index)
+                    .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
+            }
+
+            // Create subpass
+            let mut subpass = vk::SubpassDescription::default()
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                .color_attachments(&color_attachment_refs);
+
+            if let Some(ref depth_ref) = depth_attachment_ref {
+                subpass = subpass.depth_stencil_attachment(depth_ref);
+            }
+
+            // Subpass dependency
+            let dependency = vk::SubpassDependency::default()
+                .src_subpass(vk::SUBPASS_EXTERNAL)
+                .dst_subpass(0)
+                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+
+            // Create render pass
+            let render_pass_info = vk::RenderPassCreateInfo::default()
+                .attachments(&attachments)
+                .subpasses(std::slice::from_ref(&subpass))
+                .dependencies(std::slice::from_ref(&dependency));
+
+            let render_pass = self.device.create_render_pass(&render_pass_info, None)
+                .map_err(|e| RenderError::BackendError(format!("Failed to create render pass: {:?}", e)))?;
+
+            Ok(Arc::new(VulkanRendererRenderPass {
+                render_pass,
+                device: (*self.device).clone(),
+            }))
+        }
+    }
+
+    fn create_swapchain(&self, window: &Window) -> RenderResult<Box<dyn RendererSwapchain>> {
+        let swapchain = self.create_vulkan_swapchain(window)?;
+        Ok(Box::new(swapchain))
+    }
+
     fn create_texture(&mut self, desc: TextureDesc) -> RenderResult<Arc<dyn RendererTexture>> {
         unsafe {
             let format = self.format_to_vk(desc.format);
@@ -579,7 +735,47 @@ impl Renderer for VulkanRenderer {
     }
 
     fn create_pipeline(&mut self, desc: PipelineDesc) -> RenderResult<Arc<dyn RendererPipeline>> {
+        // NOTE: This implementation is temporary and creates a hardcoded render pass
+        // In the new architecture, pipelines should be created with a specific render pass
+        // For now, we create a simple render pass for compatibility
+
         unsafe {
+            // Create a temporary render pass for pipeline creation
+            // TODO: Pipeline should be created with an explicit render pass
+            let color_attachment = vk::AttachmentDescription::default()
+                .format(vk::Format::B8G8R8A8_SRGB) // Hardcoded for now
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+
+            let color_attachment_ref = vk::AttachmentReference::default()
+                .attachment(0)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+            let subpass = vk::SubpassDescription::default()
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                .color_attachments(std::slice::from_ref(&color_attachment_ref));
+
+            let dependency = vk::SubpassDependency::default()
+                .src_subpass(vk::SUBPASS_EXTERNAL)
+                .dst_subpass(0)
+                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+
+            let render_pass_info = vk::RenderPassCreateInfo::default()
+                .attachments(std::slice::from_ref(&color_attachment))
+                .subpasses(std::slice::from_ref(&subpass))
+                .dependencies(std::slice::from_ref(&dependency));
+
+            let temp_render_pass = self.device.create_render_pass(&render_pass_info, None)
+                .map_err(|e| RenderError::BackendError(format!("Failed to create render pass: {:?}", e)))?;
+
             // Downcast shaders to Vulkan types
             let vertex_shader = desc.vertex_shader
                 .as_ref() as *const dyn RendererShader as *const VulkanRendererShader;
@@ -672,8 +868,33 @@ impl Renderer for VulkanRenderer {
             let dynamic_state = vk::PipelineDynamicStateCreateInfo::default()
                 .dynamic_states(&dynamic_states);
 
-            // Pipeline layout
-            let layout_create_info = vk::PipelineLayoutCreateInfo::default();
+            // Pipeline layout with push constants
+            let push_constant_ranges: Vec<vk::PushConstantRange> = desc.push_constant_ranges
+                .iter()
+                .map(|range| {
+                    let mut stage_flags = vk::ShaderStageFlags::empty();
+                    for stage in &range.stages {
+                        stage_flags |= match stage {
+                            ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
+                            ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
+                            ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
+                        };
+                    }
+                    vk::PushConstantRange {
+                        stage_flags,
+                        offset: range.offset,
+                        size: range.size,
+                    }
+                })
+                .collect();
+
+            let layout_create_info = if push_constant_ranges.is_empty() {
+                vk::PipelineLayoutCreateInfo::default()
+            } else {
+                vk::PipelineLayoutCreateInfo::default()
+                    .push_constant_ranges(&push_constant_ranges)
+            };
+
             let layout = self.device.create_pipeline_layout(&layout_create_info, None)
                 .map_err(|e| RenderError::BackendError(format!("Failed to create pipeline layout: {:?}", e)))?;
 
@@ -688,7 +909,7 @@ impl Renderer for VulkanRenderer {
                 .color_blend_state(&color_blend_state)
                 .dynamic_state(&dynamic_state)
                 .layout(layout)
-                .render_pass(self.render_pass)
+                .render_pass(temp_render_pass) // Using temporary render pass
                 .subpass(0);
 
             let pipelines = self.device.create_graphics_pipelines(
@@ -700,6 +921,9 @@ impl Renderer for VulkanRenderer {
 
             let pipeline = pipelines[0];
 
+            // Destroy temporary render pass
+            self.device.destroy_render_pass(temp_render_pass, None);
+
             Ok(Arc::new(VulkanRendererPipeline {
                 pipeline,
                 layout,
@@ -708,19 +932,12 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn begin_frame(&mut self) -> RenderResult<Arc<dyn RendererFrame>> {
+    fn submit(&self, commands: &[&dyn RendererCommandList]) -> RenderResult<()> {
         unsafe {
-            // Check if framebuffer was resized - recreate swapchain
-            if self.framebuffer_resized {
-                self.framebuffer_resized = false;
-                self.recreate_swapchain()?;
-                return Err(RenderError::BackendError("Swapchain recreated, retry frame".to_string()));
-            }
-
-            // Wait for fence from previous frame
+            // Wait for previous submit with this fence
             self.device
                 .wait_for_fences(
-                    &[self.in_flight_fences[self.current_frame]],
+                    &[self.submit_fences[self.current_submit_fence]],
                     true,
                     u64::MAX,
                 )
@@ -728,150 +945,31 @@ impl Renderer for VulkanRenderer {
 
             // Reset fence
             self.device
-                .reset_fences(&[self.in_flight_fences[self.current_frame]])
+                .reset_fences(&[self.submit_fences[self.current_submit_fence]])
                 .map_err(|e| RenderError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
 
-            // Acquire next image
-            let (image_index, _is_suboptimal) = match self
-                .swapchain_loader
-                .acquire_next_image(
-                    self.swapchain,
-                    u64::MAX,
-                    self.image_available_semaphores[self.current_frame],
-                    vk::Fence::null(),
-                ) {
-                    Ok(result) => result,
-                    Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                        self.framebuffer_resized = true;
-                        return Err(RenderError::BackendError("Swapchain out of date".to_string()));
-                    }
-                    Err(e) => return Err(RenderError::BackendError(format!("Failed to acquire next image: {:?}", e))),
-                };
-
-            let image_idx = image_index as usize;
-
-            // Reset command buffer (use current_frame, not image_idx)
-            self.device
-                .reset_command_buffer(
-                    self.command_buffers[self.current_frame],
-                    vk::CommandBufferResetFlags::empty(),
-                )
-                .map_err(|e| RenderError::BackendError(format!("Failed to reset command buffer: {:?}", e)))?;
-
-            // Begin command buffer
-            let begin_info = vk::CommandBufferBeginInfo::default()
-                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-            self.device
-                .begin_command_buffer(self.command_buffers[self.current_frame], &begin_info)
-                .map_err(|e| RenderError::BackendError(format!("Failed to begin command buffer: {:?}", e)))?;
-
-            // Begin render pass
-            let clear_values = [vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 1.0],
-                },
-            }];
-
-            let render_pass_info = vk::RenderPassBeginInfo::default()
-                .render_pass(self.render_pass)
-                .framebuffer(self.framebuffers[image_idx])
-                .render_area(vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: self.swapchain_extent,
+            // Collect command buffers
+            let command_buffers: Vec<vk::CommandBuffer> = commands
+                .iter()
+                .map(|cmd| {
+                    let vk_cmd = *cmd as *const dyn RendererCommandList as *const VulkanRendererCommandList;
+                    unsafe { (&*vk_cmd).command_buffer() }
                 })
-                .clear_values(&clear_values);
+                .collect();
 
-            self.device.cmd_begin_render_pass(
-                self.command_buffers[self.current_frame],
-                &render_pass_info,
-                vk::SubpassContents::INLINE,
-            );
-
-            // Set viewport and scissor
-            let viewport = vk::Viewport::default()
-                .x(0.0)
-                .y(0.0)
-                .width(self.swapchain_extent.width as f32)
-                .height(self.swapchain_extent.height as f32)
-                .min_depth(0.0)
-                .max_depth(1.0);
-
-            self.device.cmd_set_viewport(self.command_buffers[self.current_frame], 0, &[viewport]);
-
-            let scissor = vk::Rect2D::default()
-                .offset(vk::Offset2D { x: 0, y: 0 })
-                .extent(self.swapchain_extent);
-
-            self.device.cmd_set_scissor(self.command_buffers[self.current_frame], 0, &[scissor]);
-
-            Ok(Arc::new(VulkanRendererFrame {
-                device: (*self.device).clone(),
-                command_buffer: self.command_buffers[self.current_frame],
-                image_index,
-            }))
-        }
-    }
-
-    fn end_frame(&mut self, frame: Arc<dyn RendererFrame>) -> RenderResult<()> {
-        unsafe {
-            // Downcast to VulkanRendererFrame
-            let vulkan_frame = frame.as_ref() as *const dyn RendererFrame as *const VulkanRendererFrame;
-            let vulkan_frame = &*vulkan_frame;
-
-            let image_idx = vulkan_frame.image_index as usize;
-
-            // End render pass (use current_frame for command buffer)
-            self.device.cmd_end_render_pass(self.command_buffers[self.current_frame]);
-
-            // End command buffer
-            self.device
-                .end_command_buffer(self.command_buffers[self.current_frame])
-                .map_err(|e| RenderError::BackendError(format!("Failed to end command buffer: {:?}", e)))?;
-
-            // Submit command buffer
-            let wait_semaphores = [self.image_available_semaphores[self.current_frame]];
-            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let signal_semaphores = [self.render_finished_semaphores[image_idx]];
-            let command_buffers = [self.command_buffers[self.current_frame]];
-
+            // Submit
             let submit_info = vk::SubmitInfo::default()
-                .wait_semaphores(&wait_semaphores)
-                .wait_dst_stage_mask(&wait_stages)
-                .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores);
+                .command_buffers(&command_buffers);
 
             self.device
                 .queue_submit(
                     self.graphics_queue,
                     &[submit_info],
-                    self.in_flight_fences[self.current_frame],
+                    self.submit_fences[self.current_submit_fence],
                 )
                 .map_err(|e| RenderError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
 
-            // Present
-            let swapchains = [self.swapchain];
-            let image_indices = [vulkan_frame.image_index];
-
-            let present_info = vk::PresentInfoKHR::default()
-                .wait_semaphores(&signal_semaphores)
-                .swapchains(&swapchains)
-                .image_indices(&image_indices);
-
-            match self.swapchain_loader
-                .queue_present(self.present_queue, &present_info) {
-                    Ok(_) | Err(vk::Result::SUBOPTIMAL_KHR) => {
-                        // Move to next frame
-                        self.current_frame = (self.current_frame + 1) % self.image_available_semaphores.len();
-                        Ok(())
-                    }
-                    Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                        self.framebuffer_resized = true;
-                        self.current_frame = (self.current_frame + 1) % self.image_available_semaphores.len();
-                        Ok(())
-                    }
-                    Err(e) => Err(RenderError::BackendError(format!("Failed to present: {:?}", e))),
-                }
+            Ok(())
         }
     }
 
@@ -883,138 +981,12 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn stats(&self) -> RendererStats {
-        RendererStats::default()
+    fn stats(&self) -> galaxy_3d_engine::RendererStats {
+        galaxy_3d_engine::RendererStats::default()
     }
 
-    fn resize(&mut self, width: u32, height: u32) {
-        if width > 0 && height > 0 {
-            self.window_width = width;
-            self.window_height = height;
-            self.framebuffer_resized = true;
-        }
-    }
-}
-
-impl VulkanRenderer {
-    /// Recreate the swapchain when window is resized
-    unsafe fn recreate_swapchain(&mut self) -> RenderResult<()> {
-        // Wait for device to be idle
-        self.device.device_wait_idle()
-            .map_err(|e| RenderError::BackendError(format!("Failed to wait idle: {:?}", e)))?;
-
-        // Destroy old framebuffers
-        for framebuffer in &self.framebuffers {
-            self.device.destroy_framebuffer(*framebuffer, None);
-        }
-        self.framebuffers.clear();
-
-        // Destroy old image views
-        for image_view in &self.swapchain_image_views {
-            self.device.destroy_image_view(*image_view, None);
-        }
-        self.swapchain_image_views.clear();
-
-        // Query surface capabilities with new window size
-        let surface_capabilities = self.surface_loader
-            .get_physical_device_surface_capabilities(self.physical_device, self.surface)
-            .map_err(|e| RenderError::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e)))?;
-
-        // Choose extent
-        let extent = if surface_capabilities.current_extent.width != u32::MAX {
-            surface_capabilities.current_extent
-        } else {
-            vk::Extent2D {
-                width: self.window_width.clamp(
-                    surface_capabilities.min_image_extent.width,
-                    surface_capabilities.max_image_extent.width,
-                ),
-                height: self.window_height.clamp(
-                    surface_capabilities.min_image_extent.height,
-                    surface_capabilities.max_image_extent.height,
-                ),
-            }
-        };
-
-        let image_count = surface_capabilities.min_image_count + 1;
-        let image_count = if surface_capabilities.max_image_count > 0 {
-            image_count.min(surface_capabilities.max_image_count)
-        } else {
-            image_count
-        };
-
-        // Recreate swapchain
-        let old_swapchain = self.swapchain;
-        let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
-            .surface(self.surface)
-            .min_image_count(image_count as u32)
-            .image_format(self.swapchain_format)
-            .image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
-            .image_extent(extent)
-            .image_array_layers(1)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .pre_transform(surface_capabilities.current_transform)
-            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-            .present_mode(vk::PresentModeKHR::FIFO)
-            .clipped(true)
-            .old_swapchain(old_swapchain);
-
-        let swapchain = self.swapchain_loader
-            .create_swapchain(&swapchain_create_info, None)
-            .map_err(|e| RenderError::InitializationFailed(format!("Failed to recreate swapchain: {:?}", e)))?;
-
-        // Destroy old swapchain
-        self.swapchain_loader.destroy_swapchain(old_swapchain, None);
-        self.swapchain = swapchain;
-        self.swapchain_extent = extent;
-
-        // Get new swapchain images
-        self.swapchain_images = self.swapchain_loader
-            .get_swapchain_images(swapchain)
-            .map_err(|e| RenderError::InitializationFailed(format!("Failed to get swapchain images: {:?}", e)))?;
-
-        // Recreate image views
-        for &image in &self.swapchain_images {
-            let create_info = vk::ImageViewCreateInfo::default()
-                .image(image)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(self.swapchain_format)
-                .components(vk::ComponentMapping {
-                    r: vk::ComponentSwizzle::IDENTITY,
-                    g: vk::ComponentSwizzle::IDENTITY,
-                    b: vk::ComponentSwizzle::IDENTITY,
-                    a: vk::ComponentSwizzle::IDENTITY,
-                })
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                });
-
-            let image_view = self.device.create_image_view(&create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create image view: {:?}", e)))?;
-            self.swapchain_image_views.push(image_view);
-        }
-
-        // Recreate framebuffers
-        for &image_view in &self.swapchain_image_views {
-            let attachments = [image_view];
-            let framebuffer_info = vk::FramebufferCreateInfo::default()
-                .render_pass(self.render_pass)
-                .attachments(&attachments)
-                .width(extent.width)
-                .height(extent.height)
-                .layers(1);
-
-            let framebuffer = self.device.create_framebuffer(&framebuffer_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create framebuffer: {:?}", e)))?;
-            self.framebuffers.push(framebuffer);
-        }
-
-        Ok(())
+    fn resize(&mut self, _width: u32, _height: u32) {
+        // Swapchain recreation is handled by the swapchain itself
     }
 }
 
@@ -1024,41 +996,12 @@ impl Drop for VulkanRenderer {
             // Wait for device to finish
             self.device.device_wait_idle().ok();
 
-            // Destroy synchronization primitives
-            for &semaphore in &self.image_available_semaphores {
-                self.device.destroy_semaphore(semaphore, None);
-            }
-            for &semaphore in &self.render_finished_semaphores {
-                self.device.destroy_semaphore(semaphore, None);
-            }
-            for &fence in &self.in_flight_fences {
+            // Destroy submit fences
+            for &fence in &self.submit_fences {
                 self.device.destroy_fence(fence, None);
             }
 
-            // Destroy command pool (this also frees command buffers)
-            self.device.destroy_command_pool(self.command_pool, None);
-
-            // Destroy framebuffers
-            for &framebuffer in &self.framebuffers {
-                self.device.destroy_framebuffer(framebuffer, None);
-            }
-
-            // Destroy render pass
-            self.device.destroy_render_pass(self.render_pass, None);
-
-            // Destroy image views
-            for &image_view in &self.swapchain_image_views {
-                self.device.destroy_image_view(image_view, None);
-            }
-
-            // Destroy swapchain
-            self.swapchain_loader.destroy_swapchain(self.swapchain, None);
-
-            // Destroy surface
-            self.surface_loader.destroy_surface(self.surface, None);
-
             // Drop allocator explicitly before destroying device
-            // This ensures all GPU memory is freed while the device is still valid
             ManuallyDrop::drop(&mut self.allocator);
 
             // Destroy device

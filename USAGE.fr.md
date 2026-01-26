@@ -43,7 +43,7 @@ use std::sync::{Arc, Mutex};
 
 fn main() {
     // Enregistrer le plugin Vulkan
-    galaxy_3d_engine_renderer_vulkan::register();
+    
 
     // Créer la fenêtre
     let event_loop = EventLoop::new().unwrap();
@@ -60,7 +60,7 @@ fn main() {
         app_version: (1, 0, 0),
     };
 
-    let renderer = galaxy_3d_engine::renderer_plugin_registry()
+    let renderer = galaxy_3d_engine::VulkanRenderer::new()
         .lock().unwrap()
         .as_ref().unwrap()
         .create_renderer("vulkan", &window, config)
@@ -85,7 +85,7 @@ Galaxy3D utilise des traits Rust avec `Arc<dyn Trait>` pour obtenir un polymorph
 - **`RendererBuffer`** : Buffer GPU (vertex, index, uniform)
 - **`RendererShader`** : Module shader compilé
 - **`RendererPipeline`** : État du pipeline graphique
-- **`RendererFrame`** : Enregistrement des commandes par frame
+- **`RenderCommandList`** : Enregistrement des commandes par frame
 
 ### Durée de vie des ressources
 
@@ -115,10 +115,10 @@ let config = RendererConfig {
 
 ```rust
 // Enregistrer le backend Vulkan
-galaxy_3d_engine_renderer_vulkan::register();
+
 
 // Créer le renderer via le registre de plugins
-let renderer = galaxy_3d_engine::renderer_plugin_registry()
+let renderer = galaxy_3d_engine::VulkanRenderer::new()
     .lock().unwrap()
     .as_ref().unwrap()
     .create_renderer("vulkan", &window, config)?;

@@ -35,16 +35,13 @@ winit = "0.30"
 ### Minimal Example
 
 ```rust
-use galaxy_3d_engine::{Renderer, RendererConfig};
-use galaxy_3d_engine_renderer_vulkan;
-use winit::event_loop::{EventLoop, ControlFlow};
+use galaxy_3d_engine::{Renderer, RendererConfig, RendererSwapchain};
+use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
+use winit::event_loop::EventLoop;
 use winit::window::Window;
 use std::sync::{Arc, Mutex};
 
 fn main() {
-    // Register Vulkan backend plugin
-    galaxy_3d_engine_renderer_vulkan::register();
-
     // Create window
     let event_loop = EventLoop::new().unwrap();
     let window = Window::default_attributes()
@@ -60,11 +57,13 @@ fn main() {
         app_version: (1, 0, 0),
     };
 
-    let renderer = galaxy_3d_engine::renderer_plugin_registry()
-        .lock().unwrap()
-        .as_ref().unwrap()
-        .create_renderer("vulkan", &window, config)
+    // Create Vulkan renderer directly
+    let mut renderer = VulkanRenderer::new(&window, config)
         .expect("Failed to create renderer");
+
+    // Create swapchain
+    let mut swapchain = renderer.create_swapchain(&window)
+        .expect("Failed to create swapchain");
 
     // Event loop
     event_loop.run(|event, window_target| {
@@ -81,11 +80,14 @@ fn main() {
 
 Galaxy3D uses Rust traits with `Arc<dyn Trait>` to achieve C++-style polymorphism:
 
-- **`Renderer`**: Main interface for creating GPU resources
+- **`Renderer`**: Main interface for creating GPU resources, command lists, swapchains, and submitting
+- **`RenderCommandList`**: Command recording interface (replaces RendererFrame)
+- **`RendererSwapchain`**: Swapchain management (acquire/present)
+- **`RendererRenderPass`**: Render pass configuration
+- **`RendererRenderTarget`**: Render target (texture or swapchain image)
 - **`RendererBuffer`**: GPU buffer (vertex, index, uniform)
 - **`RendererShader`**: Compiled shader module
-- **`RendererPipeline`**: Graphics pipeline state
-- **`RendererFrame`**: Per-frame command recording
+- **`RendererPipeline`**: Graphics pipeline state (with push constants support)
 
 ### Resource Lifetime
 
@@ -93,7 +95,7 @@ All GPU resources are automatically cleaned up when dropped (RAII pattern). Reso
 
 ### Thread Safety
 
-The `Renderer` is wrapped in `Arc<Mutex<...>>` for thread-safe access. Lock the mutex when creating resources or recording commands.
+The `Renderer` is wrapped in `Arc<Mutex<...>>` for thread-safe access. Lock the mutex when creating resources or submitting commands.
 
 ---
 
@@ -111,17 +113,19 @@ let config = RendererConfig {
 };
 ```
 
-### Backend Registration
+### Creating the Renderer
 
 ```rust
-// Register Vulkan backend
-galaxy_3d_engine_renderer_vulkan::register();
+use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
 
-// Create renderer via plugin registry
-let renderer = galaxy_3d_engine::renderer_plugin_registry()
-    .lock().unwrap()
-    .as_ref().unwrap()
-    .create_renderer("vulkan", &window, config)?;
+// Create Vulkan renderer directly
+let mut renderer = VulkanRenderer::new(&window, config)?;
+
+// Create swapchain for presentation
+let mut swapchain = renderer.create_swapchain(&window)?;
+
+// Create command lists for rendering
+let mut cmd = renderer.create_command_list()?;
 ```
 
 ---

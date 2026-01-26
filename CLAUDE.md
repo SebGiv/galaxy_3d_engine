@@ -30,14 +30,14 @@ Create a modern 3D rendering engine in Rust with:
 - Couplage fort entre swapchain et rendering
 
 **Nouvelle architecture** (actuelle):
-- `RendererDevice` - Factory pour créer ressources et commander
+- `Renderer` - Factory pour créer ressources, command lists, swapchains, et submit
 - `RenderCommandList` - Enregistrement de commandes (remplace RendererFrame)
 - `RendererSwapchain` - Gestion swapchain séparée
 - `RendererRenderTarget` - Cible de rendu (texture ou swapchain)
 - `RendererRenderPass` - Configuration du render pass
 
 **Resource Traits**:
-- `RendererDevice` - Main device interface (factory pour ressources + submit)
+- `Renderer` - Main interface (factory + submit, gère tout en interne)
 - `RenderCommandList` - Command recording interface
 - `RendererSwapchain` - Swapchain management (acquire/present)
 - `RendererRenderTarget` - Render target (texture ou swapchain image)
@@ -150,7 +150,7 @@ impl Drop for VulkanRendererCommandList {
 - `render_finished_semaphores[image_count]`
 - Gère acquire/present avec semaphores
 
-**VulkanRendererDevice**:
+**VulkanRenderer**:
 - `submit_with_sync()` pour synchroniser avec swapchain
 - Fences pour CPU-GPU sync
 
@@ -190,8 +190,7 @@ Galaxy/                                  # Workspace root
 │           ├── plugin.rs               # Plugin registry (deprecated)
 │           └── renderer/
 │               ├── mod.rs
-│               ├── renderer.rs         # Ancien trait (en cours de dépréciation)
-│               ├── renderer_device.rs  # RendererDevice trait ✨ NOUVEAU
+│               ├── renderer.rs  # Renderer trait (avec nouvelles méthodes) ✨
 │               ├── renderer_command_list.rs  # RenderCommandList trait ✨
 │               ├── renderer_render_target.rs # RendererRenderTarget trait ✨
 │               ├── renderer_render_pass.rs   # RendererRenderPass trait ✨
@@ -205,7 +204,7 @@ Galaxy/                                  # Workspace root
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs
-│           ├── vulkan_renderer_device.rs    # VulkanRendererDevice ✨
+│           ├── vulkan_renderer.rs    # VulkanRenderer ✨
 │           ├── vulkan_renderer_command_list.rs  # VulkanRendererCommandList ✨
 │           ├── vulkan_renderer_render_target.rs # VulkanRendererRenderTarget ✨
 │           ├── vulkan_renderer_render_pass.rs   # VulkanRendererRenderPass ✨
@@ -240,7 +239,7 @@ Galaxy/                                  # Workspace root
 ### ✅ Phase 7: Architecture Moderne (DONE)
 
 **Implemented Features**:
-- [x] RendererDevice trait (remplace Renderer)
+- [x] Renderer trait étendu (nouvelles méthodes intégrées)
 - [x] RenderCommandList trait (remplace RendererFrame)
 - [x] RendererSwapchain séparé
 - [x] RendererRenderTarget (texture et swapchain)
@@ -312,7 +311,7 @@ swapchain.present(image_idx)?;
 
 ### Resource Destruction Order
 
-**VulkanRendererDevice Drop**:
+**VulkanRenderer Drop**:
 1. Wait device idle
 2. Drop user-created resources (textures, buffers, etc.)
 3. Drop allocator (ManuallyDrop)
@@ -366,15 +365,15 @@ cargo run
 **Quick Example**:
 ```rust
 use galaxy_3d_engine::{
-    RendererDevice, RenderCommandList, RendererSwapchain,
+    Renderer, RenderCommandList, RendererSwapchain,
     PipelineDesc, PushConstantRange, ShaderStage,
 };
 use galaxy_3d_engine_renderer_vulkan::{
-    VulkanRendererDevice, VulkanRendererSwapchain,
+    VulkanRenderer, VulkanRendererSwapchain,
 };
 
 // Créer device
-let mut device = VulkanRendererDevice::new(&window, config)?;
+let mut device = VulkanRenderer::new(&window, config)?;
 
 // Créer swapchain
 let mut swapchain = device.create_swapchain(&window)?;
@@ -428,8 +427,8 @@ loop {
 ## 📝 Code Style Guidelines
 
 ### Naming Conventions
-- **Traits**: `RendererDevice`, `RenderCommandList` (PascalCase avec "Renderer" prefix)
-- **Structs**: `VulkanRendererDevice`, `VulkanRendererCommandList` (backend prefix)
+- **Traits**: `Renderer`, `RenderCommandList` (PascalCase avec "Renderer" prefix)
+- **Structs**: `VulkanRenderer`, `VulkanRendererCommandList` (backend prefix)
 - **Functions**: `create_buffer`, `begin_render_pass` (snake_case)
 - **Constants**: `MAX_FRAMES_IN_FLIGHT` (SCREAMING_SNAKE_CASE)
 
@@ -447,15 +446,20 @@ loop {
 
 ## ✅ Changelog
 
-### 2026-01-25 - Phase 7: Architecture Moderne (Proposition 2)
+### 2026-01-26 - Architecture Simplifiée
 - **Breaking Changes**:
+  - ❌ Supprimé `RendererDevice` (intégré dans `Renderer`)
   - ❌ Supprimé `RendererFrame` trait et `vulkan_renderer_frame.rs`
   - ❌ Supprimé `begin_frame()` / `end_frame()` du trait `Renderer`
-  - ✅ Nouveau `RendererDevice` trait (remplace `Renderer` progressivement)
-  - ✅ Nouveau `RenderCommandList` trait (remplace `RendererFrame`)
-  - ✅ Nouveau `RendererSwapchain` trait (séparation présentation)
-  - ✅ Nouveau `RendererRenderTarget` trait (texture ou swapchain)
-  - ✅ Nouveau `RendererRenderPass` trait (configuration)
+  - ✅ `Renderer` trait étendu avec nouvelles méthodes:
+    - `create_command_list()`, `create_render_pass()`, `create_render_target()`
+    - `create_swapchain()`, `submit()`
+  - ✅ `RenderCommandList` trait (remplace `RendererFrame`)
+  - ✅ `RendererSwapchain` trait (séparation présentation)
+  - ✅ `RendererRenderTarget` trait (texture ou swapchain)
+  - ✅ `RendererRenderPass` trait (configuration)
+
+### 2026-01-25 - Phase 7: Architecture Moderne (Proposition 2)
 - **Features**:
   - ✅ Push constants support (PushConstantRange dans PipelineDesc)
   - ✅ Animation avec push constants (rotation triangle)

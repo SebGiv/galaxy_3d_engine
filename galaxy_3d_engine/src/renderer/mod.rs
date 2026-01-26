@@ -8,7 +8,6 @@ pub mod renderer_shader;
 pub mod renderer_pipeline;
 
 // New architecture modules
-pub mod renderer_device;
 pub mod renderer_command_list;
 pub mod renderer_render_target;
 pub mod renderer_render_pass;
@@ -24,7 +23,6 @@ pub use renderer_shader::*;
 pub use renderer_pipeline::*;
 
 // Re-export new architecture types
-pub use renderer_device::*;
 pub use renderer_command_list::*;
 pub use renderer_render_target::*;
 pub use renderer_render_pass::*;
