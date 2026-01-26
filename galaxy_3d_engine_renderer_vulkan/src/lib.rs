@@ -29,6 +29,9 @@ use winit::window::Window;
 
 pub use vulkan_renderer::VulkanRenderer;
 pub use vulkan_renderer_swapchain::VulkanRendererSwapchain;
+pub use vulkan_renderer_pipeline::VulkanRendererPipeline;
+pub use vulkan_renderer_command_list::VulkanRendererCommandList;
+pub use vulkan_renderer_texture::VulkanRendererTexture;
 
 // Re-export debug utilities
 pub use vulkan_debug::{get_validation_stats, print_validation_stats_report};

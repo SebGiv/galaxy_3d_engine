@@ -1,6 +1,6 @@
 /// RendererRenderPass trait - describes how to configure a render pass
 
-use crate::renderer::Format;
+use crate::renderer::TextureFormat;
 
 /// Render pass trait
 ///
@@ -22,7 +22,7 @@ pub struct RendererRenderPassDesc {
 #[derive(Debug, Clone)]
 pub struct AttachmentDesc {
     /// Pixel format
-    pub format: Format,
+    pub format: TextureFormat,
     /// Number of samples (1 = no MSAA)
     pub samples: u32,
     /// Load operation (what to do with existing content)

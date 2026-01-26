@@ -1,9 +1,9 @@
 /// RendererTexture trait and texture descriptor
 
-/// Pixel format
+/// Texture and vertex attribute format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
-pub enum Format {
+pub enum TextureFormat {
     // Texture formats
     R8G8B8A8_SRGB,
     R8G8B8A8_UNORM,
@@ -41,9 +41,12 @@ pub struct TextureDesc {
     /// Height in pixels
     pub height: u32,
     /// Pixel format
-    pub format: Format,
+    pub format: TextureFormat,
     /// Usage flags
     pub usage: TextureUsage,
+    /// Optional initial data (raw pixel bytes)
+    /// If provided, the data must match the size: width * height * bytes_per_pixel
+    pub data: Option<Vec<u8>>,
 }
 
 /// Texture resource trait

@@ -77,6 +77,35 @@ impl VulkanRendererCommandList {
     pub fn command_buffer(&self) -> vk::CommandBuffer {
         self.command_buffer
     }
+
+    /// Bind descriptor sets to the command buffer
+    ///
+    /// # Arguments
+    ///
+    /// * `descriptor_sets` - Array of descriptor sets to bind
+    /// * `pipeline_layout` - Pipeline layout that the descriptor sets are compatible with
+    pub fn bind_descriptor_sets(
+        &mut self,
+        descriptor_sets: &[vk::DescriptorSet],
+        pipeline_layout: vk::PipelineLayout,
+    ) -> RenderResult<()> {
+        if !self.is_recording {
+            return Err(RenderError::BackendError("Command list not recording".to_string()));
+        }
+
+        unsafe {
+            self.device.cmd_bind_descriptor_sets(
+                self.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout,
+                0, // first_set
+                descriptor_sets,
+                &[], // dynamic_offsets
+            );
+
+            Ok(())
+        }
+    }
 }
 
 impl RendererCommandList for VulkanRendererCommandList {
@@ -287,7 +316,7 @@ impl RendererCommandList for VulkanRendererCommandList {
             );
 
             // Save pipeline layout for push constants
-            self.bound_pipeline_layout = Some(vk_pipeline.layout);
+            self.bound_pipeline_layout = Some(vk_pipeline.pipeline_layout);
 
             Ok(())
         }

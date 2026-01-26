@@ -1,7 +1,7 @@
 /// RendererPipeline trait and pipeline descriptor
 
 use std::sync::Arc;
-use crate::renderer::{RendererShader, Format, ShaderStage};
+use crate::renderer::{RendererShader, TextureFormat, ShaderStage};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +33,7 @@ pub struct VertexAttribute {
     /// Binding index
     pub binding: u32,
     /// Format of the attribute
-    pub format: Format,
+    pub format: TextureFormat,
     /// Offset in bytes from the start of the vertex
     pub offset: u32,
 }
@@ -91,6 +91,10 @@ pub struct PipelineDesc {
     pub topology: PrimitiveTopology,
     /// Push constant ranges (optional)
     pub push_constant_ranges: Vec<PushConstantRange>,
+    /// Descriptor set layouts (for binding textures, uniforms, etc.)
+    pub descriptor_set_layouts: Vec<u64>, // vk::DescriptorSetLayout as u64
+    /// Enable alpha blending (default: false)
+    pub enable_blending: bool,
 }
 
 /// Pipeline resource trait

@@ -1,6 +1,6 @@
 /// VulkanRendererSwapchain - Vulkan implementation of RendererSwapchain trait
 
-use galaxy_3d_engine::{RendererSwapchain, RendererRenderTarget, RenderResult, RenderError, Format};
+use galaxy_3d_engine::{RendererSwapchain, RendererRenderTarget, RenderResult, RenderError, TextureFormat};
 use ash::vk;
 use std::sync::Arc;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -427,13 +427,13 @@ impl Drop for VulkanRendererSwapchain {
     }
 }
 
-/// Convert Vulkan format to engine Format
-fn vk_format_to_format(vk_format: vk::Format) -> Format {
+/// Convert Vulkan format to engine TextureFormat
+fn vk_format_to_format(vk_format: vk::Format) -> TextureFormat {
     match vk_format {
-        vk::Format::R8G8B8A8_SRGB => Format::R8G8B8A8_SRGB,
-        vk::Format::R8G8B8A8_UNORM => Format::R8G8B8A8_UNORM,
-        vk::Format::B8G8R8A8_SRGB => Format::B8G8R8A8_SRGB,
-        vk::Format::B8G8R8A8_UNORM => Format::B8G8R8A8_UNORM,
-        _ => Format::R8G8B8A8_SRGB, // Fallback
+        vk::Format::R8G8B8A8_SRGB => TextureFormat::R8G8B8A8_SRGB,
+        vk::Format::R8G8B8A8_UNORM => TextureFormat::R8G8B8A8_UNORM,
+        vk::Format::B8G8R8A8_SRGB => TextureFormat::B8G8R8A8_SRGB,
+        vk::Format::B8G8R8A8_UNORM => TextureFormat::B8G8R8A8_UNORM,
+        _ => TextureFormat::R8G8B8A8_SRGB, // Fallback
     }
 }

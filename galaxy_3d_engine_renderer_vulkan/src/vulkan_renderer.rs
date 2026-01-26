@@ -5,10 +5,11 @@ use galaxy_3d_engine::{
     RendererTexture, RendererBuffer, RendererShader, RendererPipeline,
     RendererRenderTargetDesc, RendererRenderPassDesc,
     TextureDesc, BufferDesc, ShaderDesc, PipelineDesc,
-    RenderResult, RenderError, Format, ShaderStage, BufferUsage, PrimitiveTopology,
+    RenderResult, RenderError, TextureFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
 };
 use ash::vk;
+use ash::vk::Handle;
 use std::sync::{Arc, Mutex};
 use std::ffi::CString;
 use std::mem::ManuallyDrop;
@@ -52,6 +53,13 @@ pub struct VulkanRenderer {
     /// Fences for submit synchronization
     submit_fences: Vec<vk::Fence>,
     current_submit_fence: usize,
+
+    /// Descriptor pool for texture sampling
+    descriptor_pool: vk::DescriptorPool,
+    /// Texture sampler
+    texture_sampler: vk::Sampler,
+    /// Descriptor set layout
+    descriptor_set_layout: vk::DescriptorSetLayout,
 
     /// Debug utils loader (for validation layers)
     debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
@@ -324,6 +332,53 @@ impl VulkanRenderer {
                 );
             }
 
+            // Create descriptor pool for texture sampling (enough for 1000 sets)
+            let pool_size = vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: 1000,
+            };
+
+            let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::default()
+                .pool_sizes(std::slice::from_ref(&pool_size))
+                .max_sets(1000);
+
+            let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_create_info, None)
+                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create descriptor pool: {:?}", e)))?;
+
+            // Create texture sampler with linear filtering and repeat addressing
+            let sampler_create_info = vk::SamplerCreateInfo::default()
+                .mag_filter(vk::Filter::LINEAR)
+                .min_filter(vk::Filter::LINEAR)
+                .address_mode_u(vk::SamplerAddressMode::REPEAT)
+                .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                .address_mode_w(vk::SamplerAddressMode::REPEAT)
+                .anisotropy_enable(false)
+                .max_anisotropy(1.0)
+                .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
+                .unnormalized_coordinates(false)
+                .compare_enable(false)
+                .compare_op(vk::CompareOp::ALWAYS)
+                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                .mip_lod_bias(0.0)
+                .min_lod(0.0)
+                .max_lod(0.0);
+
+            let texture_sampler = device.create_sampler(&sampler_create_info, None)
+                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create sampler: {:?}", e)))?;
+
+            // Create descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader
+            let sampler_binding = vk::DescriptorSetLayoutBinding::default()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+
+            let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo::default()
+                .bindings(std::slice::from_ref(&sampler_binding));
+
+            let descriptor_set_layout = device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)
+                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create descriptor set layout: {:?}", e)))?;
+
             Ok(Self {
                 _entry: entry,
                 instance,
@@ -336,26 +391,29 @@ impl VulkanRenderer {
                 allocator: ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
                 submit_fences,
                 current_submit_fence: 0,
+                descriptor_pool,
+                texture_sampler,
+                descriptor_set_layout,
                 debug_utils_loader,
                 debug_messenger,
             })
         }
     }
 
-    /// Convert Format to Vulkan format
-    fn format_to_vk(&self, format: Format) -> vk::Format {
+    /// Convert TextureFormat to Vulkan format
+    fn format_to_vk(&self, format: TextureFormat) -> vk::Format {
         match format {
-            Format::R8G8B8A8_SRGB => vk::Format::R8G8B8A8_SRGB,
-            Format::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_UNORM,
-            Format::B8G8R8A8_SRGB => vk::Format::B8G8R8A8_SRGB,
-            Format::B8G8R8A8_UNORM => vk::Format::B8G8R8A8_UNORM,
-            Format::D16_UNORM => vk::Format::D16_UNORM,
-            Format::D32_FLOAT => vk::Format::D32_SFLOAT,
-            Format::D24_UNORM_S8_UINT => vk::Format::D24_UNORM_S8_UINT,
-            Format::R32_SFLOAT => vk::Format::R32_SFLOAT,
-            Format::R32G32_SFLOAT => vk::Format::R32G32_SFLOAT,
-            Format::R32G32B32_SFLOAT => vk::Format::R32G32B32_SFLOAT,
-            Format::R32G32B32A32_SFLOAT => vk::Format::R32G32B32A32_SFLOAT,
+            TextureFormat::R8G8B8A8_SRGB => vk::Format::R8G8B8A8_SRGB,
+            TextureFormat::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_UNORM,
+            TextureFormat::B8G8R8A8_SRGB => vk::Format::B8G8R8A8_SRGB,
+            TextureFormat::B8G8R8A8_UNORM => vk::Format::B8G8R8A8_UNORM,
+            TextureFormat::D16_UNORM => vk::Format::D16_UNORM,
+            TextureFormat::D32_FLOAT => vk::Format::D32_SFLOAT,
+            TextureFormat::D24_UNORM_S8_UINT => vk::Format::D24_UNORM_S8_UINT,
+            TextureFormat::R32_SFLOAT => vk::Format::R32_SFLOAT,
+            TextureFormat::R32G32_SFLOAT => vk::Format::R32G32_SFLOAT,
+            TextureFormat::R32G32B32_SFLOAT => vk::Format::R32G32B32_SFLOAT,
+            TextureFormat::R32G32B32A32_SFLOAT => vk::Format::R32G32B32A32_SFLOAT,
         }
     }
 
@@ -448,6 +506,58 @@ impl VulkanRenderer {
             width,
             height,
         )
+    }
+
+    /// Get the descriptor set layout for texture sampling
+    ///
+    /// # Returns
+    ///
+    /// The descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader stage
+    pub fn get_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
+        self.descriptor_set_layout
+    }
+
+    /// Create a descriptor set for a texture
+    ///
+    /// Allocates a descriptor set from the pool and updates it to point to the given texture.
+    ///
+    /// # Arguments
+    ///
+    /// * `texture` - The texture to bind to the descriptor set
+    ///
+    /// # Returns
+    ///
+    /// A descriptor set that can be used in shaders to sample the texture
+    pub fn create_texture_descriptor_set(&self, texture: &VulkanRendererTexture) -> RenderResult<vk::DescriptorSet> {
+        unsafe {
+            // Allocate descriptor set
+            let layouts = [self.descriptor_set_layout];
+            let allocate_info = vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(self.descriptor_pool)
+                .set_layouts(&layouts);
+
+            let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
+                .map_err(|e| RenderError::BackendError(format!("Failed to allocate descriptor set: {:?}", e)))?;
+
+            let descriptor_set = descriptor_sets[0];
+
+            // Update descriptor set to point to the texture
+            let image_info = vk::DescriptorImageInfo::default()
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image_view(texture.view)
+                .sampler(self.texture_sampler);
+
+            let descriptor_write = vk::WriteDescriptorSet::default()
+                .dst_set(descriptor_set)
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(std::slice::from_ref(&image_info));
+
+            self.device.update_descriptor_sets(std::slice::from_ref(&descriptor_write), &[]);
+
+            Ok(descriptor_set)
+        }
     }
 }
 
@@ -714,6 +824,164 @@ impl Renderer for VulkanRenderer {
             let view = self.device.create_image_view(&view_create_info, None)
                 .map_err(|e| RenderError::BackendError(format!("Failed to create image view: {:?}", e)))?;
 
+            // Upload texture data if provided
+            if let Some(data) = desc.data {
+                // 1. Create staging buffer (CPU-visible)
+                let buffer_size = data.len() as u64;
+                let staging_buffer_create_info = vk::BufferCreateInfo::default()
+                    .size(buffer_size)
+                    .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+                let staging_buffer = self.device.create_buffer(&staging_buffer_create_info, None)
+                    .map_err(|e| RenderError::BackendError(format!("Failed to create staging buffer: {:?}", e)))?;
+
+                let staging_requirements = self.device.get_buffer_memory_requirements(staging_buffer);
+
+                let staging_allocation = self.allocator.lock().unwrap().allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                    name: "texture_staging_buffer",
+                    requirements: staging_requirements,
+                    location: gpu_allocator::MemoryLocation::CpuToGpu,
+                    linear: true,
+                    allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+                })
+                .map_err(|_e| RenderError::OutOfMemory)?;
+
+                self.device.bind_buffer_memory(staging_buffer, staging_allocation.memory(), staging_allocation.offset())
+                    .map_err(|e| RenderError::BackendError(format!("Failed to bind staging buffer memory: {:?}", e)))?;
+
+                // 2. Copy data to staging buffer
+                let mapped_ptr = staging_allocation.mapped_ptr()
+                    .ok_or_else(|| RenderError::BackendError("Staging buffer is not mapped".to_string()))?
+                    .as_ptr() as *mut u8;
+                std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_ptr, data.len());
+
+                // 4. Create a one-time command buffer
+                let command_pool_create_info = vk::CommandPoolCreateInfo::default()
+                    .queue_family_index(self.graphics_queue_family)
+                    .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+
+                let command_pool = self.device.create_command_pool(&command_pool_create_info, None)
+                    .map_err(|e| RenderError::BackendError(format!("Failed to create command pool: {:?}", e)))?;
+
+                let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+                    .command_pool(command_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1);
+
+                let command_buffers = self.device.allocate_command_buffers(&command_buffer_allocate_info)
+                    .map_err(|e| RenderError::BackendError(format!("Failed to allocate command buffers: {:?}", e)))?;
+                let command_buffer = command_buffers[0];
+
+                // Begin recording
+                let begin_info = vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+                self.device.begin_command_buffer(command_buffer, &begin_info)
+                    .map_err(|e| RenderError::BackendError(format!("Failed to begin command buffer: {:?}", e)))?;
+
+                // 5. Transition image layout: UNDEFINED → TRANSFER_DST_OPTIMAL
+                let barrier = vk::ImageMemoryBarrier::default()
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .src_access_mask(vk::AccessFlags::empty())
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
+
+                self.device.cmd_pipeline_barrier(
+                    command_buffer,
+                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier],
+                );
+
+                // 6. Copy from staging buffer to image
+                let region = vk::BufferImageCopy::default()
+                    .buffer_offset(0)
+                    .buffer_row_length(0)
+                    .buffer_image_height(0)
+                    .image_subresource(vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                    .image_extent(vk::Extent3D {
+                        width: desc.width,
+                        height: desc.height,
+                        depth: 1,
+                    });
+
+                self.device.cmd_copy_buffer_to_image(
+                    command_buffer,
+                    staging_buffer,
+                    image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[region],
+                );
+
+                // 7. Transition image layout: TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
+                let barrier = vk::ImageMemoryBarrier::default()
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ);
+
+                self.device.cmd_pipeline_barrier(
+                    command_buffer,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::FRAGMENT_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier],
+                );
+
+                // End recording
+                self.device.end_command_buffer(command_buffer)
+                    .map_err(|e| RenderError::BackendError(format!("Failed to end command buffer: {:?}", e)))?;
+
+                // 8. Submit and wait for command buffer
+                let command_buffers_submit = [command_buffer];
+                let submit_info = vk::SubmitInfo::default()
+                    .command_buffers(&command_buffers_submit);
+
+                self.device.queue_submit(self.graphics_queue, &[submit_info], vk::Fence::null())
+                    .map_err(|e| RenderError::BackendError(format!("Failed to submit command buffer: {:?}", e)))?;
+
+                self.device.queue_wait_idle(self.graphics_queue)
+                    .map_err(|e| RenderError::BackendError(format!("Failed to wait for queue idle: {:?}", e)))?;
+
+                // 9. Clean up staging buffer
+                self.device.destroy_command_pool(command_pool, None);
+                self.device.destroy_buffer(staging_buffer, None);
+                self.allocator.lock().unwrap().free(staging_allocation)
+                    .map_err(|_e| RenderError::BackendError("Failed to free staging buffer allocation".to_string()))?;
+            }
+
             Ok(Arc::new(VulkanRendererTexture {
                 image,
                 view,
@@ -917,9 +1185,22 @@ impl Renderer for VulkanRenderer {
                 .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
             // Color blend state
-            let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
-                .color_write_mask(vk::ColorComponentFlags::RGBA)
-                .blend_enable(false);
+            let color_blend_attachment = if desc.enable_blending {
+                // Alpha blending: source * src_alpha + destination * (1 - src_alpha)
+                vk::PipelineColorBlendAttachmentState::default()
+                    .color_write_mask(vk::ColorComponentFlags::RGBA)
+                    .blend_enable(true)
+                    .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+                    .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                    .color_blend_op(vk::BlendOp::ADD)
+                    .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                    .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
+                    .alpha_blend_op(vk::BlendOp::ADD)
+            } else {
+                vk::PipelineColorBlendAttachmentState::default()
+                    .color_write_mask(vk::ColorComponentFlags::RGBA)
+                    .blend_enable(false)
+            };
 
             let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
                 .logic_op_enable(false)
@@ -950,12 +1231,23 @@ impl Renderer for VulkanRenderer {
                 })
                 .collect();
 
-            let layout_create_info = if push_constant_ranges.is_empty() {
-                vk::PipelineLayoutCreateInfo::default()
-            } else {
-                vk::PipelineLayoutCreateInfo::default()
-                    .push_constant_ranges(&push_constant_ranges)
-            };
+            // Convert u64 descriptor set layouts back to vk::DescriptorSetLayout
+            let descriptor_set_layouts: Vec<vk::DescriptorSetLayout> = desc.descriptor_set_layouts
+                .iter()
+                .map(|&layout| vk::DescriptorSetLayout::from_raw(layout))
+                .collect();
+
+            let mut layout_create_info = vk::PipelineLayoutCreateInfo::default();
+
+            // Add descriptor set layouts if present
+            if !descriptor_set_layouts.is_empty() {
+                layout_create_info = layout_create_info.set_layouts(&descriptor_set_layouts);
+            }
+
+            // Add push constant ranges if present
+            if !push_constant_ranges.is_empty() {
+                layout_create_info = layout_create_info.push_constant_ranges(&push_constant_ranges);
+            }
 
             let layout = self.device.create_pipeline_layout(&layout_create_info, None)
                 .map_err(|e| RenderError::BackendError(format!("Failed to create pipeline layout: {:?}", e)))?;
@@ -988,7 +1280,7 @@ impl Renderer for VulkanRenderer {
 
             Ok(Arc::new(VulkanRendererPipeline {
                 pipeline,
-                layout,
+                pipeline_layout: layout,
                 device: (*self.device).clone(),
             }))
         }
@@ -1062,6 +1354,15 @@ impl Drop for VulkanRenderer {
             for &fence in &self.submit_fences {
                 self.device.destroy_fence(fence, None);
             }
+
+            // Destroy descriptor set layout
+            self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+
+            // Destroy texture sampler
+            self.device.destroy_sampler(self.texture_sampler, None);
+
+            // Destroy descriptor pool
+            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
 
             // Drop allocator explicitly before destroying device
             ManuallyDrop::drop(&mut self.allocator);

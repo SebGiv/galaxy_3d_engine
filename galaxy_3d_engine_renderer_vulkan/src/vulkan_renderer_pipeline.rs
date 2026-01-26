@@ -7,8 +7,8 @@ use ash::vk;
 pub struct VulkanRendererPipeline {
     /// Vulkan graphics pipeline
     pub(crate) pipeline: vk::Pipeline,
-    /// Pipeline layout
-    pub(crate) layout: vk::PipelineLayout,
+    /// Pipeline layout (public so demos can access it for descriptor set binding)
+    pub pipeline_layout: vk::PipelineLayout,
     /// Vulkan device (for cleanup)
     pub(crate) device: ash::Device,
 }
@@ -23,7 +23,7 @@ impl Drop for VulkanRendererPipeline {
             // Destroy pipeline
             self.device.destroy_pipeline(self.pipeline, None);
             // Destroy pipeline layout
-            self.device.destroy_pipeline_layout(self.layout, None);
+            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }
 }

@@ -2,8 +2,8 @@
 
 > **Project**: Multi-API 3D Rendering Engine in Rust
 > **Author**: Claude & User collaboration
-> **Date**: 2026-01-25
-> **Status**: Phase 7 - Architecture Moderne (Proposition 2) ✅
+> **Date**: 2026-01-26
+> **Status**: Phase 8 - Textures & Transparence ✅
 
 ---
 
@@ -96,7 +96,94 @@ command_list.push_constants(0, &time)?;
 
 ---
 
-### 3. Memory Management
+### 3. Texture System & Descriptor Sets
+
+**Implémentation**: Support complet des textures avec descriptor sets Vulkan
+
+**Composants**:
+```rust
+// Texture avec données
+pub struct TextureDesc {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,  // Renommé de Format
+    pub usage: TextureUsage,
+    pub data: Option<Vec<u8>>,  // Données à uploader
+}
+
+// Pipeline avec blending
+pub struct PipelineDesc {
+    // ... autres champs ...
+    pub descriptor_set_layouts: Vec<u64>,  // vk::DescriptorSetLayout
+    pub enable_blending: bool,             // Alpha blending
+}
+```
+
+**Upload de texture**:
+```rust
+// 1. Créer staging buffer
+let staging_buffer = create_buffer(BufferDesc {
+    size: data.len(),
+    usage: BufferUsage::Vertex,
+})?;
+staging_buffer.update(0, &data)?;
+
+// 2. Layout transition: UNDEFINED → TRANSFER_DST
+pipeline_barrier(image, UNDEFINED, TRANSFER_DST_OPTIMAL);
+
+// 3. Copy buffer → image
+cmd_copy_buffer_to_image(staging_buffer, image);
+
+// 4. Layout transition: TRANSFER_DST → SHADER_READ_ONLY
+pipeline_barrier(image, TRANSFER_DST_OPTIMAL, SHADER_READ_ONLY_OPTIMAL);
+```
+
+**Descriptor Sets**:
+```rust
+// Renderer crée pool et layout
+descriptor_pool: vk::DescriptorPool,          // 1000 sets capacity
+descriptor_set_layout: vk::DescriptorSetLayout,  // binding 0, fragment shader
+texture_sampler: vk::Sampler,                 // linear filtering, repeat
+
+// Application crée descriptor set pour chaque texture
+let descriptor_set = renderer.create_texture_descriptor_set(&texture)?;
+
+// Bind dans command list
+command_list.bind_descriptor_sets(&[descriptor_set], pipeline_layout)?;
+```
+
+**Alpha Blending**:
+```rust
+// Configuration Vulkan
+if enable_blending {
+    color_blend_attachment
+        .blend_enable(true)
+        .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .color_blend_op(vk::BlendOp::ADD)
+        // Formula: result = src * src_alpha + dst * (1 - src_alpha)
+}
+```
+
+**Multi-Format Support**:
+```rust
+// Conversion RGB → RGBA pour BMP/JPEG
+match pixel_format {
+    PixelFormat::RGB => {
+        for pixel in rgb_data.chunks(3) {
+            rgba_data.extend_from_slice(pixel);  // R, G, B
+            rgba_data.push(255);                 // A (opaque)
+        }
+    },
+    PixelFormat::RGBA => {
+        rgba_data = rgb_data.to_vec();
+    },
+}
+```
+
+---
+
+### 4. Memory Management
 
 **Decision**: Integrate `gpu-allocator` avec gestion du cycle de vie
 
@@ -141,7 +228,7 @@ impl Drop for VulkanRendererCommandList {
 
 ---
 
-### 4. Synchronisation Vulkan
+### 5. Synchronisation Vulkan
 
 **Architecture**: Séparation swapchain et device submission
 
@@ -217,11 +304,15 @@ Galaxy/                                  # Workspace root
 └── Games/
     └── galaxy3d_demo/                  # Demo application
         ├── Cargo.toml
+        ├── images/                     # Images de test ✨
+        │   ├── Gnu_head_colour_large.png  # PNG avec alpha
+        │   ├── tigre.bmp               # BMP sans alpha (RGB)
+        │   └── tux.jpg                 # JPEG sans alpha (RGB)
         ├── shaders/
-        │   ├── triangle_animated.vert  # Vertex shader avec push constants ✨
-        │   └── triangle.frag
+        │   ├── textured_quad.vert      # Vertex shader pour quads texturés ✨
+        │   └── textured_quad.frag      # Fragment shader avec sampler2D ✨
         └── src/
-            └── main.rs                 # Utilise nouvelle architecture
+            └── main.rs                 # 3 quads texturés avec alpha blending ✨
 ```
 
 ### Architecture Principles
@@ -446,6 +537,33 @@ loop {
 
 ## ✅ Changelog
 
+### 2026-01-26 - Phase 8: Textures & Transparence
+- **Texture System**:
+  - ✅ Descriptor sets (pool de 1000, layout pour textures)
+  - ✅ Texture sampler (linear filtering, repeat addressing)
+  - ✅ Texture upload avec staging buffer et layout transitions
+  - ✅ Support de textures dans shaders (binding 0, sampler2D)
+  - ✅ Méthode `bind_descriptor_sets()` dans RenderCommandList
+- **Alpha Blending**:
+  - ✅ Flag `enable_blending: bool` dans `PipelineDesc`
+  - ✅ Configuration Vulkan (SRC_ALPHA, ONE_MINUS_SRC_ALPHA)
+  - ✅ Transparence fonctionnelle (zones transparentes affichent arrière-plan)
+- **API Changes**:
+  - ✅ `Format` → `TextureFormat` (renommage pour clarté)
+  - ✅ `TextureDesc.data: Option<Vec<u8>>` (upload de données)
+  - ✅ `PipelineDesc.enable_blending: bool` (contrôle alpha blending)
+  - ✅ Exports publics: `VulkanRendererPipeline`, `VulkanRendererCommandList`, `VulkanRendererTexture`
+- **Multi-Format Support**:
+  - ✅ PNG (RGBA, 4 canaux) - utilisé directement
+  - ✅ BMP (RGB, 3 canaux) - conversion RGB→RGBA
+  - ✅ JPEG (RGB, 3 canaux) - conversion RGB→RGBA
+  - ✅ Détection automatique via `galaxy_image::PixelFormat`
+- **Demo**:
+  - ✅ 3 quads texturés affichés côte à côte
+  - ✅ Chargement avec `galaxy_image` library
+  - ✅ Shaders: `textured_quad.vert` et `textured_quad.frag`
+- **Validation**: Zero Vulkan errors ✅
+
 ### 2026-01-26 - Architecture Simplifiée
 - **Breaking Changes**:
   - ❌ Supprimé `RendererDevice` (intégré dans `Renderer`)
@@ -493,11 +611,19 @@ loop {
 
 ## 🎯 Next Steps (Roadmap)
 
-### Phase 8: Render-to-Texture (TODO)
-- [ ] Descriptor sets support
-- [ ] Texture sampling in shaders
-- [ ] Offscreen render target creation
-- [ ] Post-processing demo (blur, bloom, etc.)
+### ✅ Phase 8: Textures & Transparence (DONE)
+- [x] Descriptor sets support (pool, layout, allocation)
+- [x] Texture sampling in shaders
+- [x] Texture upload avec staging buffer
+- [x] Layout transitions (UNDEFINED → TRANSFER_DST → SHADER_READ_ONLY)
+- [x] Sampler creation (linear filtering, repeat addressing)
+- [x] Alpha blending support (enable_blending flag)
+- [x] Format → TextureFormat renaming (clarté)
+- [x] Multi-format image loading (PNG/BMP/JPEG)
+- [x] RGB→RGBA conversion automatique
+- [x] Textured quad shaders (vertex + fragment)
+
+**Demo Status**: `galaxy3d_demo` affiche 3 quads texturés (PNG, BMP, JPEG) avec transparence ✅
 
 ### Phase 9: Index Buffers (TODO)
 - [ ] Index buffer creation

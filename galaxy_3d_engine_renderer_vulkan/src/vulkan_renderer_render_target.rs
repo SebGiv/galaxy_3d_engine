@@ -1,6 +1,6 @@
 /// VulkanRendererRenderTarget - Vulkan implementation of RendererRenderTarget trait
 
-use galaxy_3d_engine::{RendererRenderTarget, Format};
+use galaxy_3d_engine::{RendererRenderTarget, TextureFormat};
 use ash::vk;
 
 /// Vulkan render target implementation
@@ -12,7 +12,7 @@ pub struct VulkanRendererRenderTarget {
     /// Height in pixels
     height: u32,
     /// Pixel format
-    format: Format,
+    format: TextureFormat,
     /// Vulkan image view
     pub(crate) image_view: vk::ImageView,
     /// Vulkan device (for potential cleanup)
@@ -33,7 +33,7 @@ impl VulkanRendererRenderTarget {
     pub fn new_swapchain_target(
         width: u32,
         height: u32,
-        format: Format,
+        format: TextureFormat,
         image_view: vk::ImageView,
     ) -> Self {
         Self {
@@ -58,7 +58,7 @@ impl VulkanRendererRenderTarget {
     pub fn new_texture_target(
         width: u32,
         height: u32,
-        format: Format,
+        format: TextureFormat,
         image_view: vk::ImageView,
         device: ash::Device,
     ) -> Self {
@@ -82,7 +82,7 @@ impl RendererRenderTarget for VulkanRendererRenderTarget {
         self.height
     }
 
-    fn format(&self) -> Format {
+    fn format(&self) -> TextureFormat {
         self.format
     }
 }
