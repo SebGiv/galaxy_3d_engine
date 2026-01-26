@@ -179,7 +179,10 @@ impl VulkanRenderer {
                 crate::vulkan_debug::init_debug_config(crate::vulkan_debug::DebugConfig {
                     severity: config.debug_severity,
                     output: config.debug_output.clone(),
+                    message_filter: config.debug_message_filter,
                     break_on_error: config.break_on_validation_error,
+                    panic_on_error: config.panic_on_error,
+                    enable_stats: config.enable_validation_stats,
                 });
 
                 // Determine severity flags based on config

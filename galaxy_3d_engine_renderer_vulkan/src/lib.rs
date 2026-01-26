@@ -30,6 +30,9 @@ use winit::window::Window;
 pub use vulkan_renderer::VulkanRenderer;
 pub use vulkan_renderer_swapchain::VulkanRendererSwapchain;
 
+// Re-export debug utilities
+pub use vulkan_debug::{get_validation_stats, print_validation_stats_report};
+
 /// Register the Vulkan backend with the plugin system
 ///
 /// # Example
