@@ -211,20 +211,11 @@ impl VulkanRendererSwapchain {
         self.render_finished_semaphores[image_index as usize]
     }
 
-    /// Get the swapchain format
-    pub fn format(&self) -> vk::Format {
-        self.swapchain_format
-    }
-
-    /// Get the swapchain extent
-    pub fn extent(&self) -> vk::Extent2D {
-        self.swapchain_extent
-    }
-
-    /// Get synchronization info for submitting with this swapchain
+    /// Get synchronization info for submitting with this swapchain (crate-private)
     ///
-    /// Returns (wait_semaphore, signal_semaphore) for the current frame and image
-    pub fn sync_info(&self, image_index: u32) -> (vk::Semaphore, vk::Semaphore) {
+    /// Returns (wait_semaphore, signal_semaphore) for the current frame and image.
+    /// This is used internally by VulkanRenderer::submit_with_swapchain().
+    pub(crate) fn sync_info(&self, image_index: u32) -> (vk::Semaphore, vk::Semaphore) {
         (
             self.image_available_semaphores[self.current_frame],
             self.render_finished_semaphores[image_index as usize],
@@ -396,6 +387,18 @@ impl RendererSwapchain for VulkanRendererSwapchain {
 
     fn image_count(&self) -> usize {
         self.swapchain_images.len()
+    }
+
+    fn width(&self) -> u32 {
+        self.swapchain_extent.width
+    }
+
+    fn height(&self) -> u32 {
+        self.swapchain_extent.height
+    }
+
+    fn format(&self) -> galaxy_3d_engine::TextureFormat {
+        vk_format_to_format(self.swapchain_format)
     }
 }
 

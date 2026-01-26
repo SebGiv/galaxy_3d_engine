@@ -2,7 +2,7 @@
 
 use galaxy_3d_engine::{
     RendererCommandList, RendererRenderPass, RendererRenderTarget, RendererPipeline,
-    RendererBuffer, RenderResult, RenderError, Viewport, Rect2D, ClearValue,
+    RendererBuffer, RendererDescriptorSet, RenderResult, RenderError, Viewport, Rect2D, ClearValue,
 };
 use ash::vk;
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use crate::vulkan_renderer_render_target::VulkanRendererRenderTarget;
 use crate::vulkan_renderer_render_pass::VulkanRendererRenderPass;
 use crate::vulkan_renderer_pipeline::VulkanRendererPipeline;
 use crate::vulkan_renderer_buffer::VulkanRendererBuffer;
+use crate::vulkan_renderer_descriptor_set::VulkanRendererDescriptorSet;
 
 /// Vulkan command list implementation
 ///
@@ -427,6 +428,44 @@ impl RendererCommandList for VulkanRendererCommandList {
                 first_index,
                 vertex_offset,
                 0, // first_instance
+            );
+
+            Ok(())
+        }
+    }
+
+    fn bind_descriptor_sets(
+        &mut self,
+        pipeline: &Arc<dyn RendererPipeline>,
+        descriptor_sets: &[&Arc<dyn RendererDescriptorSet>],
+    ) -> RenderResult<()> {
+        if !self.is_recording {
+            return Err(RenderError::BackendError("Command list not recording".to_string()));
+        }
+
+        unsafe {
+            // Downcast pipeline to extract pipeline_layout (now private)
+            let vk_pipeline = pipeline.as_ref() as *const dyn RendererPipeline as *const VulkanRendererPipeline;
+            let vk_pipeline = &*vk_pipeline;
+            let pipeline_layout = vk_pipeline.pipeline_layout;
+
+            // Downcast descriptor sets from abstract types to Vulkan types
+            let vk_descriptor_sets: Vec<vk::DescriptorSet> = descriptor_sets
+                .iter()
+                .map(|ds| {
+                    let vk_ds = ds.as_ref() as *const dyn RendererDescriptorSet as *const VulkanRendererDescriptorSet;
+                    (*vk_ds).descriptor_set
+                })
+                .collect();
+
+            // Bind Vulkan descriptor sets
+            self.device.cmd_bind_descriptor_sets(
+                self.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout,
+                0, // first_set
+                &vk_descriptor_sets,
+                &[], // dynamic_offsets
             );
 
             Ok(())

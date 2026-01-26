@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use crate::renderer::{
     RenderResult, RendererRenderPass, RendererRenderTarget, RendererPipeline, RendererBuffer,
+    RendererDescriptorSet,
 };
 
 /// Command list for recording rendering commands
@@ -52,6 +53,21 @@ pub trait RendererCommandList: Send + Sync {
     ///
     /// * `pipeline` - Pipeline to bind
     fn bind_pipeline(&mut self, pipeline: &Arc<dyn RendererPipeline>) -> RenderResult<()>;
+
+    /// Bind descriptor sets (for textures, uniform buffers, etc.)
+    ///
+    /// Descriptor sets group together resources that shaders can access.
+    /// This method binds descriptor sets to the currently bound pipeline.
+    ///
+    /// # Arguments
+    ///
+    /// * `pipeline` - Pipeline to bind descriptor sets to (needed to extract pipeline layout)
+    /// * `descriptor_sets` - Slice of descriptor sets to bind
+    fn bind_descriptor_sets(
+        &mut self,
+        pipeline: &Arc<dyn RendererPipeline>,
+        descriptor_sets: &[&Arc<dyn RendererDescriptorSet>],
+    ) -> RenderResult<()>;
 
     /// Push constants to the pipeline
     ///

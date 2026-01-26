@@ -12,6 +12,7 @@ pub mod renderer_command_list;
 pub mod renderer_render_target;
 pub mod renderer_render_pass;
 pub mod renderer_swapchain;
+pub mod renderer_descriptor_set;
 
 // Re-export everything from renderer.rs
 pub use renderer::*;
@@ -27,3 +28,4 @@ pub use renderer_command_list::*;
 pub use renderer_render_target::*;
 pub use renderer_render_pass::*;
 pub use renderer_swapchain::*;
+pub use renderer_descriptor_set::*;

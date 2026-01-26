@@ -10,7 +10,7 @@ use crate::renderer::{
     RendererBuffer, RendererTexture, RendererShader, RendererPipeline,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
     RendererCommandList, RendererRenderPass, RendererRenderTarget, RendererSwapchain,
-    RendererRenderPassDesc, RendererRenderTargetDesc,
+    RendererRenderPassDesc, RendererRenderTargetDesc, RendererDescriptorSet,
 };
 
 // ============================================================================
@@ -284,6 +284,41 @@ pub trait Renderer: Send + Sync {
     ///
     /// * `commands` - Slice of command lists to submit
     fn submit(&self, commands: &[&dyn RendererCommandList]) -> RenderResult<()>;
+
+    /// Submit command lists with swapchain synchronization
+    ///
+    /// This method automatically handles synchronization with the swapchain
+    /// (wait for image available, signal render finished).
+    ///
+    /// # Arguments
+    ///
+    /// * `commands` - Slice of command lists to submit
+    /// * `swapchain` - Swapchain to synchronize with
+    /// * `image_index` - Index of the swapchain image being rendered to
+    fn submit_with_swapchain(
+        &self,
+        commands: &[&dyn RendererCommandList],
+        swapchain: &dyn RendererSwapchain,
+        image_index: u32,
+    ) -> RenderResult<()>;
+
+    /// Create a descriptor set for a texture
+    ///
+    /// Descriptor sets group together resources (textures, uniform buffers, etc.)
+    /// that shaders can access. This method creates a descriptor set specifically
+    /// for binding a single texture.
+    ///
+    /// # Arguments
+    ///
+    /// * `texture` - Texture to create descriptor set for
+    ///
+    /// # Returns
+    ///
+    /// A shared pointer to the created descriptor set
+    fn create_descriptor_set_for_texture(
+        &self,
+        texture: &Arc<dyn RendererTexture>,
+    ) -> RenderResult<Arc<dyn RendererDescriptorSet>>;
 
     /// Wait for all GPU operations to complete
     fn wait_idle(&self) -> RenderResult<()>;

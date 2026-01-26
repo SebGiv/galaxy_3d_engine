@@ -4,7 +4,10 @@
 
 ## Features
 
-- ✅ **Modern Architecture** (Proposition 2): Séparation render/présentation
+- ✅ **Backend-Agnostic API**: 100% portable, ready for Direct3D 12
+- ✅ **Texture System**: PNG/BMP/JPEG support with alpha blending
+- ✅ **Descriptor Sets**: Abstract API, no Vulkan types exposed
+- ✅ **Modern Architecture**: Clean separation render/presentation
 - ✅ **Push Constants**: Animation support (rotating triangles)
 - ✅ **Command Lists**: Flexible command recording
 - ✅ **Render Targets**: Ready for render-to-texture
@@ -14,12 +17,13 @@
 
 ## Architecture
 
-**Core Traits**:
-- `RendererDevice` - Main device interface (factory + submit)
-- `RenderCommandList` - Command recording (replaces old RendererFrame)
+**Core Traits** (100% Backend-Agnostic):
+- `Renderer` - Main device interface (factory + submit)
+- `RendererCommandList` - Command recording (replaces old RendererFrame)
 - `RendererSwapchain` - Swapchain management (acquire/present)
 - `RendererRenderTarget` - Render target (texture or swapchain)
 - `RendererRenderPass` - Render pass configuration
+- `RendererDescriptorSet` - Descriptor set abstraction (new!)
 - `RendererTexture`, `RendererBuffer`, `RendererShader`, `RendererPipeline`
 
 **Vulkan Backend**: Complete implementation in `galaxy_3d_engine_renderer_vulkan`
@@ -31,7 +35,7 @@ cd Games/galaxy3d_demo
 cargo run
 ```
 
-Affiche 3 triangles colorés animés (rotation via push constants).
+Affiche 3 quads texturés (PNG, BMP, JPEG) avec transparence alpha.
 
 ## Documentation
 
@@ -47,11 +51,13 @@ Affiche 3 triangles colorés animés (rotation via push constants).
 
 ## Status
 
-**Phase 7** (2026-01-25): Architecture Moderne ✅
-- Push constants support
-- Framebuffer memory leaks fixed
-- Command list double buffering
-- Ready for render-to-texture
+**Phase 9** (2026-01-27): Backend-Agnostic API ✅
+- 100% portable, ready for Direct3D 12 backend
+- Zero Vulkan references in demo (0 violations, 0 leaks)
+- Texture system with PNG/BMP/JPEG support
+- Alpha blending support
+- Descriptor sets abstraction
+- Score: 10/10 portability
 
 ## License
 

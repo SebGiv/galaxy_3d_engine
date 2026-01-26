@@ -2,7 +2,7 @@
 
 use galaxy_3d_engine::{
     Renderer, RendererCommandList, RendererRenderTarget, RendererRenderPass, RendererSwapchain,
-    RendererTexture, RendererBuffer, RendererShader, RendererPipeline,
+    RendererTexture, RendererBuffer, RendererShader, RendererPipeline, RendererDescriptorSet,
     RendererRenderTargetDesc, RendererRenderPassDesc,
     TextureDesc, BufferDesc, ShaderDesc, PipelineDesc,
     RenderResult, RenderError, TextureFormat, ShaderStage, BufferUsage, PrimitiveTopology,
@@ -25,6 +25,7 @@ use crate::vulkan_renderer_command_list::VulkanRendererCommandList;
 use crate::vulkan_renderer_render_target::VulkanRendererRenderTarget;
 use crate::vulkan_renderer_render_pass::VulkanRendererRenderPass;
 use crate::vulkan_renderer_swapchain::VulkanRendererSwapchain;
+use crate::vulkan_renderer_descriptor_set::VulkanRendererDescriptorSet;
 
 /// Vulkan device implementation
 ///
@@ -512,9 +513,20 @@ impl VulkanRenderer {
     ///
     /// # Returns
     ///
-    /// The descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader stage
-    pub fn get_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
+    /// Get descriptor set layout (crate-private)
+    ///
+    /// The descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader stage.
+    /// This is used internally for pipeline creation and descriptor set allocation.
+    pub(crate) fn get_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
         self.descriptor_set_layout
+    }
+
+    /// Get descriptor set layout as u64 for pipeline creation (public API)
+    ///
+    /// Returns the descriptor set layout handle as a u64, which can be passed to PipelineDesc.
+    /// This avoids exposing Vulkan types in the public API.
+    pub fn get_descriptor_set_layout_handle(&self) -> u64 {
+        Handle::as_raw(self.descriptor_set_layout)
     }
 
     /// Create a descriptor set for a texture
@@ -1314,6 +1326,109 @@ impl Renderer for VulkanRenderer {
             // Submit
             let submit_info = vk::SubmitInfo::default()
                 .command_buffers(&command_buffers);
+
+            self.device
+                .queue_submit(
+                    self.graphics_queue,
+                    &[submit_info],
+                    self.submit_fences[self.current_submit_fence],
+                )
+                .map_err(|e| RenderError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
+
+            Ok(())
+        }
+    }
+
+    fn create_descriptor_set_for_texture(
+        &self,
+        texture: &Arc<dyn RendererTexture>,
+    ) -> RenderResult<Arc<dyn RendererDescriptorSet>> {
+        // Downcast to VulkanRendererTexture internally (not in demo)
+        let vk_texture = texture.as_ref() as *const dyn RendererTexture as *const VulkanRendererTexture;
+        let vk_texture = unsafe { &*vk_texture };
+
+        unsafe {
+            // Allocate descriptor set from pool
+            let layouts = [self.descriptor_set_layout];
+            let allocate_info = vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(self.descriptor_pool)
+                .set_layouts(&layouts);
+
+            let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
+                .map_err(|e| RenderError::BackendError(format!("Failed to allocate descriptor set: {:?}", e)))?;
+
+            let descriptor_set = descriptor_sets[0];
+
+            // Update descriptor set to point to the texture
+            let image_info = vk::DescriptorImageInfo::default()
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image_view(vk_texture.view)
+                .sampler(self.texture_sampler);
+
+            let descriptor_write = vk::WriteDescriptorSet::default()
+                .dst_set(descriptor_set)
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(std::slice::from_ref(&image_info));
+
+            self.device.update_descriptor_sets(std::slice::from_ref(&descriptor_write), &[]);
+
+            // Wrap in abstract type
+            Ok(Arc::new(VulkanRendererDescriptorSet {
+                descriptor_set,
+                device: (*self.device).clone(),
+            }))
+        }
+    }
+
+    fn submit_with_swapchain(
+        &self,
+        commands: &[&dyn RendererCommandList],
+        swapchain: &dyn RendererSwapchain,
+        image_index: u32,
+    ) -> RenderResult<()> {
+        // Downcast swapchain to VulkanRendererSwapchain internally (not in demo)
+        let vk_swapchain = swapchain as *const dyn RendererSwapchain as *const VulkanRendererSwapchain;
+        let vk_swapchain = unsafe { &*vk_swapchain };
+
+        // Get synchronization primitives from swapchain (now private)
+        let (wait_semaphore, signal_semaphore) = vk_swapchain.sync_info(image_index);
+
+        unsafe {
+            // Wait for previous submit with this fence
+            self.device
+                .wait_for_fences(
+                    &[self.submit_fences[self.current_submit_fence]],
+                    true,
+                    u64::MAX,
+                )
+                .map_err(|e| RenderError::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
+
+            // Reset fence
+            self.device
+                .reset_fences(&[self.submit_fences[self.current_submit_fence]])
+                .map_err(|e| RenderError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
+
+            // Collect command buffers
+            let command_buffers: Vec<vk::CommandBuffer> = commands
+                .iter()
+                .map(|cmd| {
+                    let vk_cmd = *cmd as *const dyn RendererCommandList as *const VulkanRendererCommandList;
+                    (&*vk_cmd).command_buffer()
+                })
+                .collect();
+
+            // Submit with synchronization
+            let wait_semaphores = [wait_semaphore];
+            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+            let signal_semaphores = [signal_semaphore];
+
+            let submit_info = vk::SubmitInfo::default()
+                .wait_semaphores(&wait_semaphores)
+                .wait_dst_stage_mask(&wait_stages)
+                .command_buffers(&command_buffers)
+                .signal_semaphores(&signal_semaphores);
 
             self.device
                 .queue_submit(

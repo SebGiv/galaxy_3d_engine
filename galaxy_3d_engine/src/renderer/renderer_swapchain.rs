@@ -1,7 +1,7 @@
 /// RendererSwapchain trait - for window presentation
 
 use std::sync::Arc;
-use crate::renderer::{RenderResult, RendererRenderTarget};
+use crate::renderer::{RenderResult, RendererRenderTarget, TextureFormat};
 
 /// Swapchain for presenting rendered images to a window
 ///
@@ -34,4 +34,13 @@ pub trait RendererSwapchain: Send + Sync {
 
     /// Get the number of images in the swapchain
     fn image_count(&self) -> usize;
+
+    /// Get the width of the swapchain images in pixels
+    fn width(&self) -> u32;
+
+    /// Get the height of the swapchain images in pixels
+    fn height(&self) -> u32;
+
+    /// Get the pixel format of the swapchain images
+    fn format(&self) -> TextureFormat;
 }
