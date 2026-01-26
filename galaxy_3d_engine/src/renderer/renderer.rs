@@ -84,6 +84,57 @@ impl Default for DebugOutput {
     }
 }
 
+/// Debug message category filter
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebugMessageFilter {
+    /// Show general messages (device creation, etc.)
+    pub show_general: bool,
+    /// Show validation messages (API usage errors)
+    pub show_validation: bool,
+    /// Show performance warnings (suboptimal usage)
+    pub show_performance: bool,
+}
+
+impl Default for DebugMessageFilter {
+    fn default() -> Self {
+        Self {
+            show_general: true,
+            show_validation: true,
+            show_performance: true,
+        }
+    }
+}
+
+/// Validation statistics
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ValidationStats {
+    /// Number of errors
+    pub errors: u32,
+    /// Number of warnings
+    pub warnings: u32,
+    /// Number of info messages
+    pub info: u32,
+    /// Number of verbose messages
+    pub verbose: u32,
+}
+
+impl ValidationStats {
+    /// Get total message count
+    pub fn total(&self) -> u32 {
+        self.errors + self.warnings + self.info + self.verbose
+    }
+
+    /// Check if any errors were recorded
+    pub fn has_errors(&self) -> bool {
+        self.errors > 0
+    }
+
+    /// Check if any warnings were recorded
+    pub fn has_warnings(&self) -> bool {
+        self.warnings > 0
+    }
+}
+
 /// Renderer configuration
 #[derive(Debug, Clone)]
 pub struct RendererConfig {
@@ -97,8 +148,14 @@ pub struct RendererConfig {
     pub debug_severity: DebugSeverity,
     /// Debug output destination
     pub debug_output: DebugOutput,
+    /// Debug message category filter
+    pub debug_message_filter: DebugMessageFilter,
     /// Break on validation error (useful for debugging)
     pub break_on_validation_error: bool,
+    /// Panic on any error (strict mode for development)
+    pub panic_on_error: bool,
+    /// Track and display validation statistics
+    pub enable_validation_stats: bool,
 }
 
 impl Default for RendererConfig {
@@ -109,7 +166,10 @@ impl Default for RendererConfig {
             app_version: (1, 0, 0),
             debug_severity: DebugSeverity::default(),
             debug_output: DebugOutput::default(),
+            debug_message_filter: DebugMessageFilter::default(),
             break_on_validation_error: false,
+            panic_on_error: false,
+            enable_validation_stats: cfg!(debug_assertions),
         }
     }
 }
