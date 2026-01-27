@@ -320,6 +320,16 @@ pub trait Renderer: Send + Sync {
         texture: &Arc<dyn RendererTexture>,
     ) -> RenderResult<Arc<dyn RendererDescriptorSet>>;
 
+    /// Get descriptor set layout handle
+    ///
+    /// Returns the descriptor set layout as a u64 handle that can be used
+    /// in pipeline creation. This avoids exposing backend-specific types.
+    ///
+    /// # Returns
+    ///
+    /// A u64 handle representing the descriptor set layout
+    fn get_descriptor_set_layout_handle(&self) -> u64;
+
     /// Wait for all GPU operations to complete
     fn wait_idle(&self) -> RenderResult<()>;
 

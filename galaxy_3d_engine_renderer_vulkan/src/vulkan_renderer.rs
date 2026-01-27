@@ -1382,6 +1382,10 @@ impl Renderer for VulkanRenderer {
         }
     }
 
+    fn get_descriptor_set_layout_handle(&self) -> u64 {
+        Handle::as_raw(self.descriptor_set_layout)
+    }
+
     fn submit_with_swapchain(
         &self,
         commands: &[&dyn RendererCommandList],
