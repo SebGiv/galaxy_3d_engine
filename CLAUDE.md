@@ -687,6 +687,1772 @@ loop {
 
 ---
 
+## 🖼️ Phase 10-12 : Système de Textures Avancé (Planification)
+
+### Vue d'Ensemble
+
+Ces phases concernent l'amélioration du système de textures pour atteindre les standards AAA :
+- **Phase 10** : Mipmaps CPU avec filtres de qualité (Lanczos-3)
+- **Phase 11** : Support compression BC7/BC5/BC4 avec fichiers DDS
+- **Phase 12** : Support KTX2 multi-plateforme et optimisations avancées
+
+---
+
+### 1. Types de Textures Modernes
+
+#### 1.1 Texture Simple (Actuel - Phase 9)
+
+**Définition** : Une texture = une ressource GPU
+
+```rust
+// Actuellement implémenté
+let texture = renderer.create_texture(TextureDesc {
+    format: TextureFormat::RGBA8Unorm,
+    width: 1024,
+    height: 1024,
+    data: &rgba_bytes,
+});
+```
+
+**Caractéristiques** :
+- ✅ Simple à utiliser
+- ✅ Un descriptor par texture
+- ⚠️ Limité à 16-32 textures simultanées (limitation descriptors)
+
+---
+
+#### 1.2 Texture Atlas
+
+**Définition** : Plusieurs textures packées dans une seule image physique
+
+```
+Atlas 2048×2048 :
+┌─────────────────────────────────┐
+│ Texture A  │ Texture B │ Tex C │
+│ (512×512)  │ (512×512) │(256×) │
+├────────────┼───────────┼───────┤
+│ Texture D  │ Texture E │ Pad   │
+│ (1024×512) │ (512×512) │       │
+└─────────────────────────────────┘
+```
+
+**Usage** :
+```rust
+// UV mapping ajusté pour chaque sous-texture
+let uv_texture_a = uv * vec2(0.25, 0.5) + vec2(0.0, 0.0);
+let color = texture(atlas, uv_texture_a);
+```
+
+**Avantages** :
+- ✅ Réduit le nombre de descriptors (1 atlas = 50+ textures)
+- ✅ Bon pour sprites 2D, UI, particules
+
+**Inconvénients** :
+- ❌ Problèmes de bleeding avec mipmaps (filtrage déborde)
+- ❌ Toutes les textures doivent avoir même format
+- ❌ Complexe à gérer (packing, UV remapping)
+
+**Recommandation** : Utiliser pour UI/sprites 2D uniquement (Phase 12+)
+
+---
+
+#### 1.3 Texture Array
+
+**Définition** : Stack de textures de même taille, indexées
+
+```
+Texture Array (4 layers, 1024×1024) :
+┌─────────────┐
+│ Layer 0     │ ← Grass
+├─────────────┤
+│ Layer 1     │ ← Stone
+├─────────────┤
+│ Layer 2     │ ← Wood
+├─────────────┤
+│ Layer 3     │ ← Metal
+└─────────────┘
+```
+
+**Usage** :
+```glsl
+// Shader
+uniform sampler2DArray terrainTextures; // 1 descriptor!
+
+void main() {
+    int materialID = getMaterialID(); // 0-3
+    vec4 color = texture(terrainTextures, vec3(uv, materialID));
+}
+```
+
+**Avantages** :
+- ✅ 1 descriptor = 256+ textures (Vulkan limite : 2048 layers)
+- ✅ Mipmaps indépendants par layer (pas de bleeding)
+- ✅ Idéal pour terrain, decals, material systems
+
+**Inconvénients** :
+- ⚠️ Toutes les layers doivent avoir même taille/format
+- ⚠️ Gaspillage si textures de tailles variées
+
+**Recommandation** : Utiliser pour terrains, materials (Phase 12+)
+
+---
+
+#### 1.4 Bindless Textures (Descriptor Indexing)
+
+**Définition** : Array de descriptors, indexation dynamique en shader
+
+```rust
+// Créer descriptor pool large
+let descriptors = renderer.create_descriptor_array(1000); // 1000 textures
+
+// Bind toutes les textures dans un seul descriptor
+for (i, texture) in textures.iter().enumerate() {
+    descriptors.bind_texture(i, texture);
+}
+```
+
+**Usage** :
+```glsl
+// Shader
+layout(binding = 0) uniform sampler2D allTextures[1000]; // Non-uniform indexing
+
+void main() {
+    int textureID = material.diffuseTextureID; // Peut varier par pixel!
+    vec4 color = texture(allTextures[textureID], uv);
+}
+```
+
+**Avantages** :
+- ✅ Pas de limite pratique (1000+ textures)
+- ✅ Pas de rebinding entre draw calls
+- ✅ Idéal pour open world, batching
+
+**Prérequis** :
+- Vulkan 1.2+ avec `VK_EXT_descriptor_indexing`
+- Support GPU (97.8% des GPU modernes)
+
+**Recommandation** : Implémenter en Phase 12+ (optimisation)
+
+---
+
+#### 1.5 Virtual Texturing (Mega Textures)
+
+**Définition** : Streaming de tuiles de texture depuis disque
+
+**Principe** :
+- Texture virtuelle 32K×32K (trop grosse pour VRAM)
+- Divisée en tuiles 512×512
+- Seules les tuiles visibles sont chargées en VRAM
+
+**Usage** : id Tech (Rage, Doom Eternal), Unreal Engine 5 (Virtual Textures)
+
+**Recommandation** : Hors scope Galaxy3D (complexité AAA)
+
+---
+
+### 2. Mipmaps
+
+#### 2.1 Qu'est-ce qu'un Mipmap ?
+
+**Définition** : Chaîne de versions pré-calculées d'une texture, chacune 2× plus petite
+
+```
+Texture 1024×1024 avec mipmaps :
+Mip 0 : 1024×1024 (original)    4 MB
+Mip 1 :  512×512                1 MB
+Mip 2 :  256×256                256 KB
+Mip 3 :  128×128                64 KB
+...
+Mip 10:    1×1                  4 bytes
+
+Total : 5.33 MB (original × 1.33)
+```
+
+**Pourquoi utiliser des mipmaps ?**
+
+1. **Qualité visuelle** : Anti-aliasing, élimine moiré/scintillement
+2. **Performance** : Cache coherence (accès mémoire contigus)
+3. **Bande passante** : Moins de données à lire (1/4 par niveau)
+
+**Sélection automatique GPU** :
+```glsl
+// GPU choisit automatiquement le mipmap selon distance
+vec4 color = texture(sampler, uv);
+// Proche : Mip 0 (détails max)
+// Moyen : Mip 3-5 (bon équilibre)
+// Loin : Mip 8-10 (économie bande passante)
+```
+
+---
+
+#### 2.2 Génération Mipmaps : CPU vs GPU
+
+**Option A : GPU (Actuel - Phase 9)**
+
+```rust
+// Galaxy3D Phase 9
+let texture = renderer.create_texture(TextureDesc {
+    data: &rgba_bytes,
+    generate_mipmaps: true, // GPU génère (Box filter)
+});
+```
+
+**Implémentation Vulkan** :
+```cpp
+vkCmdBlitImage(
+    command_buffer,
+    src_image, src_layout, // Mip N
+    dst_image, dst_layout, // Mip N+1 (2× plus petit)
+    VK_FILTER_LINEAR       // Box filter (moyenne 2×2)
+);
+```
+
+**Avantages** :
+- ✅ Rapide (< 1 ms GPU)
+- ✅ Simple à implémenter
+
+**Inconvénients** :
+- ❌ Qualité faible (Box filter = moyenne 2×2)
+- ❌ Artefacts visibles (aliasing, perte détails)
+- ❌ Score qualité : 3/10
+
+---
+
+**Option B : CPU Offline (Recommandé AAA)**
+
+```rust
+// Phase 11 : Build pipeline
+fn build_texture(source: &Path) {
+    let rgba = load_png(source)?;
+
+    // Générer mipmaps CPU (Lanczos-3)
+    let mipmaps = generate_mipmaps_lanczos3(&rgba); // 50-100 ms
+
+    // Compresser BC7
+    let bc7_mipmaps = mipmaps.iter()
+        .map(|m| compress_bc7(m, Quality::High))
+        .collect();
+
+    // Sauvegarder DDS
+    save_dds("texture.dds", bc7_mipmaps);
+}
+```
+
+**Avantages** :
+- ✅ Qualité maximale (Lanczos-3, Kaiser, etc.)
+- ✅ Mipmaps pré-calculés (runtime = 0 coût)
+- ✅ Score qualité : 9-10/10
+
+**Inconvénients** :
+- ⚠️ Build time (50-200 ms par texture)
+
+---
+
+**Option C : CPU Runtime (Phase 10)**
+
+```rust
+// Phase 10 : Runtime avec crate image
+fn load_texture_with_mipmaps(path: &str) -> Texture {
+    let rgba = image::open(path)?.to_rgba8();
+
+    // Générer mipmaps CPU (Lanczos-3)
+    let mipmaps = generate_mipmaps_lanczos3(&rgba); // 50 ms
+
+    renderer.create_texture(TextureDesc {
+        data: &rgba,
+        mipmap_data: Some(mipmaps), // Pré-calculés CPU
+    })
+}
+```
+
+**Avantages** :
+- ✅ Qualité excellente (Lanczos-3)
+- ✅ Pas de build pipeline nécessaire
+
+**Inconvénients** :
+- ⚠️ Chargement plus lent (+50 ms par texture)
+
+---
+
+#### 2.3 Filtres de Génération Mipmaps
+
+| Filtre | Qualité | Vitesse CPU | Usage | Artefacts |
+|--------|---------|-------------|-------|-----------|
+| **Box** (GPU) | 3/10 | N/A (GPU) | Prototypage | Aliasing fort, perte détails |
+| **Bilinear** | 5/10 | Rapide | Legacy | Aliasing modéré |
+| **Bicubic** | 7/10 | Moyen | Bon compromis | Léger flou |
+| **Lanczos-3** | 9/10 | Lent | AAA Standard | Minimal (sharpness excellente) |
+| **Kaiser** | 10/10 | Très lent | Unity default | Aucun (qualité parfaite) |
+
+**Recommandation** :
+- **Phase 9 (actuel)** : Box GPU (prototypage)
+- **Phase 10** : Lanczos-3 CPU runtime
+- **Phase 11+** : Lanczos-3 CPU offline (build pipeline)
+
+**Implémentation Lanczos-3** :
+```rust
+use image::imageops::FilterType;
+
+fn generate_mipmaps_lanczos3(image: &RgbaImage) -> Vec<RgbaImage> {
+    let mut mipmaps = vec![image.clone()];
+    let (mut w, mut h) = image.dimensions();
+
+    while w > 1 || h > 1 {
+        w = (w / 2).max(1);
+        h = (h / 2).max(1);
+
+        let mip = image::imageops::resize(
+            mipmaps.last().unwrap(),
+            w, h,
+            FilterType::Lanczos3 // Filtre Lanczos-3
+        );
+        mipmaps.push(mip);
+    }
+
+    mipmaps
+}
+```
+
+---
+
+### 3. Compression Textures
+
+#### 3.1 DDS : Format Conteneur
+
+**DDS** = DirectDraw Surface (Microsoft)
+
+**Rôle** : Conteneur de fichier (comme .ZIP) qui stocke :
+- Données texture (compressées ou non)
+- Mipmaps (pré-calculés)
+- Metadata (format, taille, flags)
+
+**Structure fichier** :
+```
+texture.dds :
+├─ Header (128 bytes)
+│  ├─ Magic "DDS "
+│  ├─ Width, Height
+│  ├─ Mipmap count
+│  └─ Format (BC7, BC5, RGBA8, etc.)
+├─ Mipmap 0 (1024×1024) - BC7 data
+├─ Mipmap 1 (512×512) - BC7 data
+├─ Mipmap 2 (256×256) - BC7 data
+└─ ...
+```
+
+**Important** : DDS peut contenir N'IMPORTE QUEL format :
+- ✅ BC7 compressé
+- ✅ BC1/BC3/BC5 compressés
+- ✅ RGBA8 non compressé
+- ✅ Float16/32 formats (HDR)
+
+---
+
+#### 3.2 Formats de Compression BC (Block Compression)
+
+**BC** = Block Compression (DirectX 10+)
+
+Principe : Compresser blocks 4×4 pixels (16 pixels → N bytes)
+
+| Format | Channels | Ratio | Taille 1K | Usage | Qualité |
+|--------|----------|-------|-----------|-------|---------|
+| **BC1** (DXT1) | RGB(A*) | 6:1 ou 8:1 | 512 KB | Legacy diffuse | 6/10 |
+| **BC3** (DXT5) | RGBA | 4:1 | 1 MB | Legacy diffuse+alpha | 6/10 |
+| **BC4** | R | 8:1 | 512 KB | Grayscale (height, roughness) | 8/10 |
+| **BC5** | RG | 4:1 | 1 MB | Normal maps | 10/10 |
+| **BC6H** | RGB HDR | 6:1 | 512 KB | HDR lighting (16-bit float) | 10/10 |
+| **BC7** | RGBA | 4:1 | 1 MB | Modern diffuse (best) | 10/10 |
+
+\* BC1 alpha = 1-bit (0 ou 255, pas de semi-transparence)
+
+**Comparaison RGBA8 vs BC7** :
+```
+Texture 1024×1024 (avec mipmaps) :
+
+RGBA8 non compressé :
+  - Taille VRAM : 5.33 MB
+  - Bande passante : Élevée (4 bytes/pixel)
+  - FPS : Baseline
+
+BC7 compressé :
+  - Taille VRAM : 1.33 MB (4× moins!)
+  - Bande passante : Faible (1 byte/pixel)
+  - FPS : +20-40% (cache GPU + bande passante)
+  - Qualité : 99% identique (PSNR 45+ dB)
+```
+
+---
+
+#### 3.3 BC7 : Lossy mais Imperceptible
+
+**BC7 est une compression avec pertes** :
+- ❌ **Pas lossless** (il y a des artefacts mathématiques)
+- ✅ **Perceptuellement lossless** (invisible à l'œil 95% du temps)
+
+**Test qualité** :
+```
+Original RGBA8    : PSNR = ∞ (référence)
+BC7 (quality 100) : PSNR = 48 dB (excellent, imperceptible)
+BC7 (quality 50)  : PSNR = 42 dB (bon, légèrement visible)
+JPEG (quality 90) : PSNR = 35 dB (artefacts visibles)
+```
+
+**Cas où BC7 échoue** :
+1. **Dégradés subtils** : Léger banding (solution : dithering avant compression)
+2. **Texte haute résolution** : Flou (solution : garder RGBA8 pour UI)
+3. **Alpha sharp** : Fringe autour bords (solution : BC7 sharp alpha mode)
+
+**Recommandation** :
+- ✅ BC7 pour 95% des textures (world, characters, props)
+- ❌ RGBA8 pour UI/texte (5% des textures)
+
+---
+
+#### 3.4 Compression CPU vs GPU
+
+**Question** : Qui compresse en BC7 ?
+
+**Réponse** : **TOUJOURS le CPU** (jamais le GPU)
+
+**Pourquoi ?**
+
+```
+BC7 Compression (RGBA → BC7) :
+  - Complexité : NP-hard optimization
+  - Temps : 10-200 ms par texture 1K
+  - Algorithme : Essai/erreur, partitioning
+  - Hardware : Software (CPU)
+
+BC7 Decompression (BC7 → RGBA) :
+  - Complexité : Simple (interpolation linéaire)
+  - Temps : < 1 cycle GPU (gratuit)
+  - Algorithme : Lookup table + lerp
+  - Hardware : Texture units GPU (intégré)
+```
+
+**Vulkan ne peut PAS compresser BC7** :
+```rust
+// ❌ IMPOSSIBLE
+vkCmdBlitImage(src_rgba8, dst_bc7, ...); // Erreur validation!
+
+// ✅ POSSIBLE (déjà compressé)
+let bc7_data = compress_bc7_cpu(&rgba); // CPU
+vkCmdCopyBufferToImage(buffer(bc7_data), image_bc7); // Upload
+```
+
+---
+
+#### 3.5 Usages Recommandés par Format
+
+```rust
+match texture_type {
+    // Diffuse/Albedo avec alpha (character, props)
+    TextureType::Diffuse => Format::BC7,
+
+    // Normal maps (2 channels RG, blue recalculé)
+    TextureType::NormalMap => Format::BC5,
+
+    // Roughness/Metallic/AO (grayscale)
+    TextureType::Grayscale => Format::BC4,
+
+    // HDR environment maps (skybox, lightprobes)
+    TextureType::HDR => Format::BC6H,
+
+    // UI, texte (besoin sharpness)
+    TextureType::UI => Format::RGBA8,
+}
+```
+
+---
+
+### 4. Roadmap Galaxy3DEngine
+
+#### Phase 9 (ACTUEL) ✅
+
+**État** : Système texture basique fonctionnel
+
+```rust
+let texture = renderer.create_texture(TextureDesc {
+    format: TextureFormat::RGBA8Unorm,
+    width: 1024,
+    height: 1024,
+    data: &png_rgba_bytes,
+    generate_mipmaps: true, // GPU Box filter
+});
+```
+
+**Caractéristiques** :
+- ✅ Formats : RGBA8, RGB8, RG8, R8
+- ✅ Chargement : PNG, BMP, JPEG (via galaxy_image)
+- ✅ Mipmaps : GPU Box filter (qualité 3/10)
+- ✅ Alpha blending fonctionnel
+- ✅ Descriptor sets abstraction
+
+**Limitations** :
+- ⚠️ Pas de compression (VRAM 4× plus grande)
+- ⚠️ Mipmaps qualité faible (Box filter)
+- ⚠️ Chargement lent pour grandes textures
+
+---
+
+#### Phase 10 : Mipmaps CPU (Planifié)
+
+**Objectif** : Améliorer qualité mipmaps (Box → Lanczos-3)
+
+**Changements API** :
+
+```rust
+// Nouveau : TextureDesc accepte mipmaps pré-calculés
+pub struct TextureDesc {
+    pub format: TextureFormat,
+    pub width: u32,
+    pub height: u32,
+    pub data: &[u8],
+    pub mipmap_data: Option<Vec<Vec<u8>>>, // ✨ NOUVEAU
+    pub generate_mipmaps: bool, // Si false et mipmap_data = None, pas de mipmaps
+}
+
+// Usage
+let rgba = load_png("texture.png")?;
+let mipmaps = generate_mipmaps_lanczos3(&rgba)?; // Externe
+
+let texture = renderer.create_texture(TextureDesc {
+    format: TextureFormat::RGBA8Unorm,
+    data: &rgba,
+    mipmap_data: Some(mipmaps), // ✨ Pré-calculés CPU
+    generate_mipmaps: false,
+})?;
+```
+
+**Implémentation** :
+
+1. **Fonction externe** (hors galaxy_3d_engine) :
+```rust
+// Dans galaxy_image ou app
+pub fn generate_mipmaps_lanczos3(image: &RgbaImage) -> Vec<Vec<u8>> {
+    use image::imageops::FilterType;
+
+    let mut mipmaps = vec![];
+    let (mut w, mut h) = image.dimensions();
+    let mut current = image.clone();
+
+    while w > 1 || h > 1 {
+        w = (w / 2).max(1);
+        h = (h / 2).max(1);
+
+        current = image::imageops::resize(
+            &current,
+            w, h,
+            FilterType::Lanczos3
+        );
+
+        mipmaps.push(current.into_raw());
+    }
+
+    mipmaps
+}
+```
+
+2. **Modification VulkanRenderer** :
+```rust
+// Si mipmap_data fourni, uploader les mipmaps
+if let Some(mipmap_data) = desc.mipmap_data {
+    for (level, data) in mipmap_data.iter().enumerate() {
+        vkCmdCopyBufferToImage(
+            staging_buffer(data),
+            image,
+            level + 1, // Mip level
+        );
+    }
+} else if desc.generate_mipmaps {
+    // Fallback : GPU Box filter
+    generate_mipmaps_gpu(image);
+}
+```
+
+**Avantages** :
+- ✅ Qualité 9/10 (vs 3/10 actuel)
+- ✅ Pas de dépendances lourdes (crate image suffit)
+- ✅ Flexible (app choisit le filtre)
+
+**Inconvénients** :
+- ⚠️ Chargement +50 ms par texture (génération CPU)
+- ⚠️ Toujours RGBA8 (pas de compression)
+
+**Estimation** : 2-3 jours développement
+
+---
+
+#### Phase 11 : Compression BC7 + DDS (Planifié)
+
+**Objectif** : Support compression BC7/BC5/BC4 avec fichiers DDS
+
+**Changements API** :
+
+```rust
+// Ajouter formats compressés
+pub enum TextureFormat {
+    // Existants
+    RGBA8Unorm,
+    RGB8Unorm,
+
+    // ✨ NOUVEAUX
+    BC7Unorm,      // RGBA compressed (4:1)
+    BC5Unorm,      // RG compressed (4:1) - Normal maps
+    BC4Unorm,      // R compressed (8:1) - Grayscale
+    BC6HUfloat,    // RGB HDR compressed (6:1)
+}
+
+// Nouveau : create_texture_from_file (helper)
+impl Renderer {
+    fn create_texture_from_file(&self, path: &str)
+        -> RenderResult<Arc<dyn RendererTexture>>
+    {
+        match path.extension() {
+            "dds" => self.load_dds(path),
+            "png" | "jpg" | "bmp" => self.load_image(path),
+            _ => Err(RenderError::UnsupportedFormat),
+        }
+    }
+}
+```
+
+**Implémentation** :
+
+1. **Parser DDS** :
+```rust
+// Nouveau module : galaxy_3d_engine/src/formats/dds.rs
+pub struct DdsFile {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat, // BC7, BC5, RGBA8, etc.
+    pub mipmap_count: u32,
+    pub mipmaps: Vec<Vec<u8>>, // Data BC7 brute
+}
+
+pub fn load_dds(path: &Path) -> Result<DdsFile> {
+    let bytes = std::fs::read(path)?;
+
+    // Parse header (128 bytes)
+    let magic = &bytes[0..4]; // "DDS "
+    assert_eq!(magic, b"DDS ");
+
+    let width = read_u32(&bytes, 16);
+    let height = read_u32(&bytes, 12);
+    let mipmap_count = read_u32(&bytes, 28);
+
+    // Detect format (DXT1/DXT5/DX10)
+    let fourcc = &bytes[84..88];
+    let format = match fourcc {
+        b"DXT1" => TextureFormat::BC1Unorm,
+        b"DXT5" => TextureFormat::BC3Unorm,
+        b"DX10" => {
+            // Extended header (DXGI format)
+            let dxgi_format = read_u32(&bytes, 128);
+            match dxgi_format {
+                98 => TextureFormat::BC7Unorm,
+                95 => TextureFormat::BC6HUfloat,
+                83 => TextureFormat::BC5Unorm,
+                80 => TextureFormat::BC4Unorm,
+                _ => return Err(Error::UnsupportedFormat),
+            }
+        }
+        _ => TextureFormat::RGBA8Unorm,
+    };
+
+    // Extract mipmap data
+    let mut offset = if fourcc == b"DX10" { 148 } else { 128 };
+    let mut mipmaps = vec![];
+
+    for mip in 0..mipmap_count {
+        let mip_size = calculate_mip_size(width, height, mip, format);
+        let data = bytes[offset..offset + mip_size].to_vec();
+        mipmaps.push(data);
+        offset += mip_size;
+    }
+
+    Ok(DdsFile { width, height, format, mipmap_count, mipmaps })
+}
+```
+
+2. **Support Vulkan BC7** :
+```rust
+// VulkanRenderer::create_texture
+let vk_format = match desc.format {
+    TextureFormat::RGBA8Unorm => vk::Format::R8G8B8A8_UNORM,
+    TextureFormat::BC7Unorm => vk::Format::BC7_UNORM_BLOCK, // ✨ NOUVEAU
+    TextureFormat::BC5Unorm => vk::Format::BC5_UNORM_BLOCK,
+    TextureFormat::BC4Unorm => vk::Format::BC4_UNORM_BLOCK,
+    TextureFormat::BC6HUfloat => vk::Format::BC6H_UFLOAT_BLOCK,
+};
+
+// Upload data BC7 (directement, pas de conversion)
+vkCmdCopyBufferToImage(staging_buffer(bc7_data), image, ...);
+```
+
+3. **Build Pipeline** (optionnel - build.rs) :
+```rust
+// Compresser PNG → DDS au build
+fn main() {
+    for png in glob("assets/textures/**/*.png") {
+        let rgba = image::open(png)?;
+
+        // Générer mipmaps (Lanczos-3)
+        let mipmaps = generate_mipmaps_lanczos3(&rgba);
+
+        // Compresser BC7 (via crate intel-tex)
+        let bc7_mipmaps = mipmaps.iter()
+            .map(|m| compress_bc7(m, Quality::High))
+            .collect();
+
+        // Sauvegarder DDS
+        let dds_path = png.with_extension("dds");
+        save_dds(&dds_path, bc7_mipmaps)?;
+    }
+}
+```
+
+**Dépendances** :
+```toml
+[dependencies]
+# Pour compression BC7 (optionnel - build.rs seulement)
+intel-tex = "0.2" # Intel ISPC Texture Compressor
+
+[dev-dependencies]
+# Pour build pipeline
+glob = "0.3"
+```
+
+**Avantages** :
+- ✅ VRAM 4× plus petite (5 GB → 1.3 GB pour 1000 textures)
+- ✅ FPS +20-40% (bande passante GPU)
+- ✅ Chargement 10× plus rapide (pas de calcul runtime)
+- ✅ Standard AAA (Unity, Unreal, tous les jeux)
+
+**Inconvénients** :
+- ⚠️ Build time si compression offline (2 sec par texture 4K)
+- ⚠️ Fichiers 2-3× plus gros que PNG (mipmaps inclus)
+
+**Estimation** : 5-7 jours développement
+
+---
+
+#### Phase 12 : Optimisations Avancées (Futur)
+
+**Objectifs** :
+1. **KTX2** : Support multi-plateforme (BC7 + ASTC dans un fichier)
+2. **Texture Arrays** : Batching materials (terrain, decals)
+3. **Bindless Textures** : Descriptor indexing (1000+ textures)
+4. **Streaming** : Chargement asynchrone (open world)
+
+**Estimation** : 10-15 jours développement
+
+---
+
+### 5. Recommandations
+
+#### Pour Prototypage (Actuel - Phase 9)
+
+```rust
+// Simple et rapide
+let texture = renderer.create_texture(TextureDesc {
+    format: TextureFormat::RGBA8Unorm,
+    data: &png_rgba_bytes,
+    generate_mipmaps: true, // GPU Box filter
+});
+```
+
+**Quand utiliser** :
+- ✅ Développement rapide
+- ✅ < 100 textures
+- ✅ Pas de contrainte VRAM
+
+---
+
+#### Pour Production (Phase 10+)
+
+```rust
+// Qualité maximale, VRAM optimisée
+let texture = renderer.create_texture_from_file("texture.dds")?;
+// En interne :
+//   - Charge DDS (BC7 + mipmaps Lanczos-3)
+//   - Upload direct GPU (pas de calcul)
+//   - 15 ms total
+```
+
+**Build Pipeline** :
+```bash
+# Compresser toutes les textures au build
+cargo build --release
+# → build.rs compresse PNG → DDS automatiquement
+```
+
+**Quand utiliser** :
+- ✅ Jeu final (distribution)
+- ✅ 100+ textures
+- ✅ Optimisation VRAM/FPS critique
+
+---
+
+#### Tableau Récapitulatif
+
+| Phase | Format | Mipmaps | VRAM (1000 tex) | FPS | Qualité | Build Time |
+|-------|--------|---------|-----------------|-----|---------|------------|
+| **9 (actuel)** | RGBA8 | GPU Box | 21 GB | Baseline | 3/10 | 0 |
+| **10** | RGBA8 | CPU Lanczos-3 | 21 GB | Baseline | 9/10 | 0 |
+| **11** | BC7 | CPU Lanczos-3 | 5 GB | +30% | 9/10 | 50 min |
+
+---
+
+### 6. Références Techniques
+
+#### Outils
+
+- **Compressonator** (AMD) : GUI/CLI pour BC7/ASTC
+- **Intel ISPC Texture Compressor** : Compression BC7 ultra rapide (Rust: intel-tex)
+- **Basis Universal** : Compression universelle (transcode BC7/ASTC/ETC2)
+
+#### Formats
+
+- **DDS** : https://docs.microsoft.com/en-us/windows/win32/direct3ddds/dx-graphics-dds
+- **KTX2** : https://registry.khronos.org/KTX/specs/2.0/ktx20.html
+- **BC7** : https://docs.microsoft.com/en-us/windows/win32/direct3d11/bc7-format
+
+#### Benchmarks
+
+- Call of Duty: Modern Warfare (2019) : 100% BC7, 60 GB VRAM économisés
+- Unity Default Settings : Kaiser filter + BC7 (Desktop) / ASTC (Mobile)
+- Unreal Engine 5 : Lanczos-3 + BC7 (quality 100)
+
+---
+
+## 🎮 Phase 13-15 : Système de Mesh et Indirect Drawing (Planification)
+
+### Vue d'Ensemble
+
+Ces phases concernent l'optimisation du système de mesh pour atteindre les performances AAA :
+- **Phase 13** : Mesh Batching Global (tous les meshes dans 2 buffers)
+- **Phase 14** : Indirect Drawing + GPU Culling (frustum + occlusion)
+- **Phase 15** : LODs automatiques + GPU Skinning pour animations
+
+---
+
+### 1. Gestion des Mesh
+
+#### 1.1 Mesh Simple (Actuel - Phase 9)
+
+**Définition** : Un mesh = deux buffers GPU (vertex + index)
+
+```rust
+// Actuellement implémenté
+let vertex_buffer = renderer.create_buffer(BufferDesc {
+    usage: BufferUsage::VERTEX,
+    data: &vertices,
+});
+
+let index_buffer = renderer.create_buffer(BufferDesc {
+    usage: BufferUsage::INDEX,
+    data: &indices,
+});
+
+// Dessiner
+command_list.bind_vertex_buffer(&vertex_buffer, 0);
+command_list.bind_index_buffer(&index_buffer, 0);
+command_list.draw_indexed(index_count, 0, 0);
+```
+
+**Caractéristiques** :
+- ✅ Simple à utiliser
+- ✅ Flexible (un mesh = une ressource)
+- ⚠️ CPU overhead : 1 draw call = 1 objet (limite ~5000 objets à 60 FPS)
+- ⚠️ Beaucoup de state changes (bind buffers à répétition)
+
+**Limitation majeure** : Le CPU devient le bottleneck avant le GPU.
+
+---
+
+#### 1.2 Mesh Batching Global (Phase 13+)
+
+**Principe** : Tous les meshes dans 2 buffers géants
+
+```
+Buffer Vertex Global (50 MB) :
+┌─────────────────────────────────────────┐
+│ Mesh 0    │ Mesh 1      │ Mesh 2  │ ... │
+│ (cube)    │ (sphere)    │ (car)   │     │
+│ 0-35      │ 36-2083     │ 2084+   │     │
+└─────────────────────────────────────────┘
+
+Buffer Index Global (20 MB) :
+┌─────────────────────────────────────────┐
+│ Mesh 0    │ Mesh 1      │ Mesh 2  │ ... │
+│ 0-35      │ 36-3071     │ 3072+   │     │
+└─────────────────────────────────────────┘
+```
+
+**Usage** :
+
+```rust
+// Bind UNE SEULE FOIS au début de la frame
+command_list.bind_vertex_buffer(&global_vertex_buffer, 0);
+command_list.bind_index_buffer(&global_index_buffer, 0);
+
+// Dessiner plein d'objets (pas de rebind!)
+for object in objects {
+    // Seulement push constants pour la position/rotation
+    command_list.push_constants(0, &object.transform);
+
+    // Draw avec offset dans les buffers globaux
+    command_list.draw_indexed(
+        object.index_count,
+        object.first_index,      // Offset dans index buffer
+        object.vertex_offset,    // Offset dans vertex buffer
+    );
+}
+```
+
+**Avantages** :
+- ✅ 0 rebinding de buffers
+- ✅ State changes minimaux
+- ✅ CPU overhead divisé par 10
+- ✅ Scale à 100k+ objets
+
+**Table de Mesh** :
+
+```rust
+// Metadata des meshes (CPU-side)
+struct MeshRegistry {
+    meshes: Vec<MeshInfo>,
+}
+
+struct MeshInfo {
+    mesh_id: u32,
+    vertex_offset: i32,    // Offset dans global vertex buffer
+    first_index: u32,      // Offset dans global index buffer
+    index_count: u32,      // Nombre d'indices
+}
+
+// Usage
+let cube_mesh = mesh_registry.get(MeshId::CUBE);
+command_list.draw_indexed(
+    cube_mesh.index_count,
+    cube_mesh.first_index,
+    cube_mesh.vertex_offset,
+);
+```
+
+**Exemples AAA** :
+- Fortnite : Global buffers, 500k+ objets (arbres, props)
+- Assassin's Creed : Global buffers pour végétation dense
+- Spider-Man : Global buffers pour buildings/debris
+
+---
+
+### 2. LODs (Level of Detail)
+
+**Principe** : Plusieurs versions du même mesh à différentes résolutions
+
+```
+Mesh "Tree" (4 LODs) :
+┌────────────────────────────────────┐
+│ LOD 0 (proche)   : 10,000 triangles│  0-5 mètres
+│ LOD 1 (moyen)    :  2,500 triangles│  5-20 mètres
+│ LOD 2 (loin)     :    500 triangles│  20-50 mètres
+│ LOD 3 (très loin):     50 triangles│  50-200 mètres
+└────────────────────────────────────┘
+```
+
+**Sélection automatique** :
+
+```rust
+fn select_lod(distance_to_camera: f32, mesh: &Mesh) -> u32 {
+    match distance_to_camera {
+        d if d < 5.0   => 0, // LOD 0 (détails max)
+        d if d < 20.0  => 1, // LOD 1
+        d if d < 50.0  => 2, // LOD 2
+        _              => 3, // LOD 3 (simplifié)
+    }
+}
+
+// Dans le render loop
+for object in objects {
+    let distance = (object.position - camera.position).length();
+    let lod = select_lod(distance, &object.mesh);
+    let mesh_info = object.mesh.lods[lod];
+
+    command_list.draw_indexed(
+        mesh_info.index_count,
+        mesh_info.first_index,
+        mesh_info.vertex_offset,
+    );
+}
+```
+
+**Avantages** :
+- ✅ Objets lointains = moins de triangles
+- ✅ FPS +50-100% dans grandes scènes
+- ✅ Qualité visuelle préservée (transition progressive)
+
+**Techniques avancées** :
+- **Smooth LOD transition** : Blend entre deux LODs (fade in/out)
+- **LODs dans global buffer** : Tous les LODs packés ensemble
+- **GPU LOD selection** : Compute shader choisit le LOD
+
+**Exemples** :
+- Unreal Engine : 4-8 LODs par mesh (auto-generated)
+- Unity : LOD Groups avec distances configurables
+- Far Cry : LODs + impostors (sprites pour objets très lointains)
+
+---
+
+### 3. GPU Skinning
+
+**Problème** : Animer un personnage avec squelette (bones)
+
+**CPU Skinning (traditionnel - lent)** :
+```rust
+// Pour chaque frame, pour chaque vertex :
+for vertex in vertices {
+    let transformed = vec3(0.0);
+
+    // Blend de 4 bones maximum
+    for i in 0..4 {
+        let bone_index = vertex.bone_indices[i];
+        let bone_weight = vertex.bone_weights[i];
+
+        let bone_matrix = skeleton.bones[bone_index].matrix;
+        transformed += (bone_matrix * vertex.position) * bone_weight;
+    }
+
+    vertex.final_position = transformed;
+}
+// Upload vers GPU (très lent!)
+```
+
+**GPU Skinning (moderne - rapide)** :
+
+```glsl
+// Vertex shader
+layout(binding = 1) uniform BonesBuffer {
+    mat4 bones[256]; // Matrices des bones (upload 1× par frame)
+};
+
+layout(location = 0) in vec3 position;
+layout(location = 1) in vec4 bone_indices;  // 4 bones max par vertex
+layout(location = 2) in vec4 bone_weights;  // Poids de chaque bone
+
+void main() {
+    // GPU fait le blending (ultra rapide!)
+    vec4 skinned_pos = vec4(0.0);
+
+    for (int i = 0; i < 4; i++) {
+        int bone_idx = int(bone_indices[i]);
+        float weight = bone_weights[i];
+
+        skinned_pos += (bones[bone_idx] * vec4(position, 1.0)) * weight;
+    }
+
+    gl_Position = projection * view * skinned_pos;
+}
+```
+
+**Données vertex** :
+
+```rust
+struct SkinnedVertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+    uv: [f32; 2],
+    bone_indices: [u8; 4],   // Indices dans bones[]
+    bone_weights: [f32; 4],  // Poids (sum = 1.0)
+}
+```
+
+**Avantages** :
+- ✅ Upload seulement 256 matrices (16 KB) au lieu de tous les vertices (1-10 MB)
+- ✅ Calcul parallèle sur GPU (1000× plus rapide)
+- ✅ CPU libre pour gameplay/IA
+
+**Exemples** :
+- Tous les jeux AAA modernes utilisent GPU skinning
+- Unreal Engine : Supporte 256 bones par skeleton
+- Unity : GPU skinning activé par défaut
+
+---
+
+### 4. Indirect Drawing
+
+**Problème** : Draw calls = overhead CPU
+
+```rust
+// Approche traditionnelle (lente)
+for object in objects { // 10,000 objets
+    command_list.push_constants(&object.transform);
+    command_list.draw_indexed(
+        object.index_count,
+        object.first_index,
+        object.vertex_offset,
+    ); // ← 10,000 appels CPU!
+}
+```
+
+**Solution** : Un seul appel CPU, les commandes sont dans un buffer GPU
+
+---
+
+#### 4.1 DrawIndexedIndirect
+
+**Structure Vulkan** :
+
+```rust
+// Structure d'une commande de draw
+struct DrawIndexedIndirectCommand {
+    index_count: u32,     // Nombre d'indices
+    instance_count: u32,  // Instancing (1 = pas d'instancing)
+    first_index: u32,     // Offset dans index buffer
+    vertex_offset: i32,   // Offset dans vertex buffer
+    first_instance: u32,  // Base instance (pour instancing)
+}
+```
+
+**Usage** :
+
+```rust
+// 1. Créer buffer avec 10,000 commandes de draw
+let mut draw_commands = Vec::new();
+for object in objects {
+    draw_commands.push(DrawIndexedIndirectCommand {
+        index_count: object.mesh.index_count,
+        instance_count: 1,
+        first_index: object.mesh.first_index,
+        vertex_offset: object.mesh.vertex_offset,
+        first_instance: 0,
+    });
+}
+
+// Upload vers GPU
+let indirect_buffer = renderer.create_buffer(BufferDesc {
+    usage: BufferUsage::INDIRECT,
+    data: &draw_commands,
+});
+
+// 2. UN SEUL appel pour dessiner 10,000 objets!
+vkCmdDrawIndexedIndirect(
+    command_buffer,
+    indirect_buffer,
+    0,                   // offset
+    10000,               // draw count
+    size_of::<DrawIndexedIndirectCommand>(), // stride
+);
+```
+
+**Avantages** :
+- ✅ 1 appel CPU au lieu de 10,000
+- ✅ CPU overhead divisé par 1000
+- ✅ GPU exécute les commandes en parallèle
+
+**Limitation** : Les commandes sont statiques (créées sur CPU)
+
+---
+
+#### 4.2 MultiDrawIndirect + GPU Culling
+
+**Encore mieux** : Compute shader génère les commandes
+
+```glsl
+// Compute shader de culling
+layout(binding = 0) buffer ObjectsBuffer {
+    Object objects[10000]; // Tous les objets de la scène
+};
+
+layout(binding = 1) buffer DrawCommandsBuffer {
+    DrawIndexedIndirectCommand commands[10000]; // Output
+};
+
+layout(binding = 2) buffer DrawCountBuffer {
+    uint draw_count; // Nombre de commandes générées
+};
+
+uniform mat4 view_projection;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x; // 1 thread = 1 objet
+    Object obj = objects[idx];
+
+    // Frustum culling
+    bool in_frustum = test_frustum(obj.bounding_box, view_projection);
+
+    // Occlusion culling (Hi-Z)
+    bool visible = test_occlusion(obj.bounding_box);
+
+    if (in_frustum && visible) {
+        // Objet visible : écrire commande de draw
+        uint command_idx = atomicAdd(draw_count, 1); // Thread-safe counter
+
+        commands[command_idx] = DrawIndexedIndirectCommand(
+            obj.mesh.index_count,
+            1, // instance_count
+            obj.mesh.first_index,
+            obj.mesh.vertex_offset,
+            0  // first_instance
+        );
+    }
+    // Sinon : skip (pas de draw command générée)
+}
+```
+
+**Vulkan API** :
+
+```rust
+// 1. Dispatch compute shader (culling)
+vkCmdDispatch(command_buffer, 10000 / 256, 1, 1); // 10k threads
+
+// 2. Barrier (attendre que compute finisse)
+vkCmdPipelineBarrier(...);
+
+// 3. Draw indirect avec count GPU!
+vkCmdDrawIndexedIndirectCount(
+    command_buffer,
+    indirect_buffer,        // Buffer des commandes
+    0,                      // offset
+    count_buffer,           // Buffer avec draw_count (écrit par compute)
+    0,                      // count offset
+    10000,                  // max draws
+    size_of::<DrawIndexedIndirectCommand>(),
+);
+```
+
+**Résultat** :
+- Input : 10,000 objets
+- Après culling : 2,000 visibles
+- GPU dessine seulement 2,000 objets
+- CPU overhead : **ZÉRO** (tout sur GPU)
+
+---
+
+### 5. Culling
+
+#### 5.1 Frustum Culling
+
+**Principe** : Ne dessiner que ce qui est dans le champ de vision de la caméra
+
+```
+Frustum de la caméra (pyramide tronquée) :
+     ┌────────┐ Far plane
+    /│        │\
+   / │        │ \
+  /  │        │  \
+ /   │        │   \
+┌────┴────────┴────┐ Near plane
+│     Camera        │
+└───────────────────┘
+```
+
+**Test d'intersection** :
+
+```rust
+// Frustum = 6 plans (haut, bas, gauche, droite, proche, loin)
+struct Frustum {
+    planes: [Plane; 6],
+}
+
+struct Plane {
+    normal: Vec3,
+    distance: f32,
+}
+
+// Test si bounding box intersecte frustum
+fn test_frustum(bbox: &BoundingBox, frustum: &Frustum) -> bool {
+    for plane in &frustum.planes {
+        // Si tous les coins sont derrière ce plan → objet dehors
+        let mut all_outside = true;
+        for corner in bbox.corners() {
+            if plane.distance_to(corner) > 0.0 {
+                all_outside = false;
+                break;
+            }
+        }
+        if all_outside {
+            return false; // Objet complètement dehors
+        }
+    }
+    true // Au moins partiellement visible
+}
+```
+
+**Performance** :
+- CPU : 10,000 objets = 2-3 ms
+- GPU (compute) : 10,000 objets = 0.1 ms (20× plus rapide)
+
+---
+
+#### 5.2 Occlusion Culling
+
+**Principe** : Ne pas dessiner les objets cachés derrière d'autres
+
+```
+Scène vue de dessus :
+┌────────────────────────────┐
+│  Camera                    │
+│    ↓                       │
+│  ┌─────┐  ┌─────┐          │
+│  │ A   │  │  B  │ ← B caché│
+│  └─────┘  └─────┘   par A  │
+│                            │
+└────────────────────────────┘
+```
+
+**Approche Hi-Z (moderne)** :
+
+```
+1. Dessiner la scène (ou juste les gros objets)
+2. Générer Hi-Z pyramid (depth buffer mipmap):
+   - Mip 0 : 1920×1080 (full res)
+   - Mip 1 : 960×540 (max de 2×2 pixels)
+   - Mip 2 : 480×270
+   - ...
+   - Mip 10 : 1×1 (profondeur max de la scène)
+
+3. Dans compute shader de culling :
+   for object in objects {
+       // Projeter bounding box sur écran
+       let screen_bbox = project(object.bbox, view_proj);
+
+       // Choisir mip level selon taille écran
+       let mip = log2(screen_bbox.width);
+
+       // Lire profondeur max dans Hi-Z
+       let depth_max = hi_z_texture.sample_lod(screen_bbox.center, mip);
+
+       // Si objet plus loin que ce qui est déjà dessiné → caché
+       if object.bbox.min_depth > depth_max {
+           skip; // Objet occlus
+       } else {
+           draw; // Objet visible
+       }
+   }
+```
+
+**Avantages Hi-Z** :
+- ✅ Pas de latence (contrairement aux occlusion queries)
+- ✅ Ultra rapide (1 texture fetch par objet)
+- ✅ Scale à 100k+ objets
+
+**Exemples** :
+- Assassin's Creed Valhalla : Hi-Z pour villes denses
+- Horizon Forbidden West : Hi-Z + frustum culling
+- Unreal Engine 5 Nanite : Hi-Z avancé (per-cluster)
+
+---
+
+#### 5.3 Backface Culling
+
+**Principe** : GPU retire automatiquement les triangles "dos à la caméra"
+
+```rust
+// Configuration pipeline
+let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
+    .cull_mode(vk::CullModeFlags::BACK) // Cull back faces
+    .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
+```
+
+**Résultat** : ~50% des triangles éliminés gratuitement
+
+---
+
+### 6. Pipeline GPU-Driven Complet
+
+**Architecture moderne (Unreal 5, Unity HDRP)** :
+
+```
+Frame N :
+
+1. [Compute Shader] Culling
+   Input  : 100,000 objets (buffer GPU)
+   Output : 5,000 objets visibles (indirect buffer)
+   Temps  : 0.2 ms
+
+   ┌─────────────────────────────┐
+   │ Frustum Culling             │ 100k → 30k
+   ├─────────────────────────────┤
+   │ Occlusion Culling (Hi-Z)    │ 30k → 10k
+   ├─────────────────────────────┤
+   │ Distance Culling            │ 10k → 8k
+   ├─────────────────────────────┤
+   │ LOD Selection               │ (choisir LOD par objet)
+   ├─────────────────────────────┤
+   │ Write Indirect Commands     │ 8k commandes
+   └─────────────────────────────┘
+
+2. [Indirect Draw] Rendu
+   vkCmdDrawIndexedIndirectCount(indirect_buffer, count = 8k)
+   Temps : 10 ms (8000 objets visibles)
+
+3. [Compute Shader] Hi-Z Generation
+   Génère depth pyramid pour frame N+1
+   Temps : 0.3 ms
+
+Frame N+1 :
+   Utilise Hi-Z de frame N pour culling
+```
+
+**Code complet** :
+
+```rust
+// Setup (une fois)
+let objects_buffer = renderer.create_buffer(BufferDesc {
+    usage: BufferUsage::STORAGE,
+    data: &objects, // 100k objets
+});
+
+let indirect_buffer = renderer.create_buffer(BufferDesc {
+    usage: BufferUsage::INDIRECT | BufferUsage::STORAGE,
+    size: 100_000 * size_of::<DrawIndexedIndirectCommand>(),
+});
+
+let count_buffer = renderer.create_buffer(BufferDesc {
+    usage: BufferUsage::INDIRECT | BufferUsage::STORAGE,
+    size: 4, // uint32 draw count
+});
+
+// Chaque frame
+fn render_frame(&mut self) {
+    let cmd = &mut self.command_list;
+
+    cmd.begin()?;
+
+    // 1. Compute shader de culling
+    cmd.bind_pipeline(&self.culling_pipeline);
+    cmd.bind_descriptor_sets(&self.culling_pipeline, &[
+        &self.objects_descriptor,
+        &self.indirect_descriptor,
+        &self.count_descriptor,
+        &self.hiz_descriptor, // Hi-Z de la frame précédente
+    ]);
+    cmd.push_constants(0, &self.camera.view_proj);
+    cmd.dispatch(100_000 / 256, 1, 1); // 100k threads
+
+    // 2. Barrier (compute → indirect draw)
+    cmd.pipeline_barrier(
+        PipelineStage::COMPUTE_SHADER,
+        PipelineStage::DRAW_INDIRECT,
+    );
+
+    // 3. Render pass
+    cmd.begin_render_pass(&self.render_pass, &self.render_target, &[...])?;
+
+    // 4. Bind global buffers (une seule fois)
+    cmd.bind_vertex_buffer(&self.global_vertex_buffer, 0);
+    cmd.bind_index_buffer(&self.global_index_buffer, 0);
+    cmd.bind_pipeline(&self.render_pipeline);
+
+    // 5. Indirect draw (8000 objets visibles)
+    cmd.draw_indexed_indirect_count(
+        &self.indirect_buffer,
+        0,
+        &self.count_buffer,
+        0,
+        100_000, // max draws
+    )?;
+
+    cmd.end_render_pass()?;
+
+    // 6. Générer Hi-Z pour frame suivante
+    cmd.bind_pipeline(&self.hiz_pipeline);
+    cmd.generate_hiz_pyramid(&self.depth_texture);
+
+    cmd.end()?;
+
+    // 7. Submit
+    self.renderer.submit(&[cmd])?;
+}
+```
+
+**Performances** :
+
+| Métrique | Traditionnel CPU | GPU-Driven |
+|----------|------------------|------------|
+| Objets totaux | 10,000 | 100,000 |
+| CPU overhead | 15 ms | 0.1 ms |
+| Culling | 3 ms (CPU) | 0.2 ms (GPU) |
+| Objets dessinés | 10,000 | 5,000 (culled) |
+| FPS | 30 FPS | 120 FPS |
+
+---
+
+### 7. Roadmap Galaxy3DEngine
+
+#### Phase 13 : Mesh Batching Global (Planifié)
+
+**Objectif** : Global vertex/index buffers
+
+**Changements API** :
+
+```rust
+// Nouveau : MeshRegistry
+pub struct MeshRegistry {
+    global_vertex_buffer: Arc<dyn RendererBuffer>,
+    global_index_buffer: Arc<dyn RendererBuffer>,
+    meshes: Vec<MeshInfo>,
+}
+
+pub struct MeshInfo {
+    pub mesh_id: u32,
+    pub vertex_offset: i32,
+    pub first_index: u32,
+    pub index_count: u32,
+    pub lods: Vec<LodInfo>, // Phase 15
+}
+
+impl MeshRegistry {
+    pub fn load_mesh(&mut self, path: &str) -> RenderResult<MeshId> {
+        // Charge mesh, append to global buffers
+    }
+
+    pub fn get_mesh(&self, id: MeshId) -> &MeshInfo {
+        &self.meshes[id.0 as usize]
+    }
+}
+
+// Usage
+let mesh_id = mesh_registry.load_mesh("cube.obj")?;
+let mesh = mesh_registry.get_mesh(mesh_id);
+
+// Bind global buffers (une seule fois)
+command_list.bind_vertex_buffer(&mesh_registry.global_vertex_buffer, 0);
+command_list.bind_index_buffer(&mesh_registry.global_index_buffer, 0);
+
+// Draw
+command_list.draw_indexed(
+    mesh.index_count,
+    mesh.first_index,
+    mesh.vertex_offset,
+);
+```
+
+**Estimation** : 3-4 jours
+
+---
+
+#### Phase 14 : Indirect Drawing + GPU Culling (Planifié)
+
+**Objectif** : vkCmdDrawIndexedIndirectCount + compute culling
+
+**Changements API** :
+
+```rust
+// Nouveau trait RendererCommandList
+pub trait RendererCommandList {
+    // Existants
+    fn draw_indexed(&mut self, ...);
+
+    // ✨ NOUVEAUX
+    fn draw_indexed_indirect(
+        &mut self,
+        buffer: &Arc<dyn RendererBuffer>, // Indirect buffer
+        offset: u64,
+        draw_count: u32,
+        stride: u32,
+    ) -> RenderResult<()>;
+
+    fn draw_indexed_indirect_count(
+        &mut self,
+        buffer: &Arc<dyn RendererBuffer>,
+        offset: u64,
+        count_buffer: &Arc<dyn RendererBuffer>, // Draw count
+        count_offset: u64,
+        max_draw_count: u32,
+        stride: u32,
+    ) -> RenderResult<()>;
+
+    fn dispatch(
+        &mut self,
+        group_count_x: u32,
+        group_count_y: u32,
+        group_count_z: u32,
+    ) -> RenderResult<()>;
+}
+
+// Nouveau : Compute pipelines
+impl Renderer {
+    fn create_compute_pipeline(
+        &self,
+        desc: ComputePipelineDesc,
+    ) -> RenderResult<Arc<dyn RendererComputePipeline>>;
+}
+```
+
+**Implémentation Vulkan** :
+
+```rust
+// VulkanRendererCommandList
+fn draw_indexed_indirect_count(&mut self, ...) -> RenderResult<()> {
+    unsafe {
+        let vk_buffer = downcast_buffer(buffer);
+        let vk_count_buffer = downcast_buffer(count_buffer);
+
+        self.device.cmd_draw_indexed_indirect_count(
+            self.command_buffer,
+            vk_buffer.buffer,
+            offset,
+            vk_count_buffer.buffer,
+            count_offset,
+            max_draw_count,
+            stride,
+        );
+    }
+    Ok(())
+}
+```
+
+**Estimation** : 7-10 jours
+
+---
+
+#### Phase 15 : LODs + GPU Skinning (Planifié)
+
+**Objectif** : LODs automatiques + skeletal animation
+
+**LODs** :
+
+```rust
+pub struct MeshInfo {
+    pub lods: Vec<LodInfo>,
+}
+
+pub struct LodInfo {
+    pub distance: f32,      // Distance de transition
+    pub index_count: u32,
+    pub first_index: u32,
+    pub vertex_offset: i32,
+}
+
+// Sélection LOD
+fn select_lod(distance: f32, mesh: &MeshInfo) -> &LodInfo {
+    mesh.lods.iter()
+        .find(|lod| distance < lod.distance)
+        .unwrap_or(mesh.lods.last().unwrap())
+}
+```
+
+**GPU Skinning** :
+
+```rust
+// Vertex avec bones
+pub struct SkinnedVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+    pub bone_indices: [u8; 4],
+    pub bone_weights: [f32; 4],
+}
+
+// Uniform buffer des bones
+let bones_buffer = renderer.create_buffer(BufferDesc {
+    usage: BufferUsage::UNIFORM,
+    data: &skeleton.bone_matrices, // 256 mat4
+});
+
+// Bind dans descriptor set
+command_list.bind_descriptor_sets(&pipeline, &[
+    &bones_descriptor,
+]);
+```
+
+**Estimation** : 5-7 jours
+
+---
+
+### 8. Recommandations
+
+#### Pour Prototypage (Phase 9-12)
+
+```rust
+// Simple mesh individuel
+let vertex_buffer = renderer.create_buffer(...);
+let index_buffer = renderer.create_buffer(...);
+
+command_list.bind_vertex_buffer(&vertex_buffer, 0);
+command_list.bind_index_buffer(&index_buffer, 0);
+command_list.draw_indexed(count, 0, 0);
+```
+
+**Quand utiliser** :
+- ✅ < 1000 objets
+- ✅ Prototypage rapide
+- ✅ Pas de contrainte FPS
+
+---
+
+#### Pour Production (Phase 13+)
+
+```rust
+// Global buffers + indirect drawing
+mesh_registry.load_mesh("tree.obj")?;
+mesh_registry.load_mesh("rock.obj")?;
+// ... 10,000 meshes
+
+// Bind une seule fois
+command_list.bind_vertex_buffer(&mesh_registry.global_vertex_buffer, 0);
+command_list.bind_index_buffer(&mesh_registry.global_index_buffer, 0);
+
+// Indirect draw (GPU culling)
+command_list.draw_indexed_indirect_count(
+    &indirect_buffer,
+    0,
+    &count_buffer,
+    0,
+    10_000,
+);
+```
+
+**Quand utiliser** :
+- ✅ > 10,000 objets
+- ✅ Open world / grandes scènes
+- ✅ Optimisation CPU critique
+
+---
+
+#### Tableau Récapitulatif
+
+| Phase | Approche | Objets | CPU Overhead | GPU Culling | FPS (10k objets) |
+|-------|----------|--------|--------------|-------------|------------------|
+| **9 (actuel)** | Individual buffers | 1,000 | 15 ms | Non | 30 FPS |
+| **13** | Global buffers | 10,000 | 3 ms | Non | 60 FPS |
+| **14** | Indirect + Culling | 100,000 | 0.1 ms | Oui | 120 FPS |
+| **15** | + LODs + Skinning | 100,000+ | 0.1 ms | Oui | 144 FPS |
+
+---
+
+### 9. Références Techniques
+
+#### Concepts
+
+- **Indirect Drawing** : https://www.khronos.org/opengl/wiki/Vertex_Rendering#Indirect_rendering
+- **GPU Culling** : "GPU-Driven Rendering Pipelines" (Advances in Real-Time Rendering, SIGGRAPH)
+- **Hi-Z Occlusion Culling** : https://interplayoflight.wordpress.com/2017/11/15/experiments-in-gpu-based-occlusion-culling/
+
+#### Vulkan
+
+- `vkCmdDrawIndexedIndirect` : https://registry.khronos.org/vulkan/specs/1.3/man/html/vkCmdDrawIndexedIndirect.html
+- `vkCmdDrawIndexedIndirectCount` : https://registry.khronos.org/vulkan/specs/1.3/man/html/vkCmdDrawIndexedIndirectCount.html
+- `vkCmdDispatch` : https://registry.khronos.org/vulkan/specs/1.3/man/html/vkCmdDispatch.html
+
+#### Implémentations AAA
+
+- **Unreal Engine 5 Nanite** : GPU-driven culling, indirect drawing, virtual geometry
+- **Unity DOTS** : ECS + GPU culling + indirect rendering
+- **Assassin's Creed Valhalla** : 500k+ objects with GPU culling
+- **Fortnite** : Indirect drawing for foliage (millions of instances)
+
+#### GDC Talks
+
+- "GPU-Driven Rendering Pipelines" (2015, Ubisoft)
+- "Destiny's Multithreaded Rendering Architecture" (2015, Bungie)
+- "The Rendering of Horizon Zero Dawn" (2017, Guerrilla Games)
+
+---
+
 ## 📚 References
 
 - [Vulkan Tutorial](https://vulkan-tutorial.com/)
