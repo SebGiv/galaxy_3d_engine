@@ -22,8 +22,14 @@ Backend implementations provide concrete types that implement these traits.
 // Renderer module containing all rendering-related types and traits
 pub mod renderer;
 
+// Engine singleton manager module
+mod galaxy_3d_engine;
+
 // Re-export everything from renderer module
 pub use renderer::*;
+
+// Re-export Galaxy3dEngine singleton manager
+pub use galaxy_3d_engine::Galaxy3dEngine;
 
 // Re-export math library
 pub use glam;
