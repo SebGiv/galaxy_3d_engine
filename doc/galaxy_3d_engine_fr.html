@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galaxy3DEngine - Documentation API</title>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --accent-color: #e74c3c;
+            --bg-color: #ecf0f1;
+            --card-bg: #ffffff;
+            --code-bg: #2c3e50;
+            --code-color: #ecf0f1;
+            --border-color: #bdc3c7;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--primary-color);
+            line-height: 1.6;
+        }
+
+        header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 2rem;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            gap: 2rem;
+        }
+
+        nav {
+            position: sticky;
+            top: 2rem;
+            background: var(--card-bg);
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            height: fit-content;
+            max-height: calc(100vh - 4rem);
+            overflow-y: auto;
+        }
+
+        nav h2 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            color: var(--secondary-color);
+        }
+
+        nav ul {
+            list-style: none;
+        }
+
+        nav ul li {
+            margin-bottom: 0.5rem;
+        }
+
+        nav ul ul {
+            margin-left: 1rem;
+            margin-top: 0.5rem;
+            display: none;
+        }
+
+        nav ul ul.expanded {
+            display: block;
+        }
+
+        nav a {
+            color: var(--primary-color);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        nav a:hover {
+            color: var(--secondary-color);
+        }
+
+        .toc-toggle {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+        }
+
+        .toc-toggle::before {
+            content: '▸';
+            display: inline-block;
+            margin-right: 0.5rem;
+            transition: transform 0.3s;
+        }
+
+        .toc-toggle.expanded::before {
+            content: '▼';
+        }
+
+        main {
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        section {
+            margin-bottom: 3rem;
+        }
+
+        section h2 {
+            font-size: 2rem;
+            color: var(--secondary-color);
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        section h3 {
+            font-size: 1.5rem;
+            color: var(--primary-color);
+            margin: 1.5rem 0 0.5rem 0;
+        }
+
+        .api-item {
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .api-item h3 {
+            background: linear-gradient(to right, #f8f9fa, #e9ecef);
+            padding: 1rem;
+            margin: 0;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.3s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .api-item h3:hover {
+            background: linear-gradient(to right, #e9ecef, #dee2e6);
+        }
+
+        .api-item h3::after {
+            content: '▼';
+            font-size: 0.8rem;
+            transition: transform 0.3s;
+        }
+
+        .api-item h3.active::after {
+            transform: rotate(-180deg);
+        }
+
+        .summary {
+            font-weight: normal;
+            color: #6c757d;
+            font-size: 0.9rem;
+            margin-left: 1rem;
+        }
+
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+            padding: 0 1rem;
+        }
+
+        .accordion-content.active {
+            max-height: 2000px;
+            padding: 1rem;
+        }
+
+        .accordion-content p {
+            margin-bottom: 1rem;
+        }
+
+        pre {
+            background: var(--code-bg);
+            color: var(--code-color);
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        code {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9rem;
+        }
+
+        .note {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 4px;
+        }
+
+        .warning {
+            background: #f8d7da;
+            border-left: 4px solid var(--accent-color);
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 4px;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: #6c757d;
+            margin-top: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🌌 Galaxy3DEngine</h1>
+        <p>Moteur de Rendu 3D Multi-API en Rust - Documentation API</p>
+    </header>
+
+    <div class="container">
+        <nav id="toc">
+            <h2>📑 Table des Matières</h2>
+            <ul>
+                <li><a href="#introduction">Introduction</a></li>
+                <li>
+                    <span class="toc-toggle" onclick="toggleSection('renderer-section')">Renderer</span>
+                    <ul id="renderer-section">
+                        <li><a href="#renderer-creation">Création</a></li>
+                        <li><a href="#renderer-resources">Ressources</a></li>
+                        <li><a href="#renderer-submission">Soumission</a></li>
+                    </ul>
+                </li>
+                <li><a href="#command-list">Command List</a></li>
+                <li><a href="#swapchain">Swapchain</a></li>
+                <li><a href="#render-target">Render Target</a></li>
+                <li><a href="#render-pass">Render Pass</a></li>
+                <li><a href="#pipeline">Pipeline</a></li>
+                <li><a href="#buffer">Buffer</a></li>
+                <li><a href="#texture">Texture</a></li>
+                <li><a href="#shader">Shader</a></li>
+                <li><a href="#descriptor-set">Descriptor Set</a></li>
+            </ul>
+        </nav>
+
+        <main>
+            <!-- Introduction -->
+            <section id="introduction">
+                <h2>Introduction</h2>
+                <p>
+                    Galaxy3DEngine est un moteur de rendu 3D moderne construit en Rust avec une couche d'abstraction multi-API.
+                    Supporte actuellement Vulkan, avec un support prévu pour Direct3D 12.
+                </p>
+                <p>
+                    L'API est conçue avec une séparation claire entre le rendu et la présentation, permettant :
+                </p>
+                <ul>
+                    <li>Rendu vers texture (render-to-texture)</li>
+                    <li>Rendu multi-passes</li>
+                    <li>Effets de post-traitement</li>
+                    <li>Deferred shading</li>
+                </ul>
+                <div class="note">
+                    <strong>Note :</strong> Tous les objets de l'API sont basés sur des traits et retournés en tant que <code>Arc&lt;dyn Trait&gt;</code> pour l'abstraction du backend.
+                </div>
+            </section>
+
+            <!-- Renderer -->
+            <section id="renderer">
+                <h2>Renderer</h2>
+                <p>L'interface factory principale pour créer des ressources, command lists, swapchains, et soumettre du travail au GPU.</p>
+
+                <h3 id="renderer-creation">Création & Initialisation</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('renderer-new')">
+                        <span>VulkanRenderer::new()</span>
+                        <span class="summary">Crée une nouvelle instance de renderer Vulkan</span>
+                    </h3>
+                    <div id="renderer-new" class="accordion-content">
+                        <p>
+                            Crée et initialise un nouveau renderer Vulkan. C'est le point d'entrée du moteur de rendu.
+                            Configure l'instance Vulkan, le physical device, le logical device, et l'allocateur mémoire.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>window: &Window</code> - Le handle de fenêtre winit</li>
+                            <li><code>config: RendererConfig</code> - Configuration du renderer (validation layers, etc.)</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn Renderer&gt;&gt;</code></p>
+                        <pre><code class="language-rust">use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
+use galaxy_3d_engine::{Renderer, RendererConfig};
+
+let config = RendererConfig {
+    enable_validation: true,
+};
+
+let renderer = VulkanRenderer::new(&window, config)?;
+</code></pre>
+                    </div>
+                </div>
+
+                <h3 id="renderer-resources">Gestion des Ressources</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('create-buffer')">
+                        <span>create_buffer()</span>
+                        <span class="summary">Crée un buffer GPU (vertex, index, uniform)</span>
+                    </h3>
+                    <div id="create-buffer" class="accordion-content">
+                        <p>
+                            Crée un buffer GPU pour stocker des données de vertices, d'indices, ou d'uniformes.
+                            Le buffer est alloué avec gpu-allocator et peut être mis à jour après création.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>desc: BufferDesc</code> - Description du buffer (taille, usage, données)</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn RendererBuffer&gt;&gt;</code></p>
+                        <pre><code class="language-rust">let vertex_data: Vec&lt;f32&gt; = vec![/* positions des vertices */];
+
+let vertex_buffer = renderer.create_buffer(BufferDesc {
+    size: (vertex_data.len() * std::mem::size_of::&lt;f32&gt;()) as u64,
+    usage: BufferUsage::VERTEX,
+    data: Some(bytemuck::cast_slice(&vertex_data)),
+})?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('create-texture')">
+                        <span>create_texture()</span>
+                        <span class="summary">Crée une texture GPU avec données initiales optionnelles</span>
+                    </h3>
+                    <div id="create-texture" class="accordion-content">
+                        <p>
+                            Crée une texture GPU et upload optionnellement des données d'image initiales.
+                            Gère les transitions de layout et le staging buffer en interne.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>desc: TextureDesc</code> - Description de la texture (largeur, hauteur, format, données)</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn RendererTexture&gt;&gt;</code></p>
+                        <pre><code class="language-rust">let image_data: Vec&lt;u8&gt; = load_image("texture.png")?;
+
+let texture = renderer.create_texture(TextureDesc {
+    width: 512,
+    height: 512,
+    format: TextureFormat::R8G8B8A8_SRGB,
+    usage: TextureUsage::Sampled,
+    data: Some(image_data),
+})?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('create-shader')">
+                        <span>create_shader()</span>
+                        <span class="summary">Crée un module shader depuis du bytecode SPIR-V</span>
+                    </h3>
+                    <div id="create-shader" class="accordion-content">
+                        <p>
+                            Crée un module shader depuis du bytecode SPIR-V compilé.
+                            Supporte les stages vertex, fragment, compute, et autres.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>desc: ShaderDesc</code> - Description du shader (stage, code SPIR-V)</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn RendererShader&gt;&gt;</code></p>
+                        <pre><code class="language-rust">let vertex_spirv = include_bytes!("shaders/shader.vert.spv");
+
+let vertex_shader = renderer.create_shader(ShaderDesc {
+    stage: ShaderStage::Vertex,
+    code: vertex_spirv,
+})?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('create-pipeline')">
+                        <span>create_pipeline()</span>
+                        <span class="summary">Crée un pipeline graphique avec shaders et état</span>
+                    </h3>
+                    <div id="create-pipeline" class="accordion-content">
+                        <p>
+                            Crée un pipeline graphique complet incluant shaders, layout de vertices,
+                            topologie primitive, push constants, descriptor sets, et configuration de blending.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>desc: PipelineDesc</code> - Description du pipeline</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn RendererPipeline&gt;&gt;</code></p>
+                        <pre><code class="language-rust">let pipeline = renderer.create_pipeline(PipelineDesc {
+    vertex_shader: vertex_shader.clone(),
+    fragment_shader: fragment_shader.clone(),
+    vertex_layout: VertexLayout {
+        bindings: vec![
+            VertexBinding {
+                binding: 0,
+                stride: 20, // 3 floats (pos) + 2 floats (uv)
+                input_rate: VertexInputRate::Vertex,
+            },
+        ],
+        attributes: vec![
+            VertexAttribute {
+                location: 0,
+                binding: 0,
+                format: VertexFormat::Float3,
+                offset: 0,
+            },
+            VertexAttribute {
+                location: 1,
+                binding: 0,
+                format: VertexFormat::Float2,
+                offset: 12,
+            },
+        ],
+    },
+    topology: PrimitiveTopology::TriangleList,
+    push_constant_ranges: vec![],
+    descriptor_set_layouts: vec![],
+    enable_blending: false,
+})?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('create-descriptor-set')">
+                        <span>create_descriptor_set_for_texture()</span>
+                        <span class="summary">Crée un descriptor set lié à une texture</span>
+                    </h3>
+                    <div id="create-descriptor-set" class="accordion-content">
+                        <p>
+                            Crée un descriptor set avec un binding de sampler de texture.
+                            Utilisé pour lier des textures aux shaders.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>texture: &Arc&lt;dyn RendererTexture&gt;</code> - La texture à lier</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn RendererDescriptorSet&gt;&gt;</code></p>
+                        <pre><code class="language-rust">let texture = renderer.create_texture(texture_desc)?;
+let descriptor_set = renderer.create_descriptor_set_for_texture(&texture)?;
+
+// Plus tard, dans le rendu:
+command_list.bind_descriptor_sets(&pipeline, &[&descriptor_set])?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('create-command-list')">
+                        <span>create_command_list()</span>
+                        <span class="summary">Crée une command list réutilisable pour enregistrer des commandes GPU</span>
+                    </h3>
+                    <div id="create-command-list" class="accordion-content">
+                        <p>
+                            Crée une command list (command buffer) pour enregistrer des commandes de rendu.
+                            Les command lists peuvent être réutilisées sur plusieurs frames.
+                        </p>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn RendererCommandList&gt;&gt;</code></p>
+                        <pre><code class="language-rust">let command_list = renderer.create_command_list()?;
+
+// Les command lists peuvent être réutilisées
+let command_lists = [
+    renderer.create_command_list()?,
+    renderer.create_command_list()?,
+];
+
+let current_cmd = &command_lists[frame_index % 2];
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('create-swapchain')">
+                        <span>create_swapchain()</span>
+                        <span class="summary">Crée une swapchain pour présenter à une fenêtre</span>
+                    </h3>
+                    <div id="create-swapchain" class="accordion-content">
+                        <p>
+                            Crée une swapchain attachée à une fenêtre pour présenter les images rendues.
+                            Gère l'acquisition d'images et la présentation avec synchronisation appropriée.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>window: &Window</code> - La fenêtre vers laquelle présenter</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn RendererSwapchain&gt;&gt;</code></p>
+                        <pre><code class="language-rust">let swapchain = renderer.create_swapchain(&window)?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('create-render-pass')">
+                        <span>create_render_pass()</span>
+                        <span class="summary">Crée une configuration de render pass</span>
+                    </h3>
+                    <div id="create-render-pass" class="accordion-content">
+                        <p>
+                            Crée une configuration de render pass définissant les attachments et dépendances de subpasses.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>desc: RenderPassDesc</code> - Description du render pass</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;Arc&lt;dyn RendererRenderPass&gt;&gt;</code></p>
+                        <pre><code class="language-rust">let render_pass = renderer.create_render_pass(RenderPassDesc {
+    color_attachments: vec![
+        ColorAttachmentDesc {
+            format: swapchain.format(),
+            load_op: LoadOp::Clear,
+            store_op: StoreOp::Store,
+        },
+    ],
+    depth_attachment: None,
+})?;
+</code></pre>
+                    </div>
+                </div>
+
+                <h3 id="renderer-submission">Soumission de Commandes</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('submit-with-sync')">
+                        <span>submit_with_sync()</span>
+                        <span class="summary">Soumet la command list avec synchronisation swapchain</span>
+                    </h3>
+                    <div id="submit-with-sync" class="accordion-content">
+                        <p>
+                            Soumet une command list à la queue GPU avec synchronisation appropriée pour la présentation swapchain.
+                            Attend le sémaphore image disponible et signale le sémaphore rendu terminé.
+                        </p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>command_list: &Arc&lt;dyn RendererCommandList&gt;</code> - La command list à soumettre</li>
+                            <li><code>sync_info: &SwapchainSyncInfo</code> - Info de synchronisation depuis la swapchain</li>
+                            <li><code>image_index: u32</code> - Index de l'image swapchain</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">// Boucle de rendu typique
+let (image_index, render_target) = swapchain.acquire_next_image()?;
+
+command_list.begin()?;
+command_list.begin_render_pass(&render_pass, &render_target, &clear_values)?;
+// ... enregistrer les commandes de dessin ...
+command_list.end_render_pass()?;
+command_list.end()?;
+
+let sync_info = swapchain.sync_info();
+renderer.submit_with_sync(&command_list, &sync_info, image_index)?;
+
+swapchain.present(image_index)?;
+</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Command List -->
+            <section id="command-list">
+                <h2>Command List</h2>
+                <p>Voir <a href="#create-command-list">Renderer::create_command_list()</a> pour la création de command list.</p>
+
+                <h3>Trait RendererCommandList</h3>
+                <p>Interface pour enregistrer des commandes de rendu. Les command lists sont réutilisables et doivent être démarrées/terminées à chaque frame.</p>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-begin')">
+                        <span>begin()</span>
+                        <span class="summary">Démarre l'enregistrement de commandes</span>
+                    </h3>
+                    <div id="cmd-begin" class="accordion-content">
+                        <p>Démarre l'enregistrement de commandes dans la command list. Doit être appelé avant toute autre commande d'enregistrement.</p>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.begin()?;
+// ... enregistrer les commandes ...
+command_list.end()?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-begin-render-pass')">
+                        <span>begin_render_pass()</span>
+                        <span class="summary">Démarre un render pass</span>
+                    </h3>
+                    <div id="cmd-begin-render-pass" class="accordion-content">
+                        <p>Démarre un render pass avec la render target et les valeurs de clear spécifiées.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>render_pass: &Arc&lt;dyn RendererRenderPass&gt;</code></li>
+                            <li><code>render_target: &Arc&lt;dyn RendererRenderTarget&gt;</code></li>
+                            <li><code>clear_values: &[ClearValue]</code></li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">let clear_values = [
+    ClearValue::Color([0.0, 0.0, 0.0, 1.0]), // Couleur de clear noir
+];
+
+command_list.begin_render_pass(&render_pass, &render_target, &clear_values)?;
+// ... commandes de dessin ...
+command_list.end_render_pass()?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-bind-pipeline')">
+                        <span>bind_pipeline()</span>
+                        <span class="summary">Lie un pipeline graphique</span>
+                    </h3>
+                    <div id="cmd-bind-pipeline" class="accordion-content">
+                        <p>Lie un pipeline graphique pour les commandes de dessin suivantes.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>pipeline: &Arc&lt;dyn RendererPipeline&gt;</code></li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.bind_pipeline(&pipeline)?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-bind-vertex-buffer')">
+                        <span>bind_vertex_buffer()</span>
+                        <span class="summary">Lie un buffer de vertices</span>
+                    </h3>
+                    <div id="cmd-bind-vertex-buffer" class="accordion-content">
+                        <p>Lie un buffer de vertices à un slot de binding.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>buffer: &Arc&lt;dyn RendererBuffer&gt;</code></li>
+                            <li><code>binding: u32</code> - Slot de binding (généralement 0)</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.bind_vertex_buffer(&vertex_buffer, 0)?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-bind-index-buffer')">
+                        <span>bind_index_buffer()</span>
+                        <span class="summary">Lie un buffer d'indices</span>
+                    </h3>
+                    <div id="cmd-bind-index-buffer" class="accordion-content">
+                        <p>Lie un buffer d'indices pour le dessin indexé.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>buffer: &Arc&lt;dyn RendererBuffer&gt;</code></li>
+                            <li><code>offset: u64</code> - Offset en octets (généralement 0)</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.bind_index_buffer(&index_buffer, 0)?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-bind-descriptor-sets')">
+                        <span>bind_descriptor_sets()</span>
+                        <span class="summary">Lie des descriptor sets (textures, uniforms)</span>
+                    </h3>
+                    <div id="cmd-bind-descriptor-sets" class="accordion-content">
+                        <p>Lie des descriptor sets contenant des textures et uniform buffers.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>pipeline: &Arc&lt;dyn RendererPipeline&gt;</code></li>
+                            <li><code>descriptor_sets: &[&Arc&lt;dyn RendererDescriptorSet&gt;]</code></li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.bind_descriptor_sets(&pipeline, &[&texture_descriptor])?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-push-constants')">
+                        <span>push_constants()</span>
+                        <span class="summary">Met à jour les données de push constants</span>
+                    </h3>
+                    <div id="cmd-push-constants" class="accordion-content">
+                        <p>Met à jour les données de push constants pour des paramètres rapides par draw (transforms, temps, etc.).</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>offset: u32</code> - Offset dans le bloc de push constants</li>
+                            <li><code>data: &[u8]</code> - Octets bruts à pousser</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">let time: f32 = elapsed_time;
+command_list.push_constants(0, &time.to_le_bytes())?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-draw')">
+                        <span>draw()</span>
+                        <span class="summary">Émet un draw call</span>
+                    </h3>
+                    <div id="cmd-draw" class="accordion-content">
+                        <p>Dessine des vertices non-indexés.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>vertex_count: u32</code></li>
+                            <li><code>first_vertex: u32</code></li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.draw(3, 0)?; // Dessine 3 vertices (1 triangle)
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-draw-indexed')">
+                        <span>draw_indexed()</span>
+                        <span class="summary">Émet un draw call indexé</span>
+                    </h3>
+                    <div id="cmd-draw-indexed" class="accordion-content">
+                        <p>Dessine de la géométrie indexée.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>index_count: u32</code></li>
+                            <li><code>first_index: u32</code></li>
+                            <li><code>vertex_offset: i32</code></li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.draw_indexed(6, 0, 0)?; // Dessine 6 indices (2 triangles)
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-set-viewport')">
+                        <span>set_viewport()</span>
+                        <span class="summary">Définit le viewport</span>
+                    </h3>
+                    <div id="cmd-set-viewport" class="accordion-content">
+                        <p>Définit le viewport pour le rendu.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>viewport: Viewport</code></li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.set_viewport(Viewport {
+    x: 0.0,
+    y: 0.0,
+    width: 800.0,
+    height: 600.0,
+    min_depth: 0.0,
+    max_depth: 1.0,
+})?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-end-render-pass')">
+                        <span>end_render_pass()</span>
+                        <span class="summary">Termine le render pass actuel</span>
+                    </h3>
+                    <div id="cmd-end-render-pass" class="accordion-content">
+                        <p>Termine le render pass actuellement actif.</p>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.end_render_pass()?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('cmd-end')">
+                        <span>end()</span>
+                        <span class="summary">Termine l'enregistrement de commandes</span>
+                    </h3>
+                    <div id="cmd-end" class="accordion-content">
+                        <p>Termine l'enregistrement et finalise la command list pour soumission.</p>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">command_list.end()?;
+</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Swapchain -->
+            <section id="swapchain">
+                <h2>Swapchain</h2>
+                <p>Voir <a href="#create-swapchain">Renderer::create_swapchain()</a> pour la création de swapchain.</p>
+
+                <h3>Trait RendererSwapchain</h3>
+                <p>Gère la présentation à une fenêtre avec acquisition et présentation d'images synchronisées.</p>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('swap-acquire')">
+                        <span>acquire_next_image()</span>
+                        <span class="summary">Acquiert la prochaine image swapchain pour le rendu</span>
+                    </h3>
+                    <div id="swap-acquire" class="accordion-content">
+                        <p>Acquiert la prochaine image disponible de la swapchain. Retourne l'index d'image et une render target.</p>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;(u32, Arc&lt;dyn RendererRenderTarget&gt;)&gt;</code></p>
+                        <pre><code class="language-rust">let (image_index, render_target) = swapchain.acquire_next_image()?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('swap-present')">
+                        <span>present()</span>
+                        <span class="summary">Présente l'image rendue à l'écran</span>
+                    </h3>
+                    <div id="swap-present" class="accordion-content">
+                        <p>Présente l'image à l'index spécifié à l'écran après que le rendu soit terminé.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>image_index: u32</code> - L'index d'image depuis acquire_next_image</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">swapchain.present(image_index)?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('swap-sync-info')">
+                        <span>sync_info()</span>
+                        <span class="summary">Obtient les informations de synchronisation pour la soumission</span>
+                    </h3>
+                    <div id="swap-sync-info" class="accordion-content">
+                        <p>Retourne les informations de synchronisation nécessaires pour submit_with_sync().</p>
+                        <p><strong>Retourne :</strong> <code>SwapchainSyncInfo</code></p>
+                        <pre><code class="language-rust">let sync_info = swapchain.sync_info();
+renderer.submit_with_sync(&command_list, &sync_info, image_index)?;
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('swap-format')">
+                        <span>format()</span>
+                        <span class="summary">Obtient le format d'image de la swapchain</span>
+                    </h3>
+                    <div id="swap-format" class="accordion-content">
+                        <p>Retourne le format pixel des images swapchain.</p>
+                        <p><strong>Retourne :</strong> <code>TextureFormat</code></p>
+                        <pre><code class="language-rust">let format = swapchain.format();
+</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Render Target -->
+            <section id="render-target">
+                <h2>Render Target</h2>
+                <p>Représente une destination de rendu (soit image swapchain soit texture).</p>
+
+                <h3>Trait RendererRenderTarget</h3>
+                <div class="note">
+                    <strong>Note :</strong> RendererRenderTarget est un trait marqueur sans méthodes publiques. Il est utilisé pour la sécurité de type afin d'éviter l'utilisation incorrecte accidentelle des handles de render target. Les render targets sont typiquement obtenus depuis swapchain.acquire_next_image() ou créés depuis des textures.
+                </div>
+            </section>
+
+            <!-- Render Pass -->
+            <section id="render-pass">
+                <h2>Render Pass</h2>
+                <p>Voir <a href="#create-render-pass">Renderer::create_render_pass()</a> pour la création de render pass.</p>
+
+                <h3>Trait RendererRenderPass</h3>
+                <p>Définit la configuration de rendu incluant les attachments couleur/profondeur et les opérations load/store.</p>
+
+                <div class="note">
+                    <strong>Note :</strong> RendererRenderPass est un trait marqueur sans méthodes publiques. Il est utilisé pour la sécurité de type afin d'éviter l'utilisation incorrecte accidentelle des handles de render pass.
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('renderpass-desc')">
+                        <span>RenderPassDesc</span>
+                        <span class="summary">Structure de description du render pass</span>
+                    </h3>
+                    <div id="renderpass-desc" class="accordion-content">
+                        <p>Décrit une configuration de render pass.</p>
+                        <pre><code class="language-rust">let render_pass = renderer.create_render_pass(RenderPassDesc {
+    color_attachments: vec![
+        ColorAttachmentDesc {
+            format: swapchain.format(),
+            load_op: LoadOp::Clear,   // Clear au chargement
+            store_op: StoreOp::Store, // Stocker le résultat
+        },
+    ],
+    depth_attachment: None,
+})?;
+</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pipeline -->
+            <section id="pipeline">
+                <h2>Pipeline</h2>
+                <p>Voir <a href="#create-pipeline">Renderer::create_pipeline()</a> pour la création de pipeline.</p>
+
+                <h3>Trait RendererPipeline</h3>
+                <p>État du pipeline graphique incluant shaders, layout de vertices, topologie, et blending.</p>
+
+                <div class="note">
+                    <strong>Note :</strong> RendererPipeline est un trait marqueur sans méthodes publiques. Il est utilisé pour la sécurité de type afin d'éviter l'utilisation incorrecte accidentelle des handles de pipeline.
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('pipeline-desc')">
+                        <span>PipelineDesc</span>
+                        <span class="summary">Structure de description du pipeline</span>
+                    </h3>
+                    <div id="pipeline-desc" class="accordion-content">
+                        <p>Configuration complète du pipeline incluant :</p>
+                        <ul>
+                            <li>Shaders vertex et fragment</li>
+                            <li>Layout de vertices (bindings et attributs)</li>
+                            <li>Topologie primitive</li>
+                            <li>Ranges de push constants</li>
+                            <li>Layouts de descriptor sets</li>
+                            <li>Configuration de blending</li>
+                        </ul>
+                        <pre><code class="language-rust">let pipeline = renderer.create_pipeline(PipelineDesc {
+    vertex_shader: vertex_shader.clone(),
+    fragment_shader: fragment_shader.clone(),
+    vertex_layout: VertexLayout {
+        bindings: vec![
+            VertexBinding {
+                binding: 0,
+                stride: 20,
+                input_rate: VertexInputRate::Vertex,
+            },
+        ],
+        attributes: vec![
+            VertexAttribute {
+                location: 0,
+                binding: 0,
+                format: VertexFormat::Float3,
+                offset: 0,
+            },
+        ],
+    },
+    topology: PrimitiveTopology::TriangleList,
+    push_constant_ranges: vec![
+        PushConstantRange {
+            stages: vec![ShaderStage::Vertex],
+            offset: 0,
+            size: 16, // 4 floats
+        },
+    ],
+    descriptor_set_layouts: vec![],
+    enable_blending: true, // Activer alpha blending
+})?;
+</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Buffer -->
+            <section id="buffer">
+                <h2>Buffer</h2>
+                <p>Voir <a href="#create-buffer">Renderer::create_buffer()</a> pour la création de buffer.</p>
+
+                <h3>Trait RendererBuffer</h3>
+                <p>Buffer GPU pour stocker des données de vertices, d'indices, ou d'uniformes.</p>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('buffer-update')">
+                        <span>update()</span>
+                        <span class="summary">Met à jour les données du buffer</span>
+                    </h3>
+                    <div id="buffer-update" class="accordion-content">
+                        <p>Met à jour le contenu du buffer avec de nouvelles données.</p>
+                        <p><strong>Paramètres :</strong></p>
+                        <ul>
+                            <li><code>offset: u64</code> - Offset en octets</li>
+                            <li><code>data: &[u8]</code> - Nouvelles données</li>
+                        </ul>
+                        <p><strong>Retourne :</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <pre><code class="language-rust">let new_vertex_data: Vec&lt;f32&gt; = vec![/* vertices mis à jour */];
+vertex_buffer.update(0, bytemuck::cast_slice(&new_vertex_data))?;
+</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Texture -->
+            <section id="texture">
+                <h2>Texture</h2>
+                <p>Voir <a href="#create-texture">Renderer::create_texture()</a> pour la création de texture.</p>
+
+                <h3>Trait RendererTexture</h3>
+                <p>Texture GPU pour le sampling dans les shaders.</p>
+
+                <div class="note">
+                    <strong>Note :</strong> RendererTexture est un trait marqueur sans méthodes publiques. Il est utilisé pour la sécurité de type afin d'éviter l'utilisation incorrecte accidentelle des handles de texture.
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('texture-formats')">
+                        <span>TextureFormat</span>
+                        <span class="summary">Formats de texture supportés</span>
+                    </h3>
+                    <div id="texture-formats" class="accordion-content">
+                        <p>Formats de texture courants :</p>
+                        <ul>
+                            <li><code>R8G8B8A8_SRGB</code> - RGBA 8-bit avec espace couleur sRGB</li>
+                            <li><code>R8G8B8A8_UNORM</code> - RGBA 8-bit linéaire</li>
+                            <li><code>B8G8R8A8_SRGB</code> - BGRA 8-bit avec sRGB (courant pour swapchains)</li>
+                        </ul>
+                        <pre><code class="language-rust">let texture = renderer.create_texture(TextureDesc {
+    width: 512,
+    height: 512,
+    format: TextureFormat::R8G8B8A8_SRGB,
+    usage: TextureUsage::Sampled,
+    data: Some(image_data),
+})?;
+</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Shader -->
+            <section id="shader">
+                <h2>Shader</h2>
+                <p>Voir <a href="#create-shader">Renderer::create_shader()</a> pour la création de shader.</p>
+
+                <h3>Trait RendererShader</h3>
+                <p>Module shader compilé (bytecode SPIR-V).</p>
+
+                <div class="note">
+                    <strong>Note :</strong> RendererShader est un trait marqueur sans méthodes publiques. Il est utilisé pour la sécurité de type afin d'éviter l'utilisation incorrecte accidentelle des handles de shader.
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('shader-stages')">
+                        <span>ShaderStage</span>
+                        <span class="summary">Types de stages de shader</span>
+                    </h3>
+                    <div id="shader-stages" class="accordion-content">
+                        <p>Stages de shader supportés :</p>
+                        <ul>
+                            <li><code>ShaderStage::Vertex</code> - Shader vertex</li>
+                            <li><code>ShaderStage::Fragment</code> - Shader fragment/pixel</li>
+                            <li><code>ShaderStage::Compute</code> - Shader compute (futur)</li>
+                        </ul>
+                        <pre><code class="language-rust">let vertex_shader = renderer.create_shader(ShaderDesc {
+    stage: ShaderStage::Vertex,
+    code: include_bytes!("shader.vert.spv"),
+})?;
+
+let fragment_shader = renderer.create_shader(ShaderDesc {
+    stage: ShaderStage::Fragment,
+    code: include_bytes!("shader.frag.spv"),
+})?;
+</code></pre>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Descriptor Set -->
+            <section id="descriptor-set">
+                <h2>Descriptor Set</h2>
+                <p>Voir <a href="#create-descriptor-set">Renderer::create_descriptor_set_for_texture()</a> pour la création de descriptor set.</p>
+
+                <h3>Trait RendererDescriptorSet</h3>
+                <p>Lie des ressources (textures, uniform buffers) aux shaders.</p>
+
+                <div class="note">
+                    <strong>Note :</strong> RendererDescriptorSet est un trait marqueur sans méthodes publiques. Il est utilisé pour la sécurité de type afin d'éviter l'utilisation incorrecte accidentelle des handles de descriptor set. Actuellement, les descriptor sets sont créés spécifiquement pour les textures en utilisant <code>create_descriptor_set_for_texture()</code>. Les versions futures supporteront des layouts de descripteurs personnalisés.
+                </div>
+
+                <pre><code class="language-rust">// Créer texture et descriptor set
+let texture = renderer.create_texture(texture_desc)?;
+let descriptor_set = renderer.create_descriptor_set_for_texture(&texture)?;
+
+// Utiliser dans le rendu
+command_list.bind_descriptor_sets(&pipeline, &[&descriptor_set])?;
+</code></pre>
+            </section>
+        </main>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 Galaxy3DEngine - Moteur de Rendu 3D Multi-API en Rust</p>
+        <p>Documentation Générée</p>
+    </footer>
+
+    <script>
+        function toggleAccordion(id) {
+            const content = document.getElementById(id);
+            const header = content.previousElementSibling;
+
+            // Fermer tous les autres accordéons
+            document.querySelectorAll('.accordion-content').forEach(el => {
+                if (el.id !== id) {
+                    el.classList.remove('active');
+                    el.previousElementSibling.classList.remove('active');
+                }
+            });
+
+            // Toggle accordéon actuel
+            content.classList.toggle('active');
+            header.classList.toggle('active');
+        }
+
+        function toggleSection(sectionId) {
+            const section = document.getElementById(sectionId);
+            const toggle = event.target;
+
+            section.classList.toggle('expanded');
+            toggle.classList.toggle('expanded');
+        }
+    </script>
+</body>
+</html>

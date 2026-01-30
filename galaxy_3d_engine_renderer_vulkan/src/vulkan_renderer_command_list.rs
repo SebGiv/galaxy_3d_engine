@@ -136,7 +136,7 @@ impl RendererCommandList for VulkanRendererCommandList {
             self.in_render_pass = false;
             self.bound_pipeline_layout = None;
 
-            // Détruire les anciens framebuffers avant de commencer l'enregistrement
+            // Destroy old framebuffers before starting recording
             for framebuffer in self.framebuffers.drain(..) {
                 self.device.destroy_framebuffer(framebuffer, None);
             }
@@ -218,7 +218,7 @@ impl RendererCommandList for VulkanRendererCommandList {
             let framebuffer = self.device.create_framebuffer(&framebuffer_info, None)
                 .map_err(|e| RenderError::BackendError(format!("Failed to create framebuffer: {:?}", e)))?;
 
-            // Stocker le framebuffer pour le détruire dans begin() ou Drop
+            // Store framebuffer for destruction in begin() or Drop
             self.framebuffers.push(framebuffer);
 
             // Begin render pass
@@ -259,7 +259,7 @@ impl RendererCommandList for VulkanRendererCommandList {
             self.device.cmd_end_render_pass(self.command_buffer);
             self.in_render_pass = false;
 
-            // Les framebuffers seront détruits dans begin() ou Drop
+            // Framebuffers will be destroyed in begin() or Drop
             Ok(())
         }
     }
@@ -476,7 +476,7 @@ impl RendererCommandList for VulkanRendererCommandList {
 impl Drop for VulkanRendererCommandList {
     fn drop(&mut self) {
         unsafe {
-            // Détruire tous les framebuffers restants
+            // Destroy all remaining framebuffers
             for framebuffer in self.framebuffers.drain(..) {
                 self.device.destroy_framebuffer(framebuffer, None);
             }
