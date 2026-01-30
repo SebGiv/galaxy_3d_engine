@@ -43,13 +43,37 @@
 
 **RÈGLE IMPÉRATIVE** :
 
-1. ✋ **Exposer clairement** ce qui va être fait (changements prévus, fichiers impactés, approche technique)
-2. ⏸️ **Attendre le feu vert** de l'utilisateur avant de commencer
-3. ✅ Si l'utilisateur répond **"dev"** ou **"vas-y"** → Commencer le développement
-4. ❌ Si l'utilisateur demande des modifications → Ajuster l'approche et re-exposer
+1. 📋 **CRÉER UNE TODO LIST avec l'outil TodoWrite** contenant OBLIGATOIREMENT :
+   - Toutes les étapes de développement (création fichiers, modifications, tests, etc.)
+   - ⚠️ **OBLIGATOIRE** : "Mettre à jour galaxy_3d_engine_dev.md"
+   - ⚠️ **OBLIGATOIRE** : "Mettre à jour doc/galaxy_3d_engine.html" (si API publique change)
+   - ⚠️ **OBLIGATOIRE** : "Mettre à jour doc/galaxy_3d_engine_fr.html" (si API publique change)
+   - ⚠️ **OBLIGATOIRE** : "Mettre à jour doc/galaxy_3d_engine_tech_doc.md" (si architecture change)
+   - ⚠️ **OBLIGATOIRE** : "Mettre à jour doc/galaxy_3d_engine_tech_doc.fr.md" (si architecture change)
+   - Étape finale de commit
+
+2. ✋ **Exposer clairement** ce qui va être fait (changements prévus, fichiers impactés, approche technique)
+
+3. ⏸️ **Attendre le feu vert** de l'utilisateur avant de commencer
+
+4. ✅ Si l'utilisateur répond **"dev"** ou **"vas-y"** → Commencer le développement
+
+5. ❌ Si l'utilisateur demande des modifications → Ajuster l'approche et re-exposer
+
+**IMPORTANT** : L'utilisateur peut vérifier la TODO list et demander d'ajouter des étapes manquantes AVANT de dire "dev".
 
 **Exemple** :
 ```
+Claude: [Crée TODO list avec TodoWrite]
+📋 TODO créée :
+1. ⏳ Créer mesh_registry.rs
+2. ⏳ Modifier renderer.rs : Ajouter create_global_buffers()
+3. ⏳ Modifier vulkan_renderer.rs : Implémenter backend
+4. ⏳ Mettre à jour galaxy_3d_engine_dev.md
+5. ⏳ Mettre à jour doc/galaxy_3d_engine.html
+6. ⏳ Mettre à jour doc/galaxy_3d_engine_fr.html
+7. ⏳ Commit
+
 Claude: "Je vais implémenter le mesh batching en modifiant les fichiers suivants :
 - renderer.rs : Ajouter create_global_buffers()
 - mesh_registry.rs : Créer nouvelle structure MeshRegistry
@@ -59,7 +83,8 @@ Est-ce que je peux commencer le développement ?"
 
 User: "dev"  ← Feu vert
 
-Claude: [commence le développement]
+Claude: [commence le développement en suivant la TODO]
+1. 🔄 Créer mesh_registry.rs...
 ```
 
 ---

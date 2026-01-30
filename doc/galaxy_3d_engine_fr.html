@@ -255,6 +255,13 @@
             <ul>
                 <li><a href="#introduction">Introduction</a></li>
                 <li>
+                    <span class="toc-toggle" onclick="toggleSection('galaxy3dengine-section')">Galaxy3dEngine</span>
+                    <ul id="galaxy3dengine-section">
+                        <li><a href="#galaxy3dengine-initialization">Initialisation</a></li>
+                        <li><a href="#galaxy3dengine-renderer-management">Gestion du Renderer</a></li>
+                    </ul>
+                </li>
+                <li>
                     <span class="toc-toggle" onclick="toggleSection('renderer-section')">Renderer</span>
                     <ul id="renderer-section">
                         <li><a href="#renderer-creation">Création</a></li>
@@ -296,8 +303,175 @@
                 </div>
             </section>
 
+            <!-- Galaxy3dEngine -->
+            <section id="galaxy3dengine">
+                <a href="#toc" class="back-to-toc">↑ Table des Matières</a>
+                <h2>Galaxy3dEngine</h2>
+                <p>Gestionnaire de singletons pour les sous-systèmes du moteur. Fournit un accès global au renderer et gère le cycle de vie de tous les singletons du moteur.</p>
+
+                <h3 id="galaxy3dengine-initialization">Initialisation</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('galaxy3dengine-initialize')">
+                        <span>Galaxy3dEngine::initialize()</span>
+                        <span class="summary">Initialise le moteur (appeler une fois au démarrage)</span>
+                    </h3>
+                    <div id="galaxy3dengine-initialize" class="accordion-content">
+                        <p>Initialise l'état global du moteur. Doit être appelé une fois avant de créer des sous-systèmes.</p>
+                        <h4>Signature</h4>
+                        <pre><code>pub fn initialize() -> RenderResult&lt;()&gt;</code></pre>
+                        <h4>Exemple</h4>
+                        <pre><code class="language-rust">use galaxy_3d_engine::Galaxy3dEngine;
+
+fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    // Initialiser le moteur
+    Galaxy3dEngine::initialize()?;
+
+    // ... créer le renderer et autres sous-systèmes ...
+
+    Ok(())
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('galaxy3dengine-shutdown')">
+                        <span>Galaxy3dEngine::shutdown()</span>
+                        <span class="summary">Arrête le moteur et détruit tous les singletons</span>
+                    </h3>
+                    <div id="galaxy3dengine-shutdown" class="accordion-content">
+                        <p>Détruit tous les singletons du moteur et nettoie l'état global. Appeler à l'arrêt de l'application.</p>
+                        <h4>Signature</h4>
+                        <pre><code>pub fn shutdown()</code></pre>
+                        <h4>Exemple</h4>
+                        <pre><code class="language-rust">use galaxy_3d_engine::Galaxy3dEngine;
+
+fn main() {
+    Galaxy3dEngine::initialize().unwrap();
+
+    // ... code de l'application ...
+
+    // Nettoyage
+    Galaxy3dEngine::shutdown();
+}</code></pre>
+                    </div>
+                </div>
+
+                <h3 id="galaxy3dengine-renderer-management">Gestion du Renderer</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('galaxy3dengine-create-renderer')">
+                        <span>Galaxy3dEngine::create_renderer()</span>
+                        <span class="summary">Crée et enregistre le singleton renderer</span>
+                    </h3>
+                    <div id="galaxy3dengine-create-renderer" class="accordion-content">
+                        <p>
+                            Crée un singleton renderer à partir de n'importe quel type implémentant le trait Renderer.
+                            Le renderer est automatiquement enveloppé dans Arc&lt;Mutex&gt; pour un accès thread-safe.
+                        </p>
+                        <h4>Signature</h4>
+                        <pre><code>pub fn create_renderer&lt;R: Renderer + 'static&gt;(renderer: R) -> RenderResult&lt;()&gt;</code></pre>
+                        <h4>Paramètres</h4>
+                        <ul>
+                            <li><code>renderer</code> - N'importe quel type implémentant le trait Renderer</li>
+                        </ul>
+                        <h4>Erreurs</h4>
+                        <ul>
+                            <li>Moteur non initialisé</li>
+                            <li>Renderer existe déjà</li>
+                        </ul>
+                        <h4>Exemple</h4>
+                        <pre><code class="language-rust">use galaxy_3d_engine::{Galaxy3dEngine, RendererConfig};
+use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
+
+fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Galaxy3dEngine::initialize()?;
+
+    // Créer un renderer Vulkan
+    let config = RendererConfig::default();
+    let vulkan_renderer = VulkanRenderer::new(&window, config)?;
+
+    // Enregistrer comme singleton (API simplifiée)
+    Galaxy3dEngine::create_renderer(vulkan_renderer)?;
+
+    Ok(())
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('galaxy3dengine-renderer')">
+                        <span>Galaxy3dEngine::renderer()</span>
+                        <span class="summary">Obtient le singleton renderer global</span>
+                    </h3>
+                    <div id="galaxy3dengine-renderer" class="accordion-content">
+                        <p>Retourne un pointeur partagé vers le singleton renderer. Le renderer est enveloppé dans un Mutex pour un accès mutable thread-safe.</p>
+                        <h4>Signature</h4>
+                        <pre><code>pub fn renderer() -> RenderResult&lt;Arc&lt;Mutex&lt;dyn Renderer&gt;&gt;&gt;</code></pre>
+                        <h4>Retour</h4>
+                        <p>Un pointeur partagé vers le renderer enveloppé dans un Mutex</p>
+                        <h4>Erreurs</h4>
+                        <ul>
+                            <li>Moteur non initialisé</li>
+                            <li>Renderer non créé</li>
+                        </ul>
+                        <h4>Exemple</h4>
+                        <pre><code class="language-rust">use galaxy_3d_engine::{Galaxy3dEngine, BufferDesc, BufferUsage};
+
+fn create_vertex_buffer() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    // Accès au renderer global
+    let renderer = Galaxy3dEngine::renderer()?;
+    let mut renderer_guard = renderer.lock().unwrap();
+
+    // Créer un buffer
+    let buffer = renderer_guard.create_buffer(BufferDesc {
+        size: 1024,
+        usage: BufferUsage::Vertex,
+    })?;
+
+    Ok(())
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('galaxy3dengine-destroy-renderer')">
+                        <span>Galaxy3dEngine::destroy_renderer()</span>
+                        <span class="summary">Détruit le singleton renderer</span>
+                    </h3>
+                    <div id="galaxy3dengine-destroy-renderer" class="accordion-content">
+                        <p>
+                            Supprime le singleton renderer du stockage global. Les références existantes au renderer
+                            (pointeurs Arc) resteront valides jusqu'à ce qu'elles soient libérées.
+                        </p>
+                        <h4>Signature</h4>
+                        <pre><code>pub fn destroy_renderer() -> RenderResult&lt;()&gt;</code></pre>
+                        <h4>Exemple</h4>
+                        <pre><code class="language-rust">use galaxy_3d_engine::Galaxy3dEngine;
+
+fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Galaxy3dEngine::initialize()?;
+
+    // ... utiliser le renderer ...
+
+    // Nettoyage
+    Galaxy3dEngine::destroy_renderer()?;
+    Galaxy3dEngine::shutdown();
+
+    Ok(())
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="note">
+                    <strong>Thread Safety :</strong> Galaxy3dEngine utilise OnceLock + RwLock pour une gestion thread-safe des singletons.
+                    Plusieurs threads peuvent accéder au renderer en toute sécurité simultanément (avec verrouillage mutex interne).
+                </div>
+            </section>
+
             <!-- Renderer -->
             <section id="renderer">
+                <a href="#toc" class="back-to-toc">↑ Table des Matières</a>
                 <h2>Renderer</h2>
                 <p>L'interface factory principale pour créer des ressources, command lists, swapchains, et soumettre du travail au GPU.</p>
 

@@ -187,7 +187,101 @@ match pixel_format {
 
 ---
 
-### 4. Memory Management
+### 4. Galaxy3dEngine Singleton Manager
+
+**Implémentation** : Gestionnaire de singletons thread-safe pour les sous-systèmes du moteur
+
+**Problème résolu** :
+- Accès global simplifié au Renderer sans passer des références partout
+- Gestion centralisée du cycle de vie des singletons
+- API ergonomique pour créer et accéder aux sous-systèmes
+
+**Architecture** :
+```rust
+// Structure singleton principale
+pub struct Galaxy3dEngine;
+
+impl Galaxy3dEngine {
+    /// Initialiser le moteur (appeler au démarrage)
+    pub fn initialize() -> RenderResult<()>;
+
+    /// Créer le renderer singleton
+    pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> RenderResult<()>;
+
+    /// Accéder au renderer global
+    pub fn renderer() -> RenderResult<Arc<Mutex<dyn Renderer>>>;
+
+    /// Détruire le renderer singleton
+    pub fn destroy_renderer() -> RenderResult<()>;
+
+    /// Shutdown complet du moteur
+    pub fn shutdown();
+}
+```
+
+**Implémentation interne** (thread-safe) :
+```rust
+// Storage global avec OnceLock (initialisé une seule fois)
+static ENGINE_STATE: OnceLock<EngineState> = OnceLock::new();
+
+struct EngineState {
+    // RwLock pour lecture concurrente, écriture exclusive
+    renderer: RwLock<Option<Arc<Mutex<dyn Renderer>>>>,
+}
+```
+
+**Patterns utilisés** :
+- `OnceLock` : Initialisation thread-safe one-time (Rust 1.70+)
+- `RwLock` : Multiple readers, single writer (accès concurrent optimisé)
+- `Arc<Mutex<dyn Renderer>>` : Shared ownership + interior mutability pour le trait object
+- Generic `create_renderer<R: Renderer>` : Accepte tout type implémentant Renderer
+
+**Usage dans l'application** :
+```rust
+use galaxy_3d_engine::{Galaxy3dEngine, RendererConfig};
+use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
+
+fn main() -> Result<()> {
+    // 1. Initialiser le moteur
+    Galaxy3dEngine::initialize()?;
+
+    // 2. Créer le renderer singleton (API simplifiée)
+    let config = RendererConfig::default();
+    let vulkan_renderer = VulkanRenderer::new(&window, config)?;
+    Galaxy3dEngine::create_renderer(vulkan_renderer)?;
+
+    // 3. Accès global au renderer (n'importe où dans le code)
+    let renderer = Galaxy3dEngine::renderer()?;
+    let mut renderer_guard = renderer.lock().unwrap();
+
+    // Utiliser le renderer
+    let buffer = renderer_guard.create_buffer(BufferDesc { /*...*/ })?;
+
+    // 4. Cleanup
+    drop(renderer_guard); // Libérer le lock
+    Galaxy3dEngine::destroy_renderer()?;
+    Galaxy3dEngine::shutdown();
+
+    Ok(())
+}
+```
+
+**Avantages** :
+- ✅ API ergonomique : `Galaxy3dEngine::create_renderer(VulkanRenderer::new(...)?)`
+- ✅ Accès global sans passer de références partout
+- ✅ Thread-safe par design (RwLock + Mutex)
+- ✅ Gestion centralisée du cycle de vie
+- ✅ Préparé pour futurs singletons (ResourceManager, etc.)
+- ✅ Zero overhead : résolu au compile-time
+
+**Limitations** :
+- ⚠️ Un seul renderer par processus (suffisant pour la plupart des cas)
+- ⚠️ Nécessite `Galaxy3dEngine::initialize()` avant utilisation
+- ⚠️ Lock mutex sur chaque accès (négligeable en pratique)
+
+---
+
+### 5. Memory Management
 
 **Decision**: Integrate `gpu-allocator` avec gestion du cycle de vie
 
