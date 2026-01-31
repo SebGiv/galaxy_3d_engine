@@ -15,6 +15,26 @@
 
 ---
 
+## ⚠️ En Cas de Doute ou d'Erreur
+
+Si l'utilisateur te signale une violation de règle ou une erreur :
+
+1. **STOP** - Ne pas deviner ou justifier
+2. **RELIRE CLAUDE.md** immédiatement pour identifier l'erreur
+3. **CORRIGER** en suivant la règle correcte
+
+**Exemple** :
+```
+User: "Tu as violé une règle de CLAUDE.md"
+
+Claude: [RELIRE IMMÉDIATEMENT CLAUDE.md avec l'outil Read]
+Claude: "J'ai identifié l'erreur : [explication]. Je corrige maintenant en suivant la règle..."
+```
+
+**Règle importante** : En cas de doute sur n'importe quelle règle ou processus, toujours consulter CLAUDE.md en premier avant de répondre ou d'agir.
+
+---
+
 ## 📁 Organisation des Fichiers
 
 ### Fichiers de Documentation
