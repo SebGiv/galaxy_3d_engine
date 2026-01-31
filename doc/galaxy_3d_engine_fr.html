@@ -1291,6 +1291,96 @@ let descriptor_set = renderer.create_descriptor_set_for_texture(&texture)?;
 command_list.bind_descriptor_sets(&pipeline, &[&descriptor_set])?;
 </code></pre>
             </section>
+
+            <!-- Logger -->
+            <section id="logger">
+                <h2>Logger</h2>
+                <p>Voir <a href="#set-logger">Engine::set_logger()</a> pour l'installation du logger.</p>
+
+                <h3>Trait galaxy_3d_engine::galaxy3d::log::Logger</h3>
+                <p>Interface de logger personnalisé pour intercepter et router les logs internes du moteur.</p>
+
+                <div class="note">
+                    <strong>Note :</strong> Le trait Logger permet aux utilisateurs d'implémenter des backends de logging personnalisés (par ex. tracing, slog, log4rs) pour capturer les logs internes du Galaxy3D Engine. Le moteur utilise ce logger pour tous ses messages internes via des macros internes (non exposées dans l'API publique).
+                </div>
+
+                <h4>Définition du Trait</h4>
+                <pre><code class="language-rust">pub trait Logger: Send + Sync {
+    fn log(&self, entry: &LogEntry);
+}
+
+pub struct LogEntry&lt;'a&gt; {
+    pub severity: LogSeverity,
+    pub source: &'a str,       // ex: "galaxy3d::vulkan::Renderer"
+    pub message: &'a str,
+    pub file: Option&lt;&'a str&gt;, // Chemin du fichier (seulement pour les erreurs)
+    pub line: Option&lt;u32&gt;,     // Numéro de ligne (seulement pour les erreurs)
+}
+
+pub enum LogSeverity {
+    Trace,   // Informations de débogage verbeux
+    Debug,   // Informations de débogage détaillées
+    Info,    // Messages informatifs
+    Warn,    // Messages d'avertissement
+    Error,   // Messages d'erreur
+}</code></pre>
+
+                <h4>Exemple : Implémentation TracingLogger</h4>
+                <pre><code class="language-rust">use galaxy_3d_engine::galaxy3d::log::{Logger, LogEntry, LogSeverity};
+use tracing::Level;
+
+pub struct TracingLogger {
+    // ... champs ...
+}
+
+impl Logger for TracingLogger {
+    fn log(&self, entry: &LogEntry) {
+        // Convertir LogSeverity vers tracing::Level
+        let level = match entry.severity {
+            LogSeverity::Trace => Level::TRACE,
+            LogSeverity::Debug => Level::DEBUG,
+            LogSeverity::Info => Level::INFO,
+            LogSeverity::Warn => Level::WARN,
+            LogSeverity::Error => Level::ERROR,
+        };
+
+        // Formater le message avec le module source
+        let full_message = if let (Some(file), Some(line)) = (entry.file, entry.line) {
+            format!("[{}] {} ({}:{})", entry.source, entry.message, file, line)
+        } else {
+            format!("[{}] {}", entry.source, entry.message)
+        };
+
+        // Router vers tracing
+        match level {
+            Level::TRACE => tracing::trace!("{}", full_message),
+            Level::DEBUG => tracing::debug!("{}", full_message),
+            Level::INFO => tracing::info!("{}", full_message),
+            Level::WARN => tracing::warn!("{}", full_message),
+            Level::ERROR => tracing::error!("{}", full_message),
+        }
+    }
+}
+
+// Installer le logger personnalisé
+fn main() {
+    galaxy3d::Engine::initialize()?;
+
+    let logger = TracingLogger::new("app.log")?;
+    galaxy3d::Engine::set_logger(logger);
+
+    // Tous les logs du moteur seront maintenant routés vers votre logger
+}</code></pre>
+
+                <h4>DefaultLogger</h4>
+                <p>Si aucun logger personnalisé n'est installé, le moteur utilise <code>DefaultLogger</code> qui affiche sur la console avec couleurs et horodatage :</p>
+                <pre><code class="language-bash">[2026-01-31 17:18:30.120] [INFO ] [galaxy3d::vulkan::Renderer] Vulkan renderer initialized
+[2026-01-31 17:18:30.234] [ERROR] [galaxy3d::vulkan::Swapchain] Failed to acquire image (vulkan_swapchain.rs:142)</code></pre>
+
+                <div class="note">
+                    <strong>Important :</strong> Les macros de logging internes du moteur (<code>engine_trace!</code>, <code>engine_debug!</code>, <code>engine_info!</code>, <code>engine_warn!</code>, <code>engine_error!</code>) sont cachées de l'API publique (<code>#[doc(hidden)]</code>) et ne doivent PAS être utilisées par les applications. Les applications doivent implémenter le trait Logger pour capturer les logs du moteur.
+                </div>
+            </section>
         </main>
     </div>
 

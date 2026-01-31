@@ -1241,4 +1241,274 @@ let renderer = create_renderer("d3d12", &window, config)?;
 
 ---
 
+## Logging System Architecture
+
+### Overview
+
+Galaxy3D Engine provides a flexible logging system that allows users to intercept and route internal engine logs to custom backends (tracing, slog, log4rs, etc.).
+
+**Components**:
+- **Logger Trait**: Public interface for custom loggers
+- **DefaultLogger**: Built-in console logger with colors and timestamps
+- **Internal Macros**: `engine_*` macros for internal engine use (hidden from public API)
+
+### Logger Trait (Public API)
+
+```rust
+// galaxy_3d_engine/src/log.rs
+
+/// Logging severity levels
+pub enum LogSeverity {
+    Trace,   // Verbose debugging
+    Debug,   // Detailed debugging
+    Info,    // Informational
+    Warn,    // Warnings
+    Error,   // Errors
+}
+
+/// Log entry with metadata
+pub struct LogEntry<'a> {
+    pub severity: LogSeverity,
+    pub source: &'a str,         // e.g., "galaxy3d::vulkan::Renderer"
+    pub message: &'a str,
+    pub file: Option<&'a str>,   // File path (errors only)
+    pub line: Option<u32>,       // Line number (errors only)
+}
+
+/// Logger trait - implement this for custom loggers
+pub trait Logger: Send + Sync {
+    fn log(&self, entry: &LogEntry);
+}
+```
+
+**Installation**:
+```rust
+// Replace DefaultLogger with custom logger
+let my_logger = MyCustomLogger::new()?;
+galaxy3d::Engine::set_logger(my_logger);
+```
+
+### DefaultLogger Implementation
+
+**Features**:
+- Console output with **colors** (`colored` crate)
+- **Timestamps** with millisecond precision (`chrono` crate)
+- Format: `[timestamp] [SEVERITY] [source] message (file:line)`
+
+**Example Output**:
+```
+[2026-01-31 17:18:30.120] [INFO ] [galaxy3d::vulkan::Renderer] Vulkan renderer initialized
+[2026-01-31 17:18:30.234] [ERROR] [galaxy3d::vulkan::Swapchain] Failed to acquire image (vulkan_swapchain.rs:142)
+```
+
+**Color Scheme**:
+- 🟢 `TRACE`: Bright Black (gray)
+- 🔵 `DEBUG`: Blue
+- ⚪ `INFO`: White
+- 🟡 `WARN`: Yellow
+- 🔴 `ERROR`: Bright Red
+
+### Internal Macros (Engine Use Only)
+
+**Available Macros** (internal use):
+```rust
+engine_trace!("galaxy3d::module", "Verbose: {}", value);
+engine_debug!("galaxy3d::module", "Debug: {}", value);
+engine_info!("galaxy3d::module", "Info: {}", value);
+engine_warn!("galaxy3d::module", "Warning: {}", value);
+engine_error!("galaxy3d::module", "Error: {}", value);  // Includes file:line
+```
+
+**Characteristics**:
+- ✅ Marked `#[doc(hidden)]` → Hidden from public documentation
+- ✅ Always `#[macro_export]` → Accessible to internal crates (e.g., `galaxy_3d_engine_renderer_vulkan`)
+- ✅ NOT re-exported in `galaxy3d::log` → Invisible to users
+- ⚠️ **Only `engine_error!`** calls `Engine::log_detailed()` with file:line
+
+**Implementation**:
+```rust
+// engine_info! - No file:line
+#[doc(hidden)]
+#[macro_export]
+macro_rules! engine_info {
+    ($source:expr, $($arg:tt)*) => {
+        $crate::galaxy3d::Engine::log(
+            $crate::galaxy3d::log::LogSeverity::Info,
+            $source,
+            format!($($arg)*)
+        )
+    };
+}
+
+// engine_error! - Automatic file:line
+#[doc(hidden)]
+#[macro_export]
+macro_rules! engine_error {
+    ($source:expr, $($arg:tt)*) => {
+        $crate::galaxy3d::Engine::log_detailed(
+            $crate::galaxy3d::log::LogSeverity::Error,
+            $source,
+            format!($($arg)*),
+            file!(),
+            line!()
+        )
+    };
+}
+```
+
+### Example: TracingLogger Implementation
+
+Complete example from `galaxy3d_demo`:
+
+```rust
+// Games/galaxy3d_demo/src/tracing_logger.rs
+
+use galaxy_3d_engine::galaxy3d::log::{Logger, LogEntry, LogSeverity};
+use std::fs::File;
+use std::io::Write;
+use std::sync::Mutex;
+use tracing::Level;
+
+pub struct TracingLogger {
+    file: Mutex<File>,
+}
+
+impl TracingLogger {
+    pub fn new(log_path: &str) -> std::io::Result<Self> {
+        let file = File::create(log_path)?;  // Create/truncate log file
+        Ok(Self {
+            file: Mutex::new(file),
+        })
+    }
+}
+
+impl Logger for TracingLogger {
+    fn log(&self, entry: &LogEntry) {
+        // 1. Convert LogSeverity to tracing::Level
+        let level = match entry.severity {
+            LogSeverity::Trace => Level::TRACE,
+            LogSeverity::Debug => Level::DEBUG,
+            LogSeverity::Info => Level::INFO,
+            LogSeverity::Warn => Level::WARN,
+            LogSeverity::Error => Level::ERROR,
+        };
+
+        // 2. Format message with source module (and file:line if available)
+        let full_message = if let (Some(file), Some(line)) = (entry.file, entry.line) {
+            format!("[{}] {} ({}:{})", entry.source, entry.message, file, line)
+        } else {
+            format!("[{}] {}", entry.source, entry.message)
+        };
+
+        // 3. Log via tracing (console with colors)
+        match level {
+            Level::TRACE => tracing::trace!("{}", full_message),
+            Level::DEBUG => tracing::debug!("{}", full_message),
+            Level::INFO => tracing::info!("{}", full_message),
+            Level::WARN => tracing::warn!("{}", full_message),
+            Level::ERROR => tracing::error!("{}", full_message),
+        }
+
+        // 4. Write to file (no colors, with timestamp)
+        if let Ok(mut file) = self.file.lock() {
+            let severity_str = match entry.severity {
+                LogSeverity::Trace => "TRACE",
+                LogSeverity::Debug => "DEBUG",
+                LogSeverity::Info => "INFO ",
+                LogSeverity::Warn => "WARN ",
+                LogSeverity::Error => "ERROR",
+            };
+
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+
+            let log_line = if let (Some(file_path), Some(line)) = (entry.file, entry.line) {
+                format!("[{}] [{}] [{}] {} ({}:{})\n",
+                    timestamp, severity_str, entry.source, entry.message, file_path, line)
+            } else {
+                format!("[{}] [{}] [{}] {}\n",
+                    timestamp, severity_str, entry.source, entry.message)
+            };
+
+            let _ = file.write_all(log_line.as_bytes());
+        }
+    }
+}
+```
+
+**Usage in main.rs**:
+```rust
+fn main() {
+    // 1. Initialize tracing-subscriber (console output)
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_target(true)
+        .init();
+
+    // 2. Initialize engine
+    galaxy3d::Engine::initialize()?;
+
+    // 3. Install TracingLogger
+    if let Ok(tracing_logger) = TracingLogger::new("galaxy3d_demo.log") {
+        galaxy3d::Engine::set_logger(tracing_logger);
+    }
+
+    // 4. All engine logs now route to tracing + file
+    // ...
+}
+```
+
+**Console Output (via tracing-subscriber)**:
+```
+2026-01-31T17:18:30.120Z  INFO tracing_logger: [galaxy3d::vulkan::Renderer] Vulkan renderer initialized
+2026-01-31T17:18:30.234Z ERROR tracing_logger: [galaxy3d::vulkan::Swapchain] Failed to acquire image (vulkan_swapchain.rs:142)
+```
+
+**File Output (galaxy3d_demo.log)**:
+```
+[2026-01-31 17:18:30.120] [INFO ] [galaxy3d::vulkan::Renderer] Vulkan renderer initialized
+[2026-01-31 17:18:30.234] [ERROR] [galaxy3d::vulkan::Swapchain] Failed to acquire image (vulkan_swapchain.rs:142)
+```
+
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────┐
+│   Application Code                  │
+│  ✅ Implements Logger trait         │
+│  ✅ Calls Engine::set_logger()      │
+└────────────┬────────────────────────┘
+             │
+             │ Logger trait
+             │
+┌────────────▼────────────────────────┐
+│   Galaxy3D Engine                   │
+│  🔒 Uses engine_* macros internally │
+│  🔒 Calls Logger::log() for output  │
+└────────────┬────────────────────────┘
+             │
+             │ LogEntry
+             │
+┌────────────▼────────────────────────┐
+│   Custom Logger (e.g., TracingLogger)│
+│  ✅ Routes to tracing ecosystem     │
+│  ✅ Writes to file with timestamps  │
+│  ✅ Console output with colors      │
+└─────────────────────────────────────┘
+```
+
+### Design Rationale
+
+**Why hide internal macros?**
+- 🔒 **Encapsulation**: Internal implementation detail
+- 🛡️ **API Stability**: Can change macro implementation without breaking user code
+- 📚 **Cleaner Documentation**: Users see only Logger trait, not internal machinery
+- ✅ **Flexibility**: Users choose their logging backend (tracing, slog, env_logger, etc.)
+
+**Why only Logger trait is public?**
+- 🌐 **Universal Interface**: Works with any logging framework
+- 🔌 **Plugin Architecture**: Users can swap loggers without engine recompilation
+- 🎯 **Single Responsibility**: Engine logs messages, user decides routing
+
+---
+
 **End of Technical Documentation**

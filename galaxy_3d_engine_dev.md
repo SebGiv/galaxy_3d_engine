@@ -2967,6 +2967,305 @@ if config.break_on_error
 
 ---
 
+## 🪵 Phase 9 - Logging System (Completed ✅)
+
+### Overview
+
+Le système de logging de Galaxy3D Engine permet aux utilisateurs d'intercepter et de router les logs internes du moteur via un trait `Logger` personnalisable.
+
+**Composants** :
+- **Logger Trait** : Interface publique pour implémenter des loggers personnalisés
+- **DefaultLogger** : Implémentation par défaut (console avec couleurs + horodatage)
+- **Macros engine_*** : Macros internes au moteur (masquées de l'API publique)
+- **TracingLogger** : Exemple d'implémentation utilisant `tracing` (dans la démo)
+
+---
+
+### 1. Logger Trait (API Publique)
+
+**Fichier** : `galaxy_3d_engine/src/log.rs`
+
+```rust
+/// Logging severity levels
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogSeverity {
+    Trace,   // Verbose debugging information
+    Debug,   // Detailed debug information
+    Info,    // Informational messages
+    Warn,    // Warning messages
+    Error,   // Error messages
+}
+
+/// Log entry with metadata
+pub struct LogEntry<'a> {
+    pub severity: LogSeverity,
+    pub source: &'a str,    // e.g., "galaxy3d::vulkan::Renderer"
+    pub message: &'a str,
+    pub file: Option<&'a str>,   // File path (only for errors)
+    pub line: Option<u32>,       // Line number (only for errors)
+}
+
+/// Logger trait - Implement this to create custom loggers
+pub trait Logger: Send + Sync {
+    fn log(&self, entry: &LogEntry);
+}
+```
+
+**Installation d'un logger personnalisé** :
+```rust
+// Remplacer le DefaultLogger par un logger personnalisé
+let my_logger = MyCustomLogger::new()?;
+galaxy3d::Engine::set_logger(my_logger);
+```
+
+---
+
+### 2. DefaultLogger (Implémentation par Défaut)
+
+**Comportement** :
+- Sortie console avec **couleurs** (via crate `colored`)
+- **Horodatage** avec précision millisecondes (via crate `chrono`)
+- Format : `[timestamp] [SEVERITY] [source] message (file:line)`
+
+**Exemple de sortie** :
+```
+[2026-01-31 17:18:30.120] [INFO ] [galaxy3d::vulkan::Renderer] Vulkan renderer initialized
+[2026-01-31 17:18:30.234] [ERROR] [galaxy3d::vulkan::Swapchain] Failed to acquire image (vulkan_swapchain.rs:142)
+[2026-01-31 17:18:30.456] [WARN ] [galaxy3d::vulkan::ValidationLayer] Performance warning detected
+```
+
+**Couleurs** :
+- 🟢 `TRACE` : Bright Black (gris)
+- 🔵 `DEBUG` : Blue
+- ⚪ `INFO` : White
+- 🟡 `WARN` : Yellow
+- 🔴 `ERROR` : Bright Red
+
+---
+
+### 3. Macros engine_* (Internes au Moteur)
+
+**Fichier** : `galaxy_3d_engine/src/log.rs`
+
+**Macros disponibles** (usage interne uniquement) :
+```rust
+engine_trace!("galaxy3d::module", "Verbose debug: {}", value);
+engine_debug!("galaxy3d::module", "Debug info: {}", value);
+engine_info!("galaxy3d::module", "Informational: {}", value);
+engine_warn!("galaxy3d::module", "Warning: {}", value);
+engine_error!("galaxy3d::module", "Error: {}", value);  // Inclut file:line automatiquement
+```
+
+**Caractéristiques** :
+- ✅ Marquées `#[doc(hidden)]` → **Cachées de la documentation publique**
+- ✅ Toujours `#[macro_export]` → Accessibles dans les crates internes (e.g., `galaxy_3d_engine_renderer_vulkan`)
+- ✅ NON ré-exportées dans `galaxy3d::log` → Invisibles pour les utilisateurs
+- ⚠️ **Seul `engine_error!`** appelle `Engine::log_detailed()` avec file:line
+
+**Implémentation** :
+```rust
+// engine_info! - Pas de file:line
+#[doc(hidden)]
+#[macro_export]
+macro_rules! engine_info {
+    ($source:expr, $($arg:tt)*) => {
+        $crate::galaxy3d::Engine::log(
+            $crate::galaxy3d::log::LogSeverity::Info,
+            $source,
+            format!($($arg)*)
+        )
+    };
+}
+
+// engine_error! - Avec file:line automatique
+#[doc(hidden)]
+#[macro_export]
+macro_rules! engine_error {
+    ($source:expr, $($arg:tt)*) => {
+        $crate::galaxy3d::Engine::log_detailed(
+            $crate::galaxy3d::log::LogSeverity::Error,
+            $source,
+            format!($($arg)*),
+            file!(),
+            line!()
+        )
+    };
+}
+```
+
+**Exports dans `lib.rs`** :
+```rust
+// galaxy_3d_engine/src/lib.rs
+pub mod galaxy3d {
+    pub mod log {
+        // ✅ Exporte les types publics
+        pub use crate::log::{Logger, LogEntry, LogSeverity, DefaultLogger};
+
+        // ❌ NE PAS exporter les macros (internes uniquement)
+        // Les macros restent accessibles via #[macro_export] pour les crates internes
+    }
+}
+```
+
+---
+
+### 4. TracingLogger (Exemple dans la Démo)
+
+**Fichier** : `Games/galaxy3d_demo/src/tracing_logger.rs`
+
+Exemple d'implémentation du trait `Logger` utilisant l'écosystème `tracing` pour router les logs vers :
+- **Console** : Logs colorés via `tracing-subscriber`
+- **Fichier** : Logs horodatés sans couleur (avec `chrono`)
+
+**Dépendances (Cargo.toml)** :
+```toml
+[dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+chrono = "0.4"
+```
+
+**Implémentation** :
+```rust
+use galaxy_3d_engine::galaxy3d::log::{Logger, LogEntry, LogSeverity};
+use std::fs::File;
+use std::io::Write;
+use std::sync::Mutex;
+use tracing::Level;
+
+pub struct TracingLogger {
+    file: Mutex<File>,
+}
+
+impl TracingLogger {
+    pub fn new(log_path: &str) -> std::io::Result<Self> {
+        // Crée/tronque le fichier log
+        let file = File::create(log_path)?;
+        Ok(Self {
+            file: Mutex::new(file),
+        })
+    }
+}
+
+impl Logger for TracingLogger {
+    fn log(&self, entry: &LogEntry) {
+        // 1. Convertir LogSeverity → tracing::Level
+        let level = match entry.severity {
+            LogSeverity::Trace => Level::TRACE,
+            LogSeverity::Debug => Level::DEBUG,
+            LogSeverity::Info => Level::INFO,
+            LogSeverity::Warn => Level::WARN,
+            LogSeverity::Error => Level::ERROR,
+        };
+
+        // 2. Formater le message avec source module (et file:line si disponible)
+        let full_message = if let (Some(file), Some(line)) = (entry.file, entry.line) {
+            format!("[{}] {} ({}:{})", entry.source, entry.message, file, line)
+        } else {
+            format!("[{}] {}", entry.source, entry.message)
+        };
+
+        // 3. Logger via tracing (console avec couleurs)
+        match level {
+            Level::TRACE => tracing::trace!("{}", full_message),
+            Level::DEBUG => tracing::debug!("{}", full_message),
+            Level::INFO => tracing::info!("{}", full_message),
+            Level::WARN => tracing::warn!("{}", full_message),
+            Level::ERROR => tracing::error!("{}", full_message),
+        }
+
+        // 4. Écrire dans le fichier (sans couleurs, avec timestamp)
+        if let Ok(mut file) = self.file.lock() {
+            let severity_str = match entry.severity {
+                LogSeverity::Trace => "TRACE",
+                LogSeverity::Debug => "DEBUG",
+                LogSeverity::Info => "INFO ",
+                LogSeverity::Warn => "WARN ",
+                LogSeverity::Error => "ERROR",
+            };
+
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+
+            let log_line = if let (Some(file_path), Some(line)) = (entry.file, entry.line) {
+                format!("[{}] [{}] [{}] {} ({}:{})\n",
+                    timestamp, severity_str, entry.source, entry.message, file_path, line)
+            } else {
+                format!("[{}] [{}] [{}] {}\n",
+                    timestamp, severity_str, entry.source, entry.message)
+            };
+
+            let _ = file.write_all(log_line.as_bytes());
+        }
+    }
+}
+```
+
+**Utilisation dans main.rs** :
+```rust
+fn main() {
+    // 1. Initialiser tracing-subscriber (console)
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .init();
+
+    // 2. Initialiser le moteur 3D
+    galaxy3d::Engine::initialize()?;
+
+    // 3. Installer TracingLogger pour remplacer DefaultLogger
+    if let Ok(tracing_logger) = TracingLogger::new("galaxy3d_demo.log") {
+        galaxy3d::Engine::set_logger(tracing_logger);
+    }
+
+    // 4. Tous les logs du moteur seront routés vers tracing + fichier
+    // ...
+}
+```
+
+**Sortie console (via tracing-subscriber)** :
+```
+2026-01-31T17:18:30.120Z  INFO tracing_logger: [galaxy3d::vulkan::Renderer] Vulkan renderer initialized
+2026-01-31T17:18:30.234Z ERROR tracing_logger: [galaxy3d::vulkan::Swapchain] Failed to acquire image (vulkan_swapchain.rs:142)
+```
+
+**Sortie fichier (`galaxy3d_demo.log`)** :
+```
+[2026-01-31 17:18:30.120] [INFO ] [galaxy3d::vulkan::Renderer] Vulkan renderer initialized
+[2026-01-31 17:18:30.234] [ERROR] [galaxy3d::vulkan::Swapchain] Failed to acquire image (vulkan_swapchain.rs:142)
+```
+
+---
+
+### Notes Importantes
+
+**Séparation des responsabilités** :
+- 🔒 **Macros `engine_*`** : Usage **interne** au moteur (renderer Vulkan, systèmes internes)
+  - Cachées via `#[doc(hidden)]`
+  - Non ré-exportées dans l'API publique
+  - Accessibles aux crates internes via `#[macro_export]`
+
+- 🌐 **Trait `Logger`** : Interface **publique** pour utilisateurs
+  - Permet de capturer les logs du moteur
+  - Implémentations personnalisées (tracing, slog, log4rs, etc.)
+  - Exemple `TracingLogger` fourni dans la démo
+
+**Règles de logging** :
+- ✅ Tous les messages en **anglais**
+- ✅ Source format : `"galaxy3d::module::SubModule"`
+- ✅ Seul `engine_error!` inclut file:line automatiquement
+- ✅ DefaultLogger utilise `colored` + `chrono`
+
+**Fichiers modifiés** :
+- `galaxy_3d_engine/src/log.rs` : Ajout `#[doc(hidden)]` aux macros
+- `galaxy_3d_engine/src/lib.rs` : Suppression ré-export macros dans `galaxy3d::log`
+- `Games/galaxy3d_demo/src/tracing_logger.rs` : Exemple TracingLogger
+- `Games/galaxy3d_demo/src/main.rs` : Utilisation TracingLogger
+
+---
+
 ## 📚 References
 
 - [Vulkan Tutorial](https://vulkan-tutorial.com/)
