@@ -10,28 +10,28 @@ The backend is registered as a plugin and can be selected at runtime.
 */
 
 // Vulkan implementation modules
-mod vulkan_renderer;
-mod vulkan_renderer_texture;
-mod vulkan_renderer_buffer;
-mod vulkan_renderer_shader;
-mod vulkan_renderer_pipeline;
-mod vulkan_debug;
+mod vulkan;
+mod vulkan_texture;
+mod vulkan_buffer;
+mod vulkan_shader;
+mod vulkan_pipeline;
+mod debug;
 
 // New architecture modules
-mod vulkan_renderer_command_list;
-mod vulkan_renderer_render_target;
-mod vulkan_renderer_render_pass;
-mod vulkan_renderer_swapchain;
-mod vulkan_renderer_descriptor_set;
+mod vulkan_command_list;
+mod vulkan_render_target;
+mod vulkan_render_pass;
+mod vulkan_swapchain;
+mod vulkan_descriptor_set;
 
-pub use vulkan_renderer::VulkanRenderer;
-pub use vulkan_renderer_swapchain::VulkanRendererSwapchain;
-pub use vulkan_renderer_pipeline::VulkanRendererPipeline;
-pub use vulkan_renderer_command_list::VulkanRendererCommandList;
-pub use vulkan_renderer_texture::VulkanRendererTexture;
+pub use vulkan::VulkanRenderer;
+pub use vulkan_swapchain::VulkanRendererSwapchain;
+pub use vulkan_pipeline::VulkanRendererPipeline;
+pub use vulkan_command_list::VulkanRendererCommandList;
+pub use vulkan_texture::VulkanRendererTexture;
 
 // Re-export debug utilities
-pub use vulkan_debug::{get_validation_stats, print_validation_stats_report};
+pub use debug::{get_validation_stats, print_validation_stats_report};
 
 /// Register the Vulkan backend with the plugin system
 ///

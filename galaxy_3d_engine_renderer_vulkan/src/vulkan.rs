@@ -17,15 +17,15 @@ use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
-use crate::vulkan_renderer_texture::VulkanRendererTexture;
-use crate::vulkan_renderer_buffer::VulkanRendererBuffer;
-use crate::vulkan_renderer_shader::VulkanRendererShader;
-use crate::vulkan_renderer_pipeline::VulkanRendererPipeline;
-use crate::vulkan_renderer_command_list::VulkanRendererCommandList;
-use crate::vulkan_renderer_render_target::VulkanRendererRenderTarget;
-use crate::vulkan_renderer_render_pass::VulkanRendererRenderPass;
-use crate::vulkan_renderer_swapchain::VulkanRendererSwapchain;
-use crate::vulkan_renderer_descriptor_set::VulkanRendererDescriptorSet;
+use crate::vulkan_texture::VulkanRendererTexture;
+use crate::vulkan_buffer::VulkanRendererBuffer;
+use crate::vulkan_shader::VulkanRendererShader;
+use crate::vulkan_pipeline::VulkanRendererPipeline;
+use crate::vulkan_command_list::VulkanRendererCommandList;
+use crate::vulkan_render_target::VulkanRendererRenderTarget;
+use crate::vulkan_render_pass::VulkanRendererRenderPass;
+use crate::vulkan_swapchain::VulkanRendererSwapchain;
+use crate::vulkan_descriptor_set::VulkanRendererDescriptorSet;
 
 /// Vulkan device implementation
 ///
@@ -185,7 +185,7 @@ impl VulkanRenderer {
                 let debug_utils = ash::ext::debug_utils::Instance::new(&entry, &instance);
 
                 // Initialize debug config
-                crate::vulkan_debug::init_debug_config(crate::vulkan_debug::DebugConfig {
+                crate::debug::init_debug_config(crate::debug::DebugConfig {
                     severity: config.debug_severity,
                     output: config.debug_output.clone(),
                     message_filter: config.debug_message_filter,
@@ -219,7 +219,7 @@ impl VulkanRenderer {
                             | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
                             | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
                     )
-                    .pfn_user_callback(Some(crate::vulkan_debug::vulkan_debug_callback));
+                    .pfn_user_callback(Some(crate::debug::vulkan_debug_callback));
 
                 let messenger = debug_utils
                     .create_debug_utils_messenger(&debug_info, None)

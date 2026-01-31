@@ -115,37 +115,38 @@ Galaxy/
 
 ```
 galaxy_3d_engine/src/
-├── lib.rs                         # Public exports, plugin registry
+├── lib.rs                 # Public exports, plugin registry
+├── engine.rs              # Galaxy3dEngine singleton manager
 └── renderer/
-    ├── mod.rs                     # Module declarations
-    ├── renderer.rs                # Renderer trait (factory interface)
-    ├── renderer_buffer.rs         # RendererBuffer trait + BufferDesc
-    ├── renderer_texture.rs        # RendererTexture trait + TextureDesc
-    ├── renderer_shader.rs         # RendererShader trait + ShaderDesc
-    ├── renderer_pipeline.rs       # RendererPipeline trait + PipelineDesc
-    ├── renderer_command_list.rs   # RendererCommandList trait
-    ├── renderer_render_target.rs  # RendererRenderTarget trait
-    ├── renderer_render_pass.rs    # RendererRenderPass trait
-    ├── renderer_swapchain.rs      # RendererSwapchain trait
-    └── renderer_descriptor_set.rs # RendererDescriptorSet trait
+    ├── mod.rs             # Module declarations
+    ├── renderer.rs        # Renderer trait (factory interface)
+    ├── buffer.rs          # RendererBuffer trait + BufferDesc
+    ├── texture.rs         # RendererTexture trait + TextureDesc
+    ├── shader.rs          # RendererShader trait + ShaderDesc
+    ├── pipeline.rs        # RendererPipeline trait + PipelineDesc
+    ├── command_list.rs    # RendererCommandList trait
+    ├── render_target.rs   # RendererRenderTarget trait
+    ├── render_pass.rs     # RendererRenderPass trait
+    ├── swapchain.rs       # RendererSwapchain trait
+    └── descriptor_set.rs  # RendererDescriptorSet trait
 ```
 
 ### galaxy_3d_engine_renderer_vulkan (Vulkan Backend)
 
 ```
 galaxy_3d_engine_renderer_vulkan/src/
-├── lib.rs                                # Exports, Vulkan registration
-├── vulkan_debug.rs                       # Validation layers, debug messenger
-├── vulkan_renderer.rs                    # VulkanRenderer implementation
-├── vulkan_renderer_buffer.rs             # VulkanRendererBuffer
-├── vulkan_renderer_texture.rs            # VulkanRendererTexture
-├── vulkan_renderer_shader.rs             # VulkanRendererShader
-├── vulkan_renderer_pipeline.rs           # VulkanRendererPipeline
-├── vulkan_renderer_command_list.rs       # VulkanRendererCommandList
-├── vulkan_renderer_render_target.rs      # VulkanRendererRenderTarget
-├── vulkan_renderer_render_pass.rs        # VulkanRendererRenderPass
-├── vulkan_renderer_swapchain.rs          # VulkanRendererSwapchain
-└── vulkan_renderer_descriptor_set.rs     # VulkanRendererDescriptorSet
+├── lib.rs                      # Exports, Vulkan registration
+├── debug.rs                    # Validation layers, debug messenger
+├── vulkan.rs                   # VulkanRenderer implementation
+├── vulkan_buffer.rs            # VulkanRendererBuffer
+├── vulkan_texture.rs           # VulkanRendererTexture
+├── vulkan_shader.rs            # VulkanRendererShader
+├── vulkan_pipeline.rs          # VulkanRendererPipeline
+├── vulkan_command_list.rs      # VulkanRendererCommandList
+├── vulkan_render_target.rs     # VulkanRendererRenderTarget
+├── vulkan_render_pass.rs       # VulkanRendererRenderPass
+├── vulkan_swapchain.rs         # VulkanRendererSwapchain
+└── vulkan_descriptor_set.rs    # VulkanRendererDescriptorSet
 ```
 
 ### galaxy_image (Image Library)

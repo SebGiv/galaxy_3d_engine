@@ -376,28 +376,31 @@ Galaxy/                                  # Workspace root
 │           └── renderer/
 │               ├── mod.rs
 │               ├── renderer.rs  # Renderer trait (avec nouvelles méthodes) ✨
-│               ├── renderer_command_list.rs  # RenderCommandList trait ✨
-│               ├── renderer_render_target.rs # RendererRenderTarget trait ✨
-│               ├── renderer_render_pass.rs   # RendererRenderPass trait ✨
-│               ├── renderer_swapchain.rs     # RendererSwapchain trait ✨
-│               ├── renderer_texture.rs
-│               ├── renderer_buffer.rs
-│               ├── renderer_shader.rs
-│               └── renderer_pipeline.rs (avec PushConstantRange ✨)
+│               ├── command_list.rs  # RenderCommandList trait ✨
+│               ├── render_target.rs # RendererRenderTarget trait ✨
+│               ├── render_pass.rs   # RendererRenderPass trait ✨
+│               ├── swapchain.rs     # RendererSwapchain trait ✨
+│               ├── descriptor_set.rs # RendererDescriptorSet trait ✨
+│               ├── texture.rs
+│               ├── buffer.rs
+│               ├── shader.rs
+│               └── pipeline.rs (avec PushConstantRange ✨)
 │
 │   └── galaxy_3d_engine_renderer_vulkan/  # Vulkan backend
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs
-│           ├── vulkan_renderer.rs    # VulkanRenderer ✨
-│           ├── vulkan_renderer_command_list.rs  # VulkanRendererCommandList ✨
-│           ├── vulkan_renderer_render_target.rs # VulkanRendererRenderTarget ✨
-│           ├── vulkan_renderer_render_pass.rs   # VulkanRendererRenderPass ✨
-│           ├── vulkan_renderer_swapchain.rs     # VulkanRendererSwapchain ✨
-│           ├── vulkan_renderer_texture.rs
-│           ├── vulkan_renderer_buffer.rs
-│           ├── vulkan_renderer_shader.rs
-│           └── vulkan_renderer_pipeline.rs
+│           ├── vulkan.rs    # VulkanRenderer ✨
+│           ├── vulkan_command_list.rs  # VulkanRendererCommandList ✨
+│           ├── vulkan_render_target.rs # VulkanRendererRenderTarget ✨
+│           ├── vulkan_render_pass.rs   # VulkanRendererRenderPass ✨
+│           ├── vulkan_swapchain.rs     # VulkanRendererSwapchain ✨
+│           ├── vulkan_descriptor_set.rs # VulkanRendererDescriptorSet ✨
+│           ├── vulkan_texture.rs
+│           ├── vulkan_buffer.rs
+│           ├── vulkan_shader.rs
+│           ├── vulkan_pipeline.rs
+│           └── debug.rs    # Debug utilities ✨
 │
 └── Games/
     └── galaxy3d_demo/                  # Demo application

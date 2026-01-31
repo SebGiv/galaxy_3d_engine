@@ -7,11 +7,11 @@ use galaxy_3d_engine::{
 use ash::vk;
 use std::sync::Arc;
 
-use crate::vulkan_renderer_render_target::VulkanRendererRenderTarget;
-use crate::vulkan_renderer_render_pass::VulkanRendererRenderPass;
-use crate::vulkan_renderer_pipeline::VulkanRendererPipeline;
-use crate::vulkan_renderer_buffer::VulkanRendererBuffer;
-use crate::vulkan_renderer_descriptor_set::VulkanRendererDescriptorSet;
+use crate::vulkan_render_target::VulkanRendererRenderTarget;
+use crate::vulkan_render_pass::VulkanRendererRenderPass;
+use crate::vulkan_pipeline::VulkanRendererPipeline;
+use crate::vulkan_buffer::VulkanRendererBuffer;
+use crate::vulkan_descriptor_set::VulkanRendererDescriptorSet;
 
 /// Vulkan command list implementation
 ///

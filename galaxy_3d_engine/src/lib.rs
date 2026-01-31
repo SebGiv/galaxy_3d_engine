@@ -26,7 +26,7 @@ pub mod error;
 pub mod renderer;
 
 // Engine singleton manager module
-mod galaxy_3d_engine;
+mod engine;
 
 // Re-export error types at crate root
 pub use error::{Galaxy3dError, Galaxy3dResult};
@@ -35,7 +35,7 @@ pub use error::{Galaxy3dError, Galaxy3dResult};
 pub use renderer::*;
 
 // Re-export Galaxy3dEngine singleton manager
-pub use galaxy_3d_engine::Galaxy3dEngine;
+pub use engine::Galaxy3dEngine;
 
 // Re-export math library
 pub use glam;

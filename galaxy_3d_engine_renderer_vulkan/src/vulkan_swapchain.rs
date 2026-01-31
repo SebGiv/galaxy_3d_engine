@@ -4,7 +4,7 @@ use galaxy_3d_engine::{RendererSwapchain, RendererRenderTarget, Galaxy3dResult, 
 use ash::vk;
 use std::sync::Arc;
 
-use crate::vulkan_renderer_render_target::VulkanRendererRenderTarget;
+use crate::vulkan_render_target::VulkanRendererRenderTarget;
 
 /// Vulkan swapchain implementation
 ///

@@ -2,30 +2,30 @@
 
 // Module declarations
 pub mod renderer;
-pub mod renderer_texture;
-pub mod renderer_buffer;
-pub mod renderer_shader;
-pub mod renderer_pipeline;
+pub mod texture;
+pub mod buffer;
+pub mod shader;
+pub mod pipeline;
 
 // New architecture modules
-pub mod renderer_command_list;
-pub mod renderer_render_target;
-pub mod renderer_render_pass;
-pub mod renderer_swapchain;
-pub mod renderer_descriptor_set;
+pub mod command_list;
+pub mod render_target;
+pub mod render_pass;
+pub mod swapchain;
+pub mod descriptor_set;
 
 // Re-export everything from renderer.rs
 pub use renderer::*;
 
 // Re-export from other modules
-pub use renderer_texture::*;
-pub use renderer_buffer::*;
-pub use renderer_shader::*;
-pub use renderer_pipeline::*;
+pub use texture::*;
+pub use buffer::*;
+pub use shader::*;
+pub use pipeline::*;
 
 // Re-export new architecture types
-pub use renderer_command_list::*;
-pub use renderer_render_target::*;
-pub use renderer_render_pass::*;
-pub use renderer_swapchain::*;
-pub use renderer_descriptor_set::*;
+pub use command_list::*;
+pub use render_target::*;
+pub use render_pass::*;
+pub use swapchain::*;
+pub use descriptor_set::*;
