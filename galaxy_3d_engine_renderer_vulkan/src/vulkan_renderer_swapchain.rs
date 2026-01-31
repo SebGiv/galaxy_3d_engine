@@ -3,7 +3,6 @@
 use galaxy_3d_engine::{RendererSwapchain, RendererRenderTarget, Galaxy3dResult, Galaxy3dError, TextureFormat};
 use ash::vk;
 use std::sync::Arc;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::vulkan_renderer_render_target::VulkanRendererRenderTarget;
 

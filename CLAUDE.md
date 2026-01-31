@@ -54,7 +54,11 @@
 
 2. ✋ **Exposer clairement** ce qui va être fait (changements prévus, fichiers impactés, approche technique)
 
-3. ⏸️ **Attendre le feu vert** de l'utilisateur avant de commencer
+3. ⏸️ **STOP - ATTENDRE LE FEU VERT DE L'UTILISATEUR**
+   - ⚠️ **CRITIQUE** : NE JAMAIS commencer le développement sans un "dev" ou "vas-y" explicite
+   - ⚠️ Ceci s'applique MÊME si la TODO list a déjà été créée
+   - ⚠️ Ceci s'applique MÊME si l'approche a été exposée
+   - ⚠️ TOUJOURS attendre que l'utilisateur dise "dev" ou "vas-y"
 
 4. ✅ Si l'utilisateur répond **"dev"** ou **"vas-y"** → Commencer le développement
 

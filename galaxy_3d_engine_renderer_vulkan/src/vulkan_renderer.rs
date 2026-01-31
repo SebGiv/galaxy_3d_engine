@@ -517,6 +517,7 @@ impl VulkanRenderer {
     ///
     /// The descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader stage.
     /// This is used internally for pipeline creation and descriptor set allocation.
+    #[allow(dead_code)]
     pub(crate) fn get_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
         self.descriptor_set_layout
     }
@@ -1319,7 +1320,7 @@ impl Renderer for VulkanRenderer {
                 .iter()
                 .map(|cmd| {
                     let vk_cmd = *cmd as *const dyn RendererCommandList as *const VulkanRendererCommandList;
-                    unsafe { (&*vk_cmd).command_buffer() }
+                    (&*vk_cmd).command_buffer()
                 })
                 .collect();
 
