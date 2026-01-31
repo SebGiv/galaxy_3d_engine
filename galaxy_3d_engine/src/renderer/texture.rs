@@ -1,4 +1,4 @@
-/// RendererTexture trait and texture descriptor
+/// Texture trait and texture descriptor
 
 /// Texture and vertex attribute format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,8 +51,8 @@ pub struct TextureDesc {
 
 /// Texture resource trait
 ///
-/// Implemented by backend-specific texture types (e.g., VulkanRendererTexture).
+/// Implemented by backend-specific texture types (e.g., VulkanTexture).
 /// The texture is automatically destroyed when dropped.
-pub trait RendererTexture: Send + Sync {
+pub trait Texture: Send + Sync {
     // No public methods for now, textures are created and used by the renderer
 }

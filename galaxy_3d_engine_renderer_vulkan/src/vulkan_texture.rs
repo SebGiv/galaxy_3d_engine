@@ -1,11 +1,11 @@
-/// VulkanRendererTexture - Vulkan implementation of RendererTexture trait
+/// Texture - Vulkan implementation of RendererTexture trait
 
-use galaxy_3d_engine::RendererTexture;
+use galaxy_3d_engine::galaxy3d::render::Texture as RendererTexture;
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 
 /// Vulkan texture implementation
-pub struct VulkanRendererTexture {
+pub struct Texture {
     /// Vulkan image
     pub(crate) image: vk::Image,
     /// Vulkan image view
@@ -18,11 +18,11 @@ pub struct VulkanRendererTexture {
     pub(crate) allocator: std::sync::Arc<std::sync::Mutex<gpu_allocator::vulkan::Allocator>>,
 }
 
-impl RendererTexture for VulkanRendererTexture {
+impl RendererTexture for Texture {
     // No methods for now
 }
 
-impl Drop for VulkanRendererTexture {
+impl Drop for Texture {
     fn drop(&mut self) {
         unsafe {
             // Destroy image view

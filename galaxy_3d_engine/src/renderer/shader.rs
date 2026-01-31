@@ -1,4 +1,4 @@
-/// RendererShader trait and shader descriptor
+/// Shader trait and shader descriptor
 
 /// Shader stage
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,8 +24,8 @@ pub struct ShaderDesc<'a> {
 
 /// Shader resource trait
 ///
-/// Implemented by backend-specific shader types (e.g., VulkanRendererShader).
+/// Implemented by backend-specific shader types (e.g., VulkanShader).
 /// The shader is automatically destroyed when dropped.
-pub trait RendererShader: Send + Sync {
+pub trait Shader: Send + Sync {
     // No public methods, shaders are used by pipelines
 }

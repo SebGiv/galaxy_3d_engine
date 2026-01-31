@@ -1,6 +1,6 @@
-/// RendererBuffer trait and buffer descriptor
+/// Buffer trait and buffer descriptor
 
-use crate::Galaxy3dResult;
+use crate::error::Result;
 
 /// Buffer usage flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,14 +26,14 @@ pub struct BufferDesc {
 
 /// Buffer resource trait
 ///
-/// Implemented by backend-specific buffer types (e.g., VulkanRendererBuffer).
+/// Implemented by backend-specific buffer types (e.g., VulkanBuffer).
 /// The buffer is automatically destroyed when dropped.
-pub trait RendererBuffer: Send + Sync {
+pub trait Buffer: Send + Sync {
     /// Update buffer data
     ///
     /// # Arguments
     ///
     /// * `offset` - Offset into the buffer in bytes
     /// * `data` - Data to write
-    fn update(&self, offset: u64, data: &[u8]) -> Galaxy3dResult<()>;
+    fn update(&self, offset: u64, data: &[u8]) -> Result<()>;
 }

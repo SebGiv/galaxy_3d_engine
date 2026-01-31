@@ -97,21 +97,31 @@ Claude: [commence le développement en suivant la TODO]
 
 **RÈGLE IMPÉRATIVE** :
 
-1. ✋ **Exposer le message de commit** complet (titre + description)
-2. ⏸️ **Attendre le feu vert** de l'utilisateur
-3. ✅ Si l'utilisateur répond **"commit"** → Faire `git commit` SEULEMENT
+1. ✋ **Exposer le message de commit** complet (titre + description) en **ANGLAIS**
+
+2. ⏸️ **STOP - ATTENDRE LE FEU VERT DE L'UTILISATEUR POUR COMMIT/PUSH**
+   - ⚠️ **CRITIQUE** : NE JAMAIS faire `git commit` sans feu vert explicite
+   - ⚠️ **CRITIQUE** : NE JAMAIS faire `git push` sans feu vert explicite
+   - ⚠️ Ceci s'applique MÊME si le développement est terminé
+   - ⚠️ Ceci s'applique MÊME si les tests passent
+   - ⚠️ TOUJOURS attendre que l'utilisateur dise "commit" ou "commit/push"
+
+3. ✅ Si l'utilisateur répond **"commit"** → Faire `git commit` SEULEMENT (PAS de push)
+
 4. ✅ Si l'utilisateur répond **"commit/push"** ou **"push"** → Faire `git commit` ET `git push`
+
 5. ❌ Si l'utilisateur demande des modifications → Ajuster le message et re-exposer
 
-**Langue des Messages de Commit** : **Anglais** uniquement
+**Langue des Messages de Commit** : **ANGLAIS** UNIQUEMENT
 
-- Les titres de commit doivent être en anglais
-- Les descriptions de commit doivent être en anglais
-- Suivre les conventions Git standard (feat:, fix:, docs:, refactor:, etc.)
+- ⚠️ **OBLIGATOIRE** : Titre en anglais
+- ⚠️ **OBLIGATOIRE** : Description en anglais
+- ⚠️ **OBLIGATOIRE** : Suivre les conventions Git standard (feat:, fix:, docs:, refactor:, etc.)
+- ❌ **INTERDIT** : Aucun mot en français dans le message de commit
 
 **Exemple** :
 ```
-Claude: "Je propose le message de commit suivant :
+Claude: "Développement terminé. Je propose le message de commit suivant :
 
 Titre: feat: Add mesh batching with global buffers
 
@@ -121,11 +131,13 @@ Description:
 - Update Vulkan backend to support batching
 - Add example in galaxy3d_demo
 
-Est-ce que je peux commit/push ?"
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 
-User: "commit"  ← Commit seulement (pas de push)
+⏸️ STOP - J'attends ton feu vert pour commit/push."
 
-Claude: [fait git commit seulement]
+User: "commit/push"  ← Feu vert pour commit ET push
+
+Claude: [fait git commit ET git push]
 ```
 
 ---

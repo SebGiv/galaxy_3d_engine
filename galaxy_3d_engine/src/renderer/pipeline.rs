@@ -1,7 +1,7 @@
-/// RendererPipeline trait and pipeline descriptor
+/// Pipeline trait and pipeline descriptor
 
 use std::sync::Arc;
-use crate::renderer::{RendererShader, TextureFormat, ShaderStage};
+use crate::renderer::{Shader, TextureFormat, ShaderStage};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,9 +82,9 @@ pub struct PushConstantRange {
 #[derive(Clone)]
 pub struct PipelineDesc {
     /// Vertex shader
-    pub vertex_shader: Arc<dyn RendererShader>,
+    pub vertex_shader: Arc<dyn Shader>,
     /// Fragment shader
-    pub fragment_shader: Arc<dyn RendererShader>,
+    pub fragment_shader: Arc<dyn Shader>,
     /// Vertex input layout
     pub vertex_layout: VertexLayout,
     /// Primitive topology
@@ -99,8 +99,8 @@ pub struct PipelineDesc {
 
 /// Pipeline resource trait
 ///
-/// Implemented by backend-specific pipeline types (e.g., VulkanRendererPipeline).
+/// Implemented by backend-specific pipeline types (e.g., VulkanPipeline).
 /// The pipeline is automatically destroyed when dropped.
-pub trait RendererPipeline: Send + Sync {
+pub trait Pipeline: Send + Sync {
     // No public methods for now, pipelines are created and bound by frames
 }

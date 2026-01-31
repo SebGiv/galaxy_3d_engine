@@ -116,19 +116,19 @@ Galaxy/
 ```
 galaxy_3d_engine/src/
 ├── lib.rs                 # Exportations publiques, registre de plugins
-├── engine.rs              # Gestionnaire singleton Galaxy3dEngine
+├── engine.rs              # Gestionnaire singleton galaxy_3d_engine::galaxy3d::Engine
 └── renderer/
     ├── mod.rs             # Déclarations de modules
     ├── renderer.rs        # Trait Renderer (interface de fabrique)
-    ├── buffer.rs          # Trait RendererBuffer + BufferDesc
-    ├── texture.rs         # Trait RendererTexture + TextureDesc
-    ├── shader.rs          # Trait RendererShader + ShaderDesc
-    ├── pipeline.rs        # Trait RendererPipeline + PipelineDesc
-    ├── command_list.rs    # Trait RendererCommandList
-    ├── render_target.rs   # Trait RendererRenderTarget
-    ├── render_pass.rs     # Trait RendererRenderPass
-    ├── swapchain.rs       # Trait RendererSwapchain
-    └── descriptor_set.rs  # Trait RendererDescriptorSet
+    ├── buffer.rs          # Trait galaxy_3d_engine::galaxy3d::render::Buffer + BufferDesc
+    ├── texture.rs         # Trait galaxy_3d_engine::galaxy3d::render::Texture + TextureDesc
+    ├── shader.rs          # Trait galaxy_3d_engine::galaxy3d::render::Shader + ShaderDesc
+    ├── pipeline.rs        # Trait galaxy_3d_engine::galaxy3d::render::Pipeline + PipelineDesc
+    ├── command_list.rs    # Trait galaxy_3d_engine::galaxy3d::render::CommandList
+    ├── render_target.rs   # Trait galaxy_3d_engine::galaxy3d::render::RenderTarget
+    ├── render_pass.rs     # Trait galaxy_3d_engine::galaxy3d::render::RenderPass
+    ├── swapchain.rs       # Trait galaxy_3d_engine::galaxy3d::render::Swapchain
+    └── descriptor_set.rs  # Trait galaxy_3d_engine::galaxy3d::render::DescriptorSet
 ```
 
 ### galaxy_3d_engine_renderer_vulkan (Backend Vulkan)
@@ -138,15 +138,15 @@ galaxy_3d_engine_renderer_vulkan/src/
 ├── lib.rs                      # Exportations, enregistrement Vulkan
 ├── debug.rs                    # Couches de validation, messager de débogage
 ├── vulkan.rs                   # Implémentation VulkanRenderer
-├── vulkan_buffer.rs            # VulkanRendererBuffer
-├── vulkan_texture.rs           # VulkanRendererTexture
-├── vulkan_shader.rs            # VulkanRendererShader
-├── vulkan_pipeline.rs          # VulkanRendererPipeline
-├── vulkan_command_list.rs      # VulkanRendererCommandList
-├── vulkan_render_target.rs     # VulkanRendererRenderTarget
-├── vulkan_render_pass.rs       # VulkanRendererRenderPass
-├── vulkan_swapchain.rs         # VulkanRendererSwapchain
-└── vulkan_descriptor_set.rs    # VulkanRendererDescriptorSet
+├── vulkan_buffer.rs            # Vulkangalaxy_3d_engine::galaxy3d::render::Buffer
+├── vulkan_texture.rs           # Vulkangalaxy_3d_engine::galaxy3d::render::Texture
+├── vulkan_shader.rs            # Vulkangalaxy_3d_engine::galaxy3d::render::Shader
+├── vulkan_pipeline.rs          # Vulkangalaxy_3d_engine::galaxy3d::render::Pipeline
+├── vulkan_command_list.rs      # Vulkangalaxy_3d_engine::galaxy3d::render::CommandList
+├── vulkan_render_target.rs     # Vulkangalaxy_3d_engine::galaxy3d::render::RenderTarget
+├── vulkan_render_pass.rs       # Vulkangalaxy_3d_engine::galaxy3d::render::RenderPass
+├── vulkan_swapchain.rs         # Vulkangalaxy_3d_engine::galaxy3d::render::Swapchain
+└── vulkan_descriptor_set.rs    # Vulkangalaxy_3d_engine::galaxy3d::render::DescriptorSet
 ```
 
 ### galaxy_image (Bibliothèque d'images)
@@ -177,12 +177,12 @@ Toutes les ressources sont exposées comme des objets traits pour masquer l'impl
 
 ```rust
 // API publique (indépendante du backend)
-pub trait RendererTexture: Send + Sync {}
-pub trait RendererBuffer: Send + Sync {}
-pub trait RendererPipeline: Send + Sync {}
+pub trait galaxy_3d_engine::galaxy3d::render::Texture: Send + Sync {}
+pub trait galaxy_3d_engine::galaxy3d::render::Buffer: Send + Sync {}
+pub trait galaxy_3d_engine::galaxy3d::render::Pipeline: Send + Sync {}
 
 // Implémentation du backend (type concret, non exposé)
-pub struct VulkanRendererTexture {
+pub struct Vulkangalaxy_3d_engine::galaxy3d::render::Texture {
     image: vk::Image,
     view: vk::ImageView,
     allocation: Option<Allocation>,
@@ -192,7 +192,7 @@ pub struct VulkanRendererTexture {
 
 // La fabrique retourne un objet trait
 fn create_texture(&mut self, desc: TextureDesc)
-    -> RenderResult<Arc<dyn RendererTexture>>
+    -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::Texture>>
 ```
 
 **Avantages :**
@@ -204,18 +204,18 @@ fn create_texture(&mut self, desc: TextureDesc)
 
 | Type de ressource | Propriété | Raison |
 |---------------|-----------|--------|
-| `Arc<dyn RendererTexture>` | Partagée | Textures utilisées par plusieurs listes de commandes |
-| `Arc<dyn RendererBuffer>` | Partagée | Buffers partagés entre les images |
-| `Arc<dyn RendererPipeline>` | Partagée | Pipelines réutilisées |
-| `Box<dyn RendererCommandList>` | Exclusive | Listes de commandes enregistrées une fois par image |
-| `Box<dyn RendererSwapchain>` | Exclusive | Propriétaire unique par fenêtre |
+| `Arc<dyn galaxy_3d_engine::galaxy3d::render::Texture>` | Partagée | Textures utilisées par plusieurs listes de commandes |
+| `Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>` | Partagée | Buffers partagés entre les images |
+| `Arc<dyn galaxy_3d_engine::galaxy3d::render::Pipeline>` | Partagée | Pipelines réutilisées |
+| `Box<dyn galaxy_3d_engine::galaxy3d::render::CommandList>` | Exclusive | Listes de commandes enregistrées une fois par image |
+| `Box<dyn galaxy_3d_engine::galaxy3d::render::Swapchain>` | Exclusive | Propriétaire unique par fenêtre |
 
 ### 3. Gestion des ressources RAII
 
 Toutes les ressources implémentent `Drop` pour le nettoyage automatique :
 
 ```rust
-impl Drop for VulkanRendererTexture {
+impl Drop for Vulkangalaxy_3d_engine::galaxy3d::render::Texture {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_image_view(self.view, None);
@@ -260,8 +260,8 @@ Tous les traits publics exigent `Send + Sync` :
 
 ```rust
 pub trait Renderer: Send + Sync { ... }
-pub trait RendererTexture: Send + Sync {}
-pub trait RendererCommandList: Send + Sync { ... }
+pub trait galaxy_3d_engine::galaxy3d::render::Texture: Send + Sync {}
+pub trait galaxy_3d_engine::galaxy3d::render::CommandList: Send + Sync { ... }
 ```
 
 Le renderer est généralement enveloppé dans `Arc<Mutex<dyn Renderer>>` pour l'accès multi-thread.
@@ -278,34 +278,34 @@ Le trait `Renderer` est l'interface de fabrique principale :
 pub trait Renderer: Send + Sync {
     // Création de ressources
     fn create_texture(&mut self, desc: TextureDesc)
-        -> RenderResult<Arc<dyn RendererTexture>>;
+        -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::Texture>>;
     fn create_buffer(&mut self, desc: BufferDesc)
-        -> RenderResult<Arc<dyn RendererBuffer>>;
+        -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>>;
     fn create_shader(&mut self, desc: ShaderDesc)
-        -> RenderResult<Arc<dyn RendererShader>>;
+        -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::Shader>>;
     fn create_pipeline(&mut self, desc: PipelineDesc)
-        -> RenderResult<Arc<dyn RendererPipeline>>;
+        -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::Pipeline>>;
 
     // Infrastructure de rendu
     fn create_command_list(&self)
-        -> RenderResult<Box<dyn RendererCommandList>>;
-    fn create_render_target(&self, desc: &RendererRenderTargetDesc)
-        -> RenderResult<Arc<dyn RendererRenderTarget>>;
-    fn create_render_pass(&self, desc: &RendererRenderPassDesc)
-        -> RenderResult<Arc<dyn RendererRenderPass>>;
+        -> RenderResult<Box<dyn galaxy_3d_engine::galaxy3d::render::CommandList>>;
+    fn create_render_target(&self, desc: &galaxy_3d_engine::galaxy3d::render::RenderTargetDesc)
+        -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::RenderTarget>>;
+    fn create_render_pass(&self, desc: &galaxy_3d_engine::galaxy3d::render::RenderPassDesc)
+        -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::RenderPass>>;
     fn create_swapchain(&self, window: &Window)
-        -> RenderResult<Box<dyn RendererSwapchain>>;
+        -> RenderResult<Box<dyn galaxy_3d_engine::galaxy3d::render::Swapchain>>;
 
     // Gestion des descripteurs
-    fn create_descriptor_set_for_texture(&self, texture: &Arc<dyn RendererTexture>)
-        -> RenderResult<Arc<dyn RendererDescriptorSet>>;
+    fn create_descriptor_set_for_texture(&self, texture: &Arc<dyn galaxy_3d_engine::galaxy3d::render::Texture>)
+        -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet>>;
     fn get_descriptor_set_layout_handle(&self) -> u64;
 
     // Soumission de commandes
-    fn submit(&self, commands: &[&dyn RendererCommandList])
+    fn submit(&self, commands: &[&dyn galaxy_3d_engine::galaxy3d::render::CommandList])
         -> RenderResult<()>;
-    fn submit_with_swapchain(&self, commands: &[&dyn RendererCommandList],
-                             swapchain: &dyn RendererSwapchain,
+    fn submit_with_swapchain(&self, commands: &[&dyn galaxy_3d_engine::galaxy3d::render::CommandList],
+                             swapchain: &dyn galaxy_3d_engine::galaxy3d::render::Swapchain,
                              image_index: u32)
         -> RenderResult<()>;
 
@@ -322,28 +322,28 @@ pub trait Renderer: Send + Sync {
 
 | Trait | Méthodes | Objectif |
 |-------|---------|---------|
-| **RendererBuffer** | `update(offset, data)` | Buffer GPU (vertex/index/uniform) |
-| **RendererTexture** | _(marqueur)_ | Ressource texture GPU |
-| **RendererShader** | _(marqueur)_ | Module shader compilé (SPIR-V) |
-| **RendererPipeline** | _(marqueur)_ | État du pipeline graphique |
-| **RendererDescriptorSet** | _(marqueur)_ | Liaison de ressource (textures, uniformes) |
-| **RendererRenderPass** | _(marqueur)_ | Configuration de passe de rendu |
-| **RendererRenderTarget** | `width()`, `height()`, `format()` | Destination de rendu |
+| **galaxy_3d_engine::galaxy3d::render::Buffer** | `update(offset, data)` | Buffer GPU (vertex/index/uniform) |
+| **galaxy_3d_engine::galaxy3d::render::Texture** | _(marqueur)_ | Ressource texture GPU |
+| **galaxy_3d_engine::galaxy3d::render::Shader** | _(marqueur)_ | Module shader compilé (SPIR-V) |
+| **galaxy_3d_engine::galaxy3d::render::Pipeline** | _(marqueur)_ | État du pipeline graphique |
+| **galaxy_3d_engine::galaxy3d::render::DescriptorSet** | _(marqueur)_ | Liaison de ressource (textures, uniformes) |
+| **galaxy_3d_engine::galaxy3d::render::RenderPass** | _(marqueur)_ | Configuration de passe de rendu |
+| **galaxy_3d_engine::galaxy3d::render::RenderTarget** | `width()`, `height()`, `format()` | Destination de rendu |
 
-### Trait RendererCommandList
+### Trait galaxy_3d_engine::galaxy3d::render::CommandList
 
 Interface d'enregistrement de commandes :
 
 ```rust
-pub trait RendererCommandList: Send + Sync {
+pub trait galaxy_3d_engine::galaxy3d::render::CommandList: Send + Sync {
     // Cycle de vie du buffer de commandes
     fn begin(&mut self) -> RenderResult<()>;
     fn end(&mut self) -> RenderResult<()>;
 
     // Gestion de la passe de rendu
     fn begin_render_pass(&mut self,
-                         render_pass: &Arc<dyn RendererRenderPass>,
-                         render_target: &Arc<dyn RendererRenderTarget>,
+                         render_pass: &Arc<dyn galaxy_3d_engine::galaxy3d::render::RenderPass>,
+                         render_target: &Arc<dyn galaxy_3d_engine::galaxy3d::render::RenderTarget>,
                          clear_values: &[ClearValue])
         -> RenderResult<()>;
     fn end_render_pass(&mut self) -> RenderResult<()>;
@@ -351,19 +351,19 @@ pub trait RendererCommandList: Send + Sync {
     // État du pipeline
     fn set_viewport(&mut self, viewport: Viewport) -> RenderResult<()>;
     fn set_scissor(&mut self, scissor: Rect2D) -> RenderResult<()>;
-    fn bind_pipeline(&mut self, pipeline: &Arc<dyn RendererPipeline>)
+    fn bind_pipeline(&mut self, pipeline: &Arc<dyn galaxy_3d_engine::galaxy3d::render::Pipeline>)
         -> RenderResult<()>;
 
     // Liaison de ressources
     fn bind_descriptor_sets(&mut self,
-                           pipeline: &Arc<dyn RendererPipeline>,
-                           descriptor_sets: &[&Arc<dyn RendererDescriptorSet>])
+                           pipeline: &Arc<dyn galaxy_3d_engine::galaxy3d::render::Pipeline>,
+                           descriptor_sets: &[&Arc<dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet>])
         -> RenderResult<()>;
     fn push_constants(&mut self, offset: u32, data: &[u8])
         -> RenderResult<()>;
-    fn bind_vertex_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64)
+    fn bind_vertex_buffer(&mut self, buffer: &Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>, offset: u64)
         -> RenderResult<()>;
-    fn bind_index_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64)
+    fn bind_index_buffer(&mut self, buffer: &Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>, offset: u64)
         -> RenderResult<()>;
 
     // Dessin
@@ -374,14 +374,14 @@ pub trait RendererCommandList: Send + Sync {
 }
 ```
 
-### Trait RendererSwapchain
+### Trait galaxy_3d_engine::galaxy3d::render::Swapchain
 
 Interface de présentation de fenêtre :
 
 ```rust
-pub trait RendererSwapchain: Send + Sync {
+pub trait galaxy_3d_engine::galaxy3d::render::Swapchain: Send + Sync {
     fn acquire_next_image(&mut self)
-        -> RenderResult<(u32, Arc<dyn RendererRenderTarget>)>;
+        -> RenderResult<(u32, Arc<dyn galaxy_3d_engine::galaxy3d::render::RenderTarget>)>;
     fn present(&mut self, image_index: u32) -> RenderResult<()>;
     fn recreate(&mut self, width: u32, height: u32) -> RenderResult<()>;
 
@@ -467,8 +467,8 @@ pub enum ShaderStage {
 
 ```rust
 pub struct PipelineDesc {
-    pub vertex_shader: Arc<dyn RendererShader>,
-    pub fragment_shader: Arc<dyn RendererShader>,
+    pub vertex_shader: Arc<dyn galaxy_3d_engine::galaxy3d::render::Shader>,
+    pub fragment_shader: Arc<dyn galaxy_3d_engine::galaxy3d::render::Shader>,
     pub vertex_layout: VertexLayout,
     pub topology: PrimitiveTopology,
     pub push_constant_ranges: Vec<PushConstantRange>,
@@ -498,7 +498,7 @@ pub struct VertexAttribute {
 #### RenderPassDesc
 
 ```rust
-pub struct RendererRenderPassDesc {
+pub struct galaxy_3d_engine::galaxy3d::render::RenderPassDesc {
     pub color_attachments: Vec<AttachmentDesc>,
     pub depth_attachment: Option<AttachmentDesc>,
 }
@@ -561,7 +561,7 @@ let allocation = allocator.lock().unwrap()
 
 ```
 1. INITIALISATION
-   ├── Créer Renderer (VulkanRenderer::new)
+   ├── Créer Renderer (galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::new)
    ├── Créer Swapchain (renderer.create_swapchain)
    ├── Créer Render Pass (renderer.create_render_pass)
    └── Créer Command Lists (renderer.create_command_list) × 2 pour double buffering
@@ -644,7 +644,7 @@ let allocation = allocator.lock().unwrap()
 6. Soumettre les commandes de transfert
 7. Attendre la fin (fence)
 8. Détruire le buffer de staging
-9. Retourner Arc<dyn RendererTexture>
+9. Retourner Arc<dyn galaxy_3d_engine::galaxy3d::render::Texture>
 ```
 
 ---
@@ -909,9 +909,9 @@ fn render(&mut self) {
 **Objectif :** Sécurité des types sans exposer les détails d'implémentation
 
 ```rust
-pub trait RendererTexture: Send + Sync {}
-pub trait RendererShader: Send + Sync {}
-pub trait RendererPipeline: Send + Sync {}
+pub trait galaxy_3d_engine::galaxy3d::render::Texture: Send + Sync {}
+pub trait galaxy_3d_engine::galaxy3d::render::Shader: Send + Sync {}
+pub trait galaxy_3d_engine::galaxy3d::render::Pipeline: Send + Sync {}
 ```
 
 **Avantages :**
@@ -927,13 +927,13 @@ pub trait RendererPipeline: Send + Sync {}
 ```rust
 // L'API publique reçoit un objet trait
 fn submit_with_swapchain(&self,
-                         commands: &[&dyn RendererCommandList],
-                         swapchain: &dyn RendererSwapchain,
+                         commands: &[&dyn galaxy_3d_engine::galaxy3d::render::CommandList],
+                         swapchain: &dyn galaxy_3d_engine::galaxy3d::render::Swapchain,
                          image_index: u32) -> RenderResult<()>
 
 // Le backend transtypes vers le type concret
-let vk_cmd = *cmd as *const dyn RendererCommandList
-    as *const VulkanRendererCommandList;
+let vk_cmd = *cmd as *const dyn galaxy_3d_engine::galaxy3d::render::CommandList
+    as *const Vulkangalaxy_3d_engine::galaxy3d::render::CommandList;
 let vk_cmd = unsafe { &*vk_cmd };
 
 // Accéder aux membres spécifiques à Vulkan
@@ -952,7 +952,7 @@ static RENDERER_REGISTRY: Mutex<Option<RendererPluginRegistry>>
 
 pub fn register_renderer_plugin<F>(name: &'static str, factory: F)
 where
-    F: Fn(&Window, RendererConfig)
+    F: Fn(&Window, galaxy_3d_engine::galaxy3d::render::Config)
         -> RenderResult<Arc<Mutex<dyn Renderer>>>
         + Send + Sync + 'static
 ```
@@ -962,7 +962,7 @@ where
 ```rust
 // Dans l'initialisation de la crate Vulkan
 register_renderer_plugin("vulkan", |window, config| {
-    Ok(Arc::new(Mutex::new(VulkanRenderer::new(window, config)?)))
+    Ok(Arc::new(Mutex::new(galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::new(window, config)?)))
 });
 
 // Dans l'application
@@ -1027,8 +1027,8 @@ Tous les traits publics exigent `Send + Sync` :
 
 ```rust
 pub trait Renderer: Send + Sync { ... }
-pub trait RendererTexture: Send + Sync {}
-pub trait RendererCommandList: Send + Sync { ... }
+pub trait galaxy_3d_engine::galaxy3d::render::Texture: Send + Sync {}
+pub trait galaxy_3d_engine::galaxy3d::render::CommandList: Send + Sync { ... }
 ```
 
 ### Renderer enveloppé dans Mutex
@@ -1101,9 +1101,9 @@ Toutes les opérations pouvant échouer retournent `RenderResult<T>` :
 
 ```rust
 fn create_texture(&mut self, desc: TextureDesc)
-    -> RenderResult<Arc<dyn RendererTexture>>;
+    -> RenderResult<Arc<dyn galaxy_3d_engine::galaxy3d::render::Texture>>;
 
-fn submit(&self, commands: &[&dyn RendererCommandList])
+fn submit(&self, commands: &[&dyn galaxy_3d_engine::galaxy3d::render::CommandList])
     -> RenderResult<()>;
 ```
 
@@ -1180,8 +1180,8 @@ pub fn print_validation_stats_report();
 pub struct D3D12Renderer { ... }
 impl Renderer for D3D12Renderer { ... }
 
-pub struct D3D12RendererTexture { ... }
-impl RendererTexture for D3D12RendererTexture {}
+pub struct D3D12galaxy_3d_engine::galaxy3d::render::Texture { ... }
+impl galaxy_3d_engine::galaxy3d::render::Texture for D3D12galaxy_3d_engine::galaxy3d::render::Texture {}
 
 // Enregistrer le plugin
 register_renderer_plugin("d3d12", |window, config| {
@@ -1205,27 +1205,27 @@ let renderer = create_renderer("d3d12", &window, config)?;
 | Trait | Rôle | Méthodes clés |
 |-------|------|-------------|
 | `Renderer` | Fabrique/Dispositif | `create_texture`, `create_buffer`, `create_shader`, `create_pipeline`, `create_command_list`, `submit` |
-| `RendererCommandList` | Enregistrement de commandes | `begin`, `begin_render_pass`, `bind_pipeline`, `bind_descriptor_sets`, `draw`, `end` |
-| `RendererSwapchain` | Présentation | `acquire_next_image`, `present`, `recreate` |
-| `RendererBuffer` | Buffer GPU | `update` |
-| `RendererTexture` | Texture GPU | _(marqueur)_ |
-| `RendererShader` | Module shader | _(marqueur)_ |
-| `RendererPipeline` | Pipeline graphique | _(marqueur)_ |
-| `RendererDescriptorSet` | Liaison de ressource | _(marqueur)_ |
-| `RendererRenderPass` | Config de passe de rendu | _(marqueur)_ |
-| `RendererRenderTarget` | Destination de rendu | `width`, `height`, `format` |
+| `galaxy_3d_engine::galaxy3d::render::CommandList` | Enregistrement de commandes | `begin`, `begin_render_pass`, `bind_pipeline`, `bind_descriptor_sets`, `draw`, `end` |
+| `galaxy_3d_engine::galaxy3d::render::Swapchain` | Présentation | `acquire_next_image`, `present`, `recreate` |
+| `galaxy_3d_engine::galaxy3d::render::Buffer` | Buffer GPU | `update` |
+| `galaxy_3d_engine::galaxy3d::render::Texture` | Texture GPU | _(marqueur)_ |
+| `galaxy_3d_engine::galaxy3d::render::Shader` | Module shader | _(marqueur)_ |
+| `galaxy_3d_engine::galaxy3d::render::Pipeline` | Pipeline graphique | _(marqueur)_ |
+| `galaxy_3d_engine::galaxy3d::render::DescriptorSet` | Liaison de ressource | _(marqueur)_ |
+| `galaxy_3d_engine::galaxy3d::render::RenderPass` | Config de passe de rendu | _(marqueur)_ |
+| `galaxy_3d_engine::galaxy3d::render::RenderTarget` | Destination de rendu | `width`, `height`, `format` |
 
 ### Types de configuration
 
 | Type | Objectif | Champs clés |
 |------|---------|------------|
-| `RendererConfig` | Configuration du moteur | `enable_validation`, `debug_severity`, `debug_output` |
+| `galaxy_3d_engine::galaxy3d::render::Config` | Configuration du moteur | `enable_validation`, `debug_severity`, `debug_output` |
 | `BufferDesc` | Création de buffer | `size`, `usage` (Vertex/Index/Uniform/Storage) |
 | `TextureDesc` | Création de texture | `width`, `height`, `format`, `usage`, `data` |
 | `ShaderDesc` | Création de shader | `code` (SPIR-V), `stage`, `entry_point` |
 | `PipelineDesc` | Création de pipeline | `shaders`, `vertex_layout`, `topology`, `push_constants`, `blending` |
-| `RendererRenderPassDesc` | Passe de rendu | `color_attachments`, `depth_attachment` |
-| `RendererRenderTargetDesc` | Cible de rendu | `width`, `height`, `format`, `usage`, `samples` |
+| `galaxy_3d_engine::galaxy3d::render::RenderPassDesc` | Passe de rendu | `color_attachments`, `depth_attachment` |
+| `galaxy_3d_engine::galaxy3d::render::RenderTargetDesc` | Cible de rendu | `width`, `height`, `format`, `usage`, `samples` |
 
 ### Énumérations
 

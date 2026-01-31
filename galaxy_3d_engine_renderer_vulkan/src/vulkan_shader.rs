@@ -1,10 +1,10 @@
-/// VulkanRendererShader - Vulkan implementation of RendererShader trait
+/// Shader - Vulkan implementation of RendererShader trait
 
-use galaxy_3d_engine::RendererShader;
+use galaxy_3d_engine::galaxy3d::render::Shader as RendererShader;
 use ash::vk;
 
 /// Vulkan shader implementation
-pub struct VulkanRendererShader {
+pub struct Shader {
     /// Vulkan shader module
     pub(crate) module: vk::ShaderModule,
     /// Shader stage flags
@@ -15,11 +15,11 @@ pub struct VulkanRendererShader {
     pub(crate) device: ash::Device,
 }
 
-impl RendererShader for VulkanRendererShader {
+impl RendererShader for Shader {
     // No public methods
 }
 
-impl Drop for VulkanRendererShader {
+impl Drop for Shader {
     fn drop(&mut self) {
         unsafe {
             // Destroy shader module

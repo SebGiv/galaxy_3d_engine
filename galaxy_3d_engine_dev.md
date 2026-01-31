@@ -32,20 +32,20 @@ Create a modern 3D rendering engine in Rust with:
 **Nouvelle architecture** (actuelle):
 - `Renderer` - Factory pour créer ressources, command lists, swapchains, et submit
 - `RenderCommandList` - Enregistrement de commandes (remplace RendererFrame)
-- `RendererSwapchain` - Gestion swapchain séparée
-- `RendererRenderTarget` - Cible de rendu (texture ou swapchain)
-- `RendererRenderPass` - Configuration du render pass
+- `galaxy_3d_engine::galaxy3d::render::Swapchain` - Gestion swapchain séparée
+- `galaxy_3d_engine::galaxy3d::render::RenderTarget` - Cible de rendu (texture ou swapchain)
+- `galaxy_3d_engine::galaxy3d::render::RenderPass` - Configuration du render pass
 
 **Resource Traits**:
 - `Renderer` - Main interface (factory + submit, gère tout en interne)
 - `RenderCommandList` - Command recording interface
-- `RendererSwapchain` - Swapchain management (acquire/present)
-- `RendererRenderTarget` - Render target (texture ou swapchain image)
-- `RendererRenderPass` - Render pass configuration
-- `RendererTexture` - GPU texture handle
-- `RendererBuffer` - GPU buffer handle (vertex, index, uniform)
-- `RendererShader` - Compiled shader module handle
-- `RendererPipeline` - Graphics pipeline state handle (avec push constants)
+- `galaxy_3d_engine::galaxy3d::render::Swapchain` - Swapchain management (acquire/present)
+- `galaxy_3d_engine::galaxy3d::render::RenderTarget` - Render target (texture ou swapchain image)
+- `galaxy_3d_engine::galaxy3d::render::RenderPass` - Render pass configuration
+- `galaxy_3d_engine::galaxy3d::render::Texture` - GPU texture handle
+- `galaxy_3d_engine::galaxy3d::render::Buffer` - GPU buffer handle (vertex, index, uniform)
+- `galaxy_3d_engine::galaxy3d::render::Shader` - Compiled shader module handle
+- `galaxy_3d_engine::galaxy3d::render::Pipeline` - Graphics pipeline state handle (avec push constants)
 
 **Avantages**:
 - ✅ Render-to-texture possible
@@ -146,7 +146,7 @@ pipeline_barrier(image, TRANSFER_DST_OPTIMAL, SHADER_READ_ONLY_OPTIMAL);
 // texture_sampler: vk::Sampler,                 // linear filtering (privé)
 
 // Application utilise API générique (pas de types Vulkan!)
-let descriptor_set: Arc<dyn RendererDescriptorSet> =
+let descriptor_set: Arc<dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet> =
     renderer.create_descriptor_set_for_texture(&texture)?;
 
 // Bind dans command list (API 100% abstraite)
@@ -187,7 +187,7 @@ match pixel_format {
 
 ---
 
-### 4. Galaxy3dEngine Singleton Manager
+### 4. galaxy_3d_engine::galaxy3d::Engine Singleton Manager
 
 **Implémentation** : Gestionnaire de singletons thread-safe pour les sous-systèmes du moteur
 
@@ -199,20 +199,20 @@ match pixel_format {
 **Architecture** :
 ```rust
 // Structure singleton principale
-pub struct Galaxy3dEngine;
+pub struct galaxy_3d_engine::galaxy3d::Engine;
 
-impl Galaxy3dEngine {
+impl galaxy_3d_engine::galaxy3d::Engine {
     /// Initialiser le moteur (appeler au démarrage)
-    pub fn initialize() -> Galaxy3dResult<()>;
+    pub fn initialize() -> galaxy_3d_engine::galaxy3d::Result<()>;
 
     /// Créer le renderer singleton
-    pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> Galaxy3dResult<()>;
+    pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> galaxy_3d_engine::galaxy3d::Result<()>;
 
     /// Accéder au renderer global
-    pub fn renderer() -> Galaxy3dResult<Arc<Mutex<dyn Renderer>>>;
+    pub fn renderer() -> galaxy_3d_engine::galaxy3d::Result<Arc<Mutex<dyn Renderer>>>;
 
     /// Détruire le renderer singleton
-    pub fn destroy_renderer() -> Galaxy3dResult<()>;
+    pub fn destroy_renderer() -> galaxy_3d_engine::galaxy3d::Result<()>;
 
     /// Shutdown complet du moteur
     pub fn shutdown();
@@ -238,20 +238,20 @@ struct EngineState {
 
 **Usage dans l'application** :
 ```rust
-use galaxy_3d_engine::{Galaxy3dEngine, RendererConfig};
-use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
+use galaxy_3d_engine::{galaxy_3d_engine::galaxy3d::Engine, galaxy_3d_engine::galaxy3d::render::Config};
+use galaxy_3d_engine_renderer_vulkan::galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer;
 
 fn main() -> Result<()> {
     // 1. Initialiser le moteur
-    Galaxy3dEngine::initialize()?;
+    galaxy_3d_engine::galaxy3d::Engine::initialize()?;
 
     // 2. Créer le renderer singleton (API simplifiée)
-    let config = RendererConfig::default();
-    let vulkan_renderer = VulkanRenderer::new(&window, config)?;
-    Galaxy3dEngine::create_renderer(vulkan_renderer)?;
+    let config = galaxy_3d_engine::galaxy3d::render::Config::default();
+    let vulkan_renderer = galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::new(&window, config)?;
+    galaxy_3d_engine::galaxy3d::Engine::create_renderer(vulkan_renderer)?;
 
     // 3. Accès global au renderer (n'importe où dans le code)
-    let renderer = Galaxy3dEngine::renderer()?;
+    let renderer = galaxy_3d_engine::galaxy3d::Engine::renderer()?;
     let mut renderer_guard = renderer.lock().unwrap();
 
     // Utiliser le renderer
@@ -259,15 +259,15 @@ fn main() -> Result<()> {
 
     // 4. Cleanup
     drop(renderer_guard); // Libérer le lock
-    Galaxy3dEngine::destroy_renderer()?;
-    Galaxy3dEngine::shutdown();
+    galaxy_3d_engine::galaxy3d::Engine::destroy_renderer()?;
+    galaxy_3d_engine::galaxy3d::Engine::shutdown();
 
     Ok(())
 }
 ```
 
 **Avantages** :
-- ✅ API ergonomique : `Galaxy3dEngine::create_renderer(VulkanRenderer::new(...)?)`
+- ✅ API ergonomique : `galaxy_3d_engine::galaxy3d::Engine::create_renderer(galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::new(...)?)`
 - ✅ Accès global sans passer de références partout
 - ✅ Thread-safe par design (RwLock + Mutex)
 - ✅ Gestion centralisée du cycle de vie
@@ -276,7 +276,7 @@ fn main() -> Result<()> {
 
 **Limitations** :
 - ⚠️ Un seul renderer par processus (suffisant pour la plupart des cas)
-- ⚠️ Nécessite `Galaxy3dEngine::initialize()` avant utilisation
+- ⚠️ Nécessite `galaxy_3d_engine::galaxy3d::Engine::initialize()` avant utilisation
 - ⚠️ Lock mutex sur chaque accès (négligeable en pratique)
 
 ---
@@ -293,13 +293,13 @@ fn main() -> Result<()> {
 
 **Pattern de destruction**:
 ```rust
-pub struct VulkanRendererCommandList {
+pub struct Vulkangalaxy_3d_engine::galaxy3d::render::CommandList {
     framebuffers: Vec<vk::Framebuffer>,
     // ...
 }
 
-impl RendererCommandList for VulkanRendererCommandList {
-    fn begin(&mut self) -> Galaxy3dResult<()> {
+impl galaxy_3d_engine::galaxy3d::render::CommandList for Vulkangalaxy_3d_engine::galaxy3d::render::CommandList {
+    fn begin(&mut self) -> galaxy_3d_engine::galaxy3d::Result<()> {
         // Détruire les framebuffers du frame précédent
         for framebuffer in self.framebuffers.drain(..) {
             self.device.destroy_framebuffer(framebuffer, None);
@@ -307,14 +307,14 @@ impl RendererCommandList for VulkanRendererCommandList {
         // ...
     }
 
-    fn begin_render_pass(...) -> Galaxy3dResult<()> {
+    fn begin_render_pass(...) -> galaxy_3d_engine::galaxy3d::Result<()> {
         let framebuffer = create_framebuffer(...)?;
         self.framebuffers.push(framebuffer); // Stocké pour plus tard
         // ...
     }
 }
 
-impl Drop for VulkanRendererCommandList {
+impl Drop for Vulkangalaxy_3d_engine::galaxy3d::render::CommandList {
     fn drop(&mut self) {
         // Cleanup final
         for framebuffer in self.framebuffers.drain(..) {
@@ -330,12 +330,12 @@ impl Drop for VulkanRendererCommandList {
 
 **Architecture**: Séparation swapchain et device submission
 
-**VulkanRendererSwapchain**:
+**Vulkangalaxy_3d_engine::galaxy3d::render::Swapchain**:
 - `image_available_semaphores[image_count]`
 - `render_finished_semaphores[image_count]`
 - Gère acquire/present avec semaphores
 
-**VulkanRenderer**:
+**galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer**:
 - `submit_with_sync()` pour synchroniser avec swapchain
 - Fences pour CPU-GPU sync
 
@@ -377,10 +377,10 @@ Galaxy/                                  # Workspace root
 │               ├── mod.rs
 │               ├── renderer.rs  # Renderer trait (avec nouvelles méthodes) ✨
 │               ├── command_list.rs  # RenderCommandList trait ✨
-│               ├── render_target.rs # RendererRenderTarget trait ✨
-│               ├── render_pass.rs   # RendererRenderPass trait ✨
-│               ├── swapchain.rs     # RendererSwapchain trait ✨
-│               ├── descriptor_set.rs # RendererDescriptorSet trait ✨
+│               ├── render_target.rs # galaxy_3d_engine::galaxy3d::render::RenderTarget trait ✨
+│               ├── render_pass.rs   # galaxy_3d_engine::galaxy3d::render::RenderPass trait ✨
+│               ├── swapchain.rs     # galaxy_3d_engine::galaxy3d::render::Swapchain trait ✨
+│               ├── descriptor_set.rs # galaxy_3d_engine::galaxy3d::render::DescriptorSet trait ✨
 │               ├── texture.rs
 │               ├── buffer.rs
 │               ├── shader.rs
@@ -390,12 +390,12 @@ Galaxy/                                  # Workspace root
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs
-│           ├── vulkan.rs    # VulkanRenderer ✨
-│           ├── vulkan_command_list.rs  # VulkanRendererCommandList ✨
-│           ├── vulkan_render_target.rs # VulkanRendererRenderTarget ✨
-│           ├── vulkan_render_pass.rs   # VulkanRendererRenderPass ✨
-│           ├── vulkan_swapchain.rs     # VulkanRendererSwapchain ✨
-│           ├── vulkan_descriptor_set.rs # VulkanRendererDescriptorSet ✨
+│           ├── vulkan.rs    # galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer ✨
+│           ├── vulkan_command_list.rs  # Vulkangalaxy_3d_engine::galaxy3d::render::CommandList ✨
+│           ├── vulkan_render_target.rs # Vulkangalaxy_3d_engine::galaxy3d::render::RenderTarget ✨
+│           ├── vulkan_render_pass.rs   # Vulkangalaxy_3d_engine::galaxy3d::render::RenderPass ✨
+│           ├── vulkan_swapchain.rs     # Vulkangalaxy_3d_engine::galaxy3d::render::Swapchain ✨
+│           ├── vulkan_descriptor_set.rs # Vulkangalaxy_3d_engine::galaxy3d::render::DescriptorSet ✨
 │           ├── vulkan_texture.rs
 │           ├── vulkan_buffer.rs
 │           ├── vulkan_shader.rs
@@ -433,9 +433,9 @@ Galaxy/                                  # Workspace root
 **Implemented Features**:
 - [x] Renderer trait étendu (nouvelles méthodes intégrées)
 - [x] RenderCommandList trait (remplace RendererFrame)
-- [x] RendererSwapchain séparé
-- [x] RendererRenderTarget (texture et swapchain)
-- [x] RendererRenderPass configurables
+- [x] galaxy_3d_engine::galaxy3d::render::Swapchain séparé
+- [x] galaxy_3d_engine::galaxy3d::render::RenderTarget (texture et swapchain)
+- [x] galaxy_3d_engine::galaxy3d::render::RenderPass configurables
 - [x] Push constants support (vertex shader)
 - [x] Animation avec push constants (rotation)
 - [x] Framebuffer lifecycle management (memory leak fixed)
@@ -452,7 +452,7 @@ Galaxy/                                  # Workspace root
 
 ### Command List Architecture
 
-**VulkanRendererCommandList**:
+**Vulkangalaxy_3d_engine::galaxy3d::render::CommandList**:
 - Possède son propre command pool et command buffer
 - Réutilisable (reset dans `begin()`)
 - Gère le cycle de vie des framebuffers
@@ -471,7 +471,7 @@ let cmd = &mut command_lists[current_frame];
 
 ### Synchronization Model
 
-**Swapchain Semaphores** (dans VulkanRendererSwapchain):
+**Swapchain Semaphores** (dans Vulkangalaxy_3d_engine::galaxy3d::render::Swapchain):
 - `image_available_semaphores[image_count]`
 - `render_finished_semaphores[image_count]`
 
@@ -503,21 +503,21 @@ swapchain.present(image_idx)?;
 
 ### Resource Destruction Order
 
-**VulkanRenderer Drop**:
+**galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer Drop**:
 1. Wait device idle
 2. Drop user-created resources (textures, buffers, etc.)
 3. Drop allocator (ManuallyDrop)
 4. Destroy device
 5. Destroy instance
 
-**VulkanRendererSwapchain Drop**:
+**Vulkangalaxy_3d_engine::galaxy3d::render::Swapchain Drop**:
 1. Wait device idle
 2. Destroy framebuffers (si encore présents)
 3. Destroy image views
 4. Destroy swapchain
 5. Destroy semaphores
 
-**VulkanRendererCommandList Drop**:
+**Vulkangalaxy_3d_engine::galaxy3d::render::CommandList Drop**:
 1. Destroy remaining framebuffers
 2. Destroy command pool (libère command buffer)
 
@@ -557,13 +557,13 @@ cargo run
 **Quick Example** (100% Backend-Agnostic):
 ```rust
 use galaxy_3d_engine::{
-    Renderer, RendererCommandList, RendererSwapchain, RendererDescriptorSet,
+    Renderer, galaxy_3d_engine::galaxy3d::render::CommandList, galaxy_3d_engine::galaxy3d::render::Swapchain, galaxy_3d_engine::galaxy3d::render::DescriptorSet,
     PipelineDesc, PushConstantRange, ShaderStage, TextureDesc,
 };
-use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;  // Seulement pour création initiale
+use galaxy_3d_engine_renderer_vulkan::galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer;  // Seulement pour création initiale
 
 // Créer device (seule référence Vulkan)
-let mut device = VulkanRenderer::new(&window, config)?;
+let mut device = galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::new(&window, config)?;
 
 // Créer swapchain (retourne trait abstrait)
 let mut swapchain = device.create_swapchain(&window)?;
@@ -624,7 +624,7 @@ loop {
 
 ### Naming Conventions
 - **Traits**: `Renderer`, `RenderCommandList` (PascalCase avec "Renderer" prefix)
-- **Structs**: `VulkanRenderer`, `VulkanRendererCommandList` (backend prefix)
+- **Structs**: `galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer`, `Vulkangalaxy_3d_engine::galaxy3d::render::CommandList` (backend prefix)
 - **Functions**: `create_buffer`, `begin_render_pass` (snake_case)
 - **Constants**: `MAX_FRAMES_IN_FLIGHT` (SCREAMING_SNAKE_CASE)
 
@@ -634,7 +634,7 @@ loop {
 - Safety notes for unsafe code
 
 ### Error Handling
-- `Galaxy3dResult<T>` = `Result<T, Galaxy3dError>`
+- `galaxy_3d_engine::galaxy3d::Result<T>` = `Result<T, galaxy_3d_engine::galaxy3d::Error>`
 - Detailed error messages with context
 - Never `unwrap()` in library code
 
@@ -644,20 +644,20 @@ loop {
 
 ### 2026-01-27 - Phase 9: Backend-Agnostic API (100% Portable)
 - **Abstraction Complète**:
-  - ✅ Nouveau trait `RendererDescriptorSet` pour masquer `vk::DescriptorSet`
-  - ✅ Méthode `Renderer::create_descriptor_set_for_texture()` retourne `Arc<dyn RendererDescriptorSet>`
-  - ✅ Méthode `Renderer::submit_with_swapchain()` prend `&dyn RendererSwapchain` (plus de semaphores Vulkan exposés)
-  - ✅ Méthode `RendererCommandList::bind_descriptor_sets()` prend `&[&Arc<dyn RendererDescriptorSet>]`
-  - ✅ Méthodes `RendererSwapchain::width/height/format()` retournent types génériques
+  - ✅ Nouveau trait `galaxy_3d_engine::galaxy3d::render::DescriptorSet` pour masquer `vk::DescriptorSet`
+  - ✅ Méthode `Renderer::create_descriptor_set_for_texture()` retourne `Arc<dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet>`
+  - ✅ Méthode `Renderer::submit_with_swapchain()` prend `&dyn galaxy_3d_engine::galaxy3d::render::Swapchain` (plus de semaphores Vulkan exposés)
+  - ✅ Méthode `galaxy_3d_engine::galaxy3d::render::CommandList::bind_descriptor_sets()` prend `&[&Arc<dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet>]`
+  - ✅ Méthodes `galaxy_3d_engine::galaxy3d::render::Swapchain::width/height/format()` retournent types génériques
 - **Détails Vulkan Cachés**:
-  - ✅ `VulkanRendererPipeline.pipeline_layout` → `pub(crate)` (privé)
-  - ✅ `VulkanRendererSwapchain::sync_info()` → `pub(crate)` (privé)
-  - ✅ `VulkanRenderer::get_descriptor_set_layout()` → `pub(crate)` (privé)
+  - ✅ `Vulkangalaxy_3d_engine::galaxy3d::render::Pipeline.pipeline_layout` → `pub(crate)` (privé)
+  - ✅ `Vulkangalaxy_3d_engine::galaxy3d::render::Swapchain::sync_info()` → `pub(crate)` (privé)
+  - ✅ `galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::get_descriptor_set_layout()` → `pub(crate)` (privé)
   - ✅ Ajout de `get_descriptor_set_layout_handle()` qui retourne `u64` (pas de type Vulkan)
 - **Migration Demo**:
   - ❌ Supprimé `use ash::vk::Handle`
-  - ❌ Supprimé imports `VulkanRendererPipeline`, `VulkanRendererCommandList`, `VulkanRendererTexture`
-  - ✅ `Vec<Arc<dyn RendererDescriptorSet>>` remplace `Vec<vk::DescriptorSet>`
+  - ❌ Supprimé imports `Vulkangalaxy_3d_engine::galaxy3d::render::Pipeline`, `Vulkangalaxy_3d_engine::galaxy3d::render::CommandList`, `Vulkangalaxy_3d_engine::galaxy3d::render::Texture`
+  - ✅ `Vec<Arc<dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet>>` remplace `Vec<vk::DescriptorSet>`
   - ✅ Zéro casts `unsafe` dans le code applicatif (downcast internes seulement)
   - ✅ API 100% générique, aucune référence Vulkan visible
 - **Score de Portabilité**:
@@ -685,7 +685,7 @@ loop {
   - ✅ `Format` → `TextureFormat` (renommage pour clarté)
   - ✅ `TextureDesc.data: Option<Vec<u8>>` (upload de données)
   - ✅ `PipelineDesc.enable_blending: bool` (contrôle alpha blending)
-  - ✅ Exports publics: `VulkanRendererPipeline`, `VulkanRendererCommandList`, `VulkanRendererTexture`
+  - ✅ Exports publics: `Vulkangalaxy_3d_engine::galaxy3d::render::Pipeline`, `Vulkangalaxy_3d_engine::galaxy3d::render::CommandList`, `Vulkangalaxy_3d_engine::galaxy3d::render::Texture`
 - **Multi-Format Support**:
   - ✅ PNG (RGBA, 4 canaux) - utilisé directement
   - ✅ BMP (RGB, 3 canaux) - conversion RGB→RGBA
@@ -706,9 +706,9 @@ loop {
     - `create_command_list()`, `create_render_pass()`, `create_render_target()`
     - `create_swapchain()`, `submit()`
   - ✅ `RenderCommandList` trait (remplace `RendererFrame`)
-  - ✅ `RendererSwapchain` trait (séparation présentation)
-  - ✅ `RendererRenderTarget` trait (texture ou swapchain)
-  - ✅ `RendererRenderPass` trait (configuration)
+  - ✅ `galaxy_3d_engine::galaxy3d::render::Swapchain` trait (séparation présentation)
+  - ✅ `galaxy_3d_engine::galaxy3d::render::RenderTarget` trait (texture ou swapchain)
+  - ✅ `galaxy_3d_engine::galaxy3d::render::RenderPass` trait (configuration)
 
 ### 2026-01-25 - Phase 7: Architecture Moderne (Proposition 2)
 - **Features**:
@@ -759,11 +759,11 @@ loop {
 **Demo Status**: `galaxy3d_demo` affiche 3 quads texturés (PNG, BMP, JPEG) avec transparence ✅
 
 ### ✅ Phase 9: Backend-Agnostic API (DONE)
-- [x] Créer trait `RendererDescriptorSet` pour masquer `vk::DescriptorSet`
-- [x] Ajouter `create_descriptor_set_for_texture()` retournant `Arc<dyn RendererDescriptorSet>`
-- [x] Ajouter `submit_with_swapchain()` prenant `&dyn RendererSwapchain`
+- [x] Créer trait `galaxy_3d_engine::galaxy3d::render::DescriptorSet` pour masquer `vk::DescriptorSet`
+- [x] Ajouter `create_descriptor_set_for_texture()` retournant `Arc<dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet>`
+- [x] Ajouter `submit_with_swapchain()` prenant `&dyn galaxy_3d_engine::galaxy3d::render::Swapchain`
 - [x] Modifier `bind_descriptor_sets()` pour prendre traits abstraits
-- [x] Ajouter `width()`, `height()`, `format()` à `RendererSwapchain`
+- [x] Ajouter `width()`, `height()`, `format()` à `galaxy_3d_engine::galaxy3d::render::Swapchain`
 - [x] Cacher tous les champs Vulkan publics (`pub(crate)`)
 - [x] Supprimer toutes références Vulkan de la demo
 - [x] Éliminer tous les casts `unsafe` du code applicatif
@@ -1350,7 +1350,7 @@ pub fn generate_mipmaps_lanczos3(image: &RgbaImage) -> Vec<Vec<u8>> {
 }
 ```
 
-2. **Modification VulkanRenderer** :
+2. **Modification galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer** :
 ```rust
 // Si mipmap_data fourni, uploader les mipmaps
 if let Some(mipmap_data) = desc.mipmap_data {
@@ -1403,12 +1403,12 @@ pub enum TextureFormat {
 // Nouveau : create_texture_from_file (helper)
 impl Renderer {
     fn create_texture_from_file(&self, path: &str)
-        -> Galaxy3dResult<Arc<dyn RendererTexture>>
+        -> galaxy_3d_engine::galaxy3d::Result<Arc<dyn galaxy_3d_engine::galaxy3d::render::Texture>>
     {
         match path.extension() {
             "dds" => self.load_dds(path),
             "png" | "jpg" | "bmp" => self.load_image(path),
-            _ => Err(Galaxy3dError::UnsupportedFormat),
+            _ => Err(galaxy_3d_engine::galaxy3d::Error::UnsupportedFormat),
         }
     }
 }
@@ -1474,7 +1474,7 @@ pub fn load_dds(path: &Path) -> Result<DdsFile> {
 
 2. **Support Vulkan BC7** :
 ```rust
-// VulkanRenderer::create_texture
+// galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::create_texture
 let vk_format = match desc.format {
     TextureFormat::RGBA8Unorm => vk::Format::R8G8B8A8_UNORM,
     TextureFormat::BC7Unorm => vk::Format::BC7_UNORM_BLOCK, // ✨ NOUVEAU
@@ -2288,8 +2288,8 @@ fn render_frame(&mut self) {
 ```rust
 // Nouveau : MeshRegistry
 pub struct MeshRegistry {
-    global_vertex_buffer: Arc<dyn RendererBuffer>,
-    global_index_buffer: Arc<dyn RendererBuffer>,
+    global_vertex_buffer: Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>,
+    global_index_buffer: Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>,
     meshes: Vec<MeshInfo>,
 }
 
@@ -2302,7 +2302,7 @@ pub struct MeshInfo {
 }
 
 impl MeshRegistry {
-    pub fn load_mesh(&mut self, path: &str) -> Galaxy3dResult<MeshId> {
+    pub fn load_mesh(&mut self, path: &str) -> galaxy_3d_engine::galaxy3d::Result<MeshId> {
         // Charge mesh, append to global buffers
     }
 
@@ -2338,36 +2338,36 @@ command_list.draw_indexed(
 **Changements API** :
 
 ```rust
-// Nouveau trait RendererCommandList
-pub trait RendererCommandList {
+// Nouveau trait galaxy_3d_engine::galaxy3d::render::CommandList
+pub trait galaxy_3d_engine::galaxy3d::render::CommandList {
     // Existants
     fn draw_indexed(&mut self, ...);
 
     // ✨ NOUVEAUX
     fn draw_indexed_indirect(
         &mut self,
-        buffer: &Arc<dyn RendererBuffer>, // Indirect buffer
+        buffer: &Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>, // Indirect buffer
         offset: u64,
         draw_count: u32,
         stride: u32,
-    ) -> Galaxy3dResult<()>;
+    ) -> galaxy_3d_engine::galaxy3d::Result<()>;
 
     fn draw_indexed_indirect_count(
         &mut self,
-        buffer: &Arc<dyn RendererBuffer>,
+        buffer: &Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>,
         offset: u64,
-        count_buffer: &Arc<dyn RendererBuffer>, // Draw count
+        count_buffer: &Arc<dyn galaxy_3d_engine::galaxy3d::render::Buffer>, // Draw count
         count_offset: u64,
         max_draw_count: u32,
         stride: u32,
-    ) -> Galaxy3dResult<()>;
+    ) -> galaxy_3d_engine::galaxy3d::Result<()>;
 
     fn dispatch(
         &mut self,
         group_count_x: u32,
         group_count_y: u32,
         group_count_z: u32,
-    ) -> Galaxy3dResult<()>;
+    ) -> galaxy_3d_engine::galaxy3d::Result<()>;
 }
 
 // Nouveau : Compute pipelines
@@ -2375,15 +2375,15 @@ impl Renderer {
     fn create_compute_pipeline(
         &self,
         desc: ComputePipelineDesc,
-    ) -> Galaxy3dResult<Arc<dyn RendererComputePipeline>>;
+    ) -> galaxy_3d_engine::galaxy3d::Result<Arc<dyn RendererComputePipeline>>;
 }
 ```
 
 **Implémentation Vulkan** :
 
 ```rust
-// VulkanRendererCommandList
-fn draw_indexed_indirect_count(&mut self, ...) -> Galaxy3dResult<()> {
+// Vulkangalaxy_3d_engine::galaxy3d::render::CommandList
+fn draw_indexed_indirect_count(&mut self, ...) -> galaxy_3d_engine::galaxy3d::Result<()> {
     unsafe {
         let vk_buffer = downcast_buffer(buffer);
         let vk_count_buffer = downcast_buffer(count_buffer);

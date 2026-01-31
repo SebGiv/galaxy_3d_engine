@@ -6,11 +6,11 @@
 use std::fmt;
 
 /// Result type for Galaxy3D engine operations
-pub type Galaxy3dResult<T> = Result<T, Galaxy3dError>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Galaxy3D engine errors
 #[derive(Debug, Clone)]
-pub enum Galaxy3dError {
+pub enum Error {
     /// Backend-specific error (Vulkan, DirectX, etc.)
     BackendError(String),
 
@@ -24,15 +24,15 @@ pub enum Galaxy3dError {
     InitializationFailed(String),
 }
 
-impl fmt::Display for Galaxy3dError {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Galaxy3dError::BackendError(msg) => write!(f, "Backend error: {}", msg),
-            Galaxy3dError::OutOfMemory => write!(f, "Out of GPU memory"),
-            Galaxy3dError::InvalidResource(msg) => write!(f, "Invalid resource: {}", msg),
-            Galaxy3dError::InitializationFailed(msg) => write!(f, "Initialization failed: {}", msg),
+            Error::BackendError(msg) => write!(f, "Backend error: {}", msg),
+            Error::OutOfMemory => write!(f, "Out of GPU memory"),
+            Error::InvalidResource(msg) => write!(f, "Invalid resource: {}", msg),
+            Error::InitializationFailed(msg) => write!(f, "Initialization failed: {}", msg),
         }
     }
 }
 
-impl std::error::Error for Galaxy3dError {}
+impl std::error::Error for Error {}

@@ -1,12 +1,12 @@
-/// VulkanRendererRenderTarget - Vulkan implementation of RendererRenderTarget trait
+/// RenderTarget - Vulkan implementation of RendererRenderTarget trait
 
-use galaxy_3d_engine::{RendererRenderTarget, TextureFormat};
+use galaxy_3d_engine::galaxy3d::render::{RenderTarget as RendererRenderTarget, TextureFormat};
 use ash::vk;
 
 /// Vulkan render target implementation
 ///
 /// Can represent either a texture render target or a swapchain image render target
-pub struct VulkanRendererRenderTarget {
+pub struct RenderTarget {
     /// Width in pixels
     width: u32,
     /// Height in pixels
@@ -21,7 +21,7 @@ pub struct VulkanRendererRenderTarget {
     pub(crate) owns_image_view: bool,
 }
 
-impl VulkanRendererRenderTarget {
+impl RenderTarget {
     /// Create a new render target for a swapchain image
     ///
     /// # Arguments
@@ -73,7 +73,7 @@ impl VulkanRendererRenderTarget {
     }
 }
 
-impl RendererRenderTarget for VulkanRendererRenderTarget {
+impl RendererRenderTarget for RenderTarget {
     fn width(&self) -> u32 {
         self.width
     }
@@ -87,7 +87,7 @@ impl RendererRenderTarget for VulkanRendererRenderTarget {
     }
 }
 
-impl Drop for VulkanRendererRenderTarget {
+impl Drop for RenderTarget {
     fn drop(&mut self) {
         if self.owns_image_view {
             if let Some(device) = &self.device {

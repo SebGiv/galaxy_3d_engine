@@ -255,7 +255,7 @@
             <ul>
                 <li><a href="#introduction">Introduction</a></li>
                 <li>
-                    <span class="toc-toggle" onclick="toggleSection('galaxy3dengine-section')">Galaxy3dEngine</span>
+                    <span class="toc-toggle" onclick="toggleSection('galaxy3dengine-section')">galaxy_3d_engine::galaxy3d::Engine</span>
                     <ul id="galaxy3dengine-section">
                         <li><a href="#galaxy3dengine-initialization">Initialization</a></li>
                         <li><a href="#galaxy3dengine-renderer-management">Renderer Management</a></li>
@@ -303,29 +303,29 @@
                 </div>
             </section>
 
-            <!-- Galaxy3dEngine -->
+            <!-- galaxy_3d_engine::galaxy3d::Engine -->
             <section id="galaxy3dengine">
                 <a href="#toc" class="back-to-toc">↑ Table of Contents</a>
-                <h2>Galaxy3dEngine</h2>
+                <h2>galaxy_3d_engine::galaxy3d::Engine</h2>
                 <p>Singleton manager for engine subsystems. Provides global access to the renderer and manages the lifecycle of all engine singletons.</p>
 
                 <h3 id="galaxy3dengine-initialization">Initialization</h3>
 
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('galaxy3dengine-initialize')">
-                        <span>Galaxy3dEngine::initialize()</span>
+                        <span>galaxy_3d_engine::galaxy3d::Engine::initialize()</span>
                         <span class="summary">Initialize the engine (call once at startup)</span>
                     </h3>
                     <div id="galaxy3dengine-initialize" class="accordion-content">
                         <p>Initializes the global engine state. Must be called once before creating any subsystems.</p>
                         <h4>Signature</h4>
-                        <pre><code>pub fn initialize() -> Galaxy3dResult&lt;()&gt;</code></pre>
+                        <pre><code>pub fn initialize() -> galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></pre>
                         <h4>Example</h4>
-                        <pre><code class="language-rust">use galaxy_3d_engine::Galaxy3dEngine;
+                        <pre><code class="language-rust">use galaxy_3d_engine::galaxy_3d_engine::galaxy3d::Engine;
 
 fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
     // Initialize engine
-    Galaxy3dEngine::initialize()?;
+    galaxy_3d_engine::galaxy3d::Engine::initialize()?;
 
     // ... create renderer and other subsystems ...
 
@@ -336,7 +336,7 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('galaxy3dengine-shutdown')">
-                        <span>Galaxy3dEngine::shutdown()</span>
+                        <span>galaxy_3d_engine::galaxy3d::Engine::shutdown()</span>
                         <span class="summary">Shutdown the engine and destroy all singletons</span>
                     </h3>
                     <div id="galaxy3dengine-shutdown" class="accordion-content">
@@ -344,15 +344,15 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
                         <h4>Signature</h4>
                         <pre><code>pub fn shutdown()</code></pre>
                         <h4>Example</h4>
-                        <pre><code class="language-rust">use galaxy_3d_engine::Galaxy3dEngine;
+                        <pre><code class="language-rust">use galaxy_3d_engine::galaxy_3d_engine::galaxy3d::Engine;
 
 fn main() {
-    Galaxy3dEngine::initialize().unwrap();
+    galaxy_3d_engine::galaxy3d::Engine::initialize().unwrap();
 
     // ... application code ...
 
     // Cleanup
-    Galaxy3dEngine::shutdown();
+    galaxy_3d_engine::galaxy3d::Engine::shutdown();
 }</code></pre>
                     </div>
                 </div>
@@ -361,7 +361,7 @@ fn main() {
 
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('galaxy3dengine-create-renderer')">
-                        <span>Galaxy3dEngine::create_renderer()</span>
+                        <span>galaxy_3d_engine::galaxy3d::Engine::create_renderer()</span>
                         <span class="summary">Create and register the renderer singleton</span>
                     </h3>
                     <div id="galaxy3dengine-create-renderer" class="accordion-content">
@@ -370,7 +370,7 @@ fn main() {
                             The renderer is automatically wrapped in Arc&lt;Mutex&gt; for thread-safe access.
                         </p>
                         <h4>Signature</h4>
-                        <pre><code>pub fn create_renderer&lt;R: Renderer + 'static&gt;(renderer: R) -> Galaxy3dResult&lt;()&gt;</code></pre>
+                        <pre><code>pub fn create_renderer&lt;R: Renderer + 'static&gt;(renderer: R) -> galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></pre>
                         <h4>Parameters</h4>
                         <ul>
                             <li><code>renderer</code> - Any type implementing the Renderer trait</li>
@@ -381,18 +381,18 @@ fn main() {
                             <li>Renderer already exists</li>
                         </ul>
                         <h4>Example</h4>
-                        <pre><code class="language-rust">use galaxy_3d_engine::{Galaxy3dEngine, RendererConfig};
-use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
+                        <pre><code class="language-rust">use galaxy_3d_engine::{galaxy_3d_engine::galaxy3d::Engine, galaxy_3d_engine::galaxy3d::render::Config};
+use galaxy_3d_engine_renderer_vulkan::galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer;
 
 fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-    Galaxy3dEngine::initialize()?;
+    galaxy_3d_engine::galaxy3d::Engine::initialize()?;
 
     // Create Vulkan renderer
-    let config = RendererConfig::default();
-    let vulkan_renderer = VulkanRenderer::new(&window, config)?;
+    let config = galaxy_3d_engine::galaxy3d::render::Config::default();
+    let vulkan_renderer = galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::new(&window, config)?;
 
     // Register as singleton (simplified API)
-    Galaxy3dEngine::create_renderer(vulkan_renderer)?;
+    galaxy_3d_engine::galaxy3d::Engine::create_renderer(vulkan_renderer)?;
 
     Ok(())
 }</code></pre>
@@ -401,13 +401,13 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('galaxy3dengine-renderer')">
-                        <span>Galaxy3dEngine::renderer()</span>
+                        <span>galaxy_3d_engine::galaxy3d::Engine::renderer()</span>
                         <span class="summary">Get the global renderer singleton</span>
                     </h3>
                     <div id="galaxy3dengine-renderer" class="accordion-content">
                         <p>Returns a shared pointer to the renderer singleton. The renderer is wrapped in a Mutex for thread-safe mutable access.</p>
                         <h4>Signature</h4>
-                        <pre><code>pub fn renderer() -> Galaxy3dResult&lt;Arc&lt;Mutex&lt;dyn Renderer&gt;&gt;&gt;</code></pre>
+                        <pre><code>pub fn renderer() -> galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;Mutex&lt;dyn Renderer&gt;&gt;&gt;</code></pre>
                         <h4>Returns</h4>
                         <p>A shared pointer to the renderer wrapped in a Mutex</p>
                         <h4>Errors</h4>
@@ -416,11 +416,11 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
                             <li>Renderer not created</li>
                         </ul>
                         <h4>Example</h4>
-                        <pre><code class="language-rust">use galaxy_3d_engine::{Galaxy3dEngine, BufferDesc, BufferUsage};
+                        <pre><code class="language-rust">use galaxy_3d_engine::{galaxy_3d_engine::galaxy3d::Engine, BufferDesc, BufferUsage};
 
 fn create_vertex_buffer() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
     // Access global renderer
-    let renderer = Galaxy3dEngine::renderer()?;
+    let renderer = galaxy_3d_engine::galaxy3d::Engine::renderer()?;
     let mut renderer_guard = renderer.lock().unwrap();
 
     // Create buffer
@@ -436,7 +436,7 @@ fn create_vertex_buffer() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; 
 
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('galaxy3dengine-destroy-renderer')">
-                        <span>Galaxy3dEngine::destroy_renderer()</span>
+                        <span>galaxy_3d_engine::galaxy3d::Engine::destroy_renderer()</span>
                         <span class="summary">Destroy the renderer singleton</span>
                     </h3>
                     <div id="galaxy3dengine-destroy-renderer" class="accordion-content">
@@ -445,18 +445,18 @@ fn create_vertex_buffer() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; 
                             (Arc pointers) will remain valid until dropped.
                         </p>
                         <h4>Signature</h4>
-                        <pre><code>pub fn destroy_renderer() -> Galaxy3dResult&lt;()&gt;</code></pre>
+                        <pre><code>pub fn destroy_renderer() -> galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></pre>
                         <h4>Example</h4>
-                        <pre><code class="language-rust">use galaxy_3d_engine::Galaxy3dEngine;
+                        <pre><code class="language-rust">use galaxy_3d_engine::galaxy_3d_engine::galaxy3d::Engine;
 
 fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-    Galaxy3dEngine::initialize()?;
+    galaxy_3d_engine::galaxy3d::Engine::initialize()?;
 
     // ... use renderer ...
 
     // Cleanup
-    Galaxy3dEngine::destroy_renderer()?;
-    Galaxy3dEngine::shutdown();
+    galaxy_3d_engine::galaxy3d::Engine::destroy_renderer()?;
+    galaxy_3d_engine::galaxy3d::Engine::shutdown();
 
     Ok(())
 }</code></pre>
@@ -464,7 +464,7 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
                 </div>
 
                 <div class="note">
-                    <strong>Thread Safety:</strong> Galaxy3dEngine uses OnceLock + RwLock for thread-safe singleton management.
+                    <strong>Thread Safety:</strong> galaxy_3d_engine::galaxy3d::Engine uses OnceLock + RwLock for thread-safe singleton management.
                     Multiple threads can safely access the renderer simultaneously (with internal mutex locking).
                 </div>
             </section>
@@ -479,7 +479,7 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('renderer-new')">
-                        <span>VulkanRenderer::new()</span>
+                        <span>galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::new()</span>
                         <span class="summary">Creates a new Vulkan renderer instance</span>
                     </h3>
                     <div id="renderer-new" class="accordion-content">
@@ -490,17 +490,17 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
                         <p><strong>Parameters:</strong></p>
                         <ul>
                             <li><code>window: &Window</code> - The winit window handle</li>
-                            <li><code>config: RendererConfig</code> - Renderer configuration (validation layers, etc.)</li>
+                            <li><code>config: galaxy_3d_engine::galaxy3d::render::Config</code> - Renderer configuration (validation layers, etc.)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn Renderer&gt;&gt;</code></p>
-                        <pre><code class="language-rust">use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
-use galaxy_3d_engine::{Renderer, RendererConfig};
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn Renderer&gt;&gt;</code></p>
+                        <pre><code class="language-rust">use galaxy_3d_engine_renderer_vulkan::galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer;
+use galaxy_3d_engine::{Renderer, galaxy_3d_engine::galaxy3d::render::Config};
 
-let config = RendererConfig {
+let config = galaxy_3d_engine::galaxy3d::render::Config {
     enable_validation: true,
 };
 
-let renderer = VulkanRenderer::new(&window, config)?;
+let renderer = galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer::new(&window, config)?;
 </code></pre>
                     </div>
                 </div>
@@ -521,7 +521,7 @@ let renderer = VulkanRenderer::new(&window, config)?;
                         <ul>
                             <li><code>desc: BufferDesc</code> - Buffer description (size, usage, data)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererBuffer&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Buffer&gt;&gt;</code></p>
                         <pre><code class="language-rust">let vertex_data: Vec&lt;f32&gt; = vec![/* vertex positions */];
 
 let vertex_buffer = renderer.create_buffer(BufferDesc {
@@ -547,7 +547,7 @@ let vertex_buffer = renderer.create_buffer(BufferDesc {
                         <ul>
                             <li><code>desc: TextureDesc</code> - Texture description (width, height, format, data)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererTexture&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Texture&gt;&gt;</code></p>
                         <pre><code class="language-rust">let image_data: Vec&lt;u8&gt; = load_image("texture.png")?;
 
 let texture = renderer.create_texture(TextureDesc {
@@ -575,7 +575,7 @@ let texture = renderer.create_texture(TextureDesc {
                         <ul>
                             <li><code>desc: ShaderDesc</code> - Shader description (stage, SPIR-V code)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererShader&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Shader&gt;&gt;</code></p>
                         <pre><code class="language-rust">let vertex_spirv = include_bytes!("shaders/shader.vert.spv");
 
 let vertex_shader = renderer.create_shader(ShaderDesc {
@@ -600,7 +600,7 @@ let vertex_shader = renderer.create_shader(ShaderDesc {
                         <ul>
                             <li><code>desc: PipelineDesc</code> - Pipeline description</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererPipeline&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Pipeline&gt;&gt;</code></p>
                         <pre><code class="language-rust">let pipeline = renderer.create_pipeline(PipelineDesc {
     vertex_shader: vertex_shader.clone(),
     fragment_shader: fragment_shader.clone(),
@@ -648,9 +648,9 @@ let vertex_shader = renderer.create_shader(ShaderDesc {
                         </p>
                         <p><strong>Parameters:</strong></p>
                         <ul>
-                            <li><code>texture: &Arc&lt;dyn RendererTexture&gt;</code> - The texture to bind</li>
+                            <li><code>texture: &Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Texture&gt;</code> - The texture to bind</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererDescriptorSet&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet&gt;&gt;</code></p>
                         <pre><code class="language-rust">let texture = renderer.create_texture(texture_desc)?;
 let descriptor_set = renderer.create_descriptor_set_for_texture(&texture)?;
 
@@ -670,7 +670,7 @@ command_list.bind_descriptor_sets(&pipeline, &[&descriptor_set])?;
                             Creates a command list (command buffer) for recording rendering commands.
                             Command lists can be reused across multiple frames.
                         </p>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererCommandList&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::CommandList&gt;&gt;</code></p>
                         <pre><code class="language-rust">let command_list = renderer.create_command_list()?;
 
 // Command lists can be reused
@@ -698,7 +698,7 @@ let current_cmd = &command_lists[frame_index % 2];
                         <ul>
                             <li><code>window: &Window</code> - The window to present to</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererSwapchain&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Swapchain&gt;&gt;</code></p>
                         <pre><code class="language-rust">let swapchain = renderer.create_swapchain(&window)?;
 </code></pre>
                     </div>
@@ -717,7 +717,7 @@ let current_cmd = &command_lists[frame_index % 2];
                         <ul>
                             <li><code>desc: RenderPassDesc</code> - Render pass description</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererRenderPass&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::RenderPass&gt;&gt;</code></p>
                         <pre><code class="language-rust">let render_pass = renderer.create_render_pass(RenderPassDesc {
     color_attachments: vec![
         ColorAttachmentDesc {
@@ -746,11 +746,11 @@ let current_cmd = &command_lists[frame_index % 2];
                         </p>
                         <p><strong>Parameters:</strong></p>
                         <ul>
-                            <li><code>command_list: &Arc&lt;dyn RendererCommandList&gt;</code> - The command list to submit</li>
+                            <li><code>command_list: &Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::CommandList&gt;</code> - The command list to submit</li>
                             <li><code>sync_info: &SwapchainSyncInfo</code> - Synchronization info from swapchain</li>
                             <li><code>image_index: u32</code> - Index of the swapchain image</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">// Typical render loop
 let (image_index, render_target) = swapchain.acquire_next_image()?;
 
@@ -774,7 +774,7 @@ swapchain.present(image_index)?;
                 <h2>Command List</h2>
                 <p>See <a href="#create-command-list">Renderer::create_command_list()</a> for command list creation.</p>
 
-                <h3>RendererCommandList Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::CommandList Trait</h3>
                 <p>Interface for recording rendering commands. Command lists are reusable and must be begun/ended each frame.</p>
 
                 <div class="api-item">
@@ -784,7 +784,7 @@ swapchain.present(image_index)?;
                     </h3>
                     <div id="cmd-begin" class="accordion-content">
                         <p>Starts recording commands into the command list. Must be called before any other recording commands.</p>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.begin()?;
 // ... record commands ...
 command_list.end()?;
@@ -801,11 +801,11 @@ command_list.end()?;
                         <p>Begins a render pass with specified render target and clear values.</p>
                         <p><strong>Parameters:</strong></p>
                         <ul>
-                            <li><code>render_pass: &Arc&lt;dyn RendererRenderPass&gt;</code></li>
-                            <li><code>render_target: &Arc&lt;dyn RendererRenderTarget&gt;</code></li>
+                            <li><code>render_pass: &Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::RenderPass&gt;</code></li>
+                            <li><code>render_target: &Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::RenderTarget&gt;</code></li>
                             <li><code>clear_values: &[ClearValue]</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">let clear_values = [
     ClearValue::Color([0.0, 0.0, 0.0, 1.0]), // Black clear color
 ];
@@ -826,9 +826,9 @@ command_list.end_render_pass()?;
                         <p>Binds a graphics pipeline for subsequent draw commands.</p>
                         <p><strong>Parameters:</strong></p>
                         <ul>
-                            <li><code>pipeline: &Arc&lt;dyn RendererPipeline&gt;</code></li>
+                            <li><code>pipeline: &Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Pipeline&gt;</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.bind_pipeline(&pipeline)?;
 </code></pre>
                     </div>
@@ -843,10 +843,10 @@ command_list.end_render_pass()?;
                         <p>Binds a vertex buffer to a binding slot.</p>
                         <p><strong>Parameters:</strong></p>
                         <ul>
-                            <li><code>buffer: &Arc&lt;dyn RendererBuffer&gt;</code></li>
+                            <li><code>buffer: &Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Buffer&gt;</code></li>
                             <li><code>binding: u32</code> - Binding slot (usually 0)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.bind_vertex_buffer(&vertex_buffer, 0)?;
 </code></pre>
                     </div>
@@ -861,10 +861,10 @@ command_list.end_render_pass()?;
                         <p>Binds an index buffer for indexed drawing.</p>
                         <p><strong>Parameters:</strong></p>
                         <ul>
-                            <li><code>buffer: &Arc&lt;dyn RendererBuffer&gt;</code></li>
+                            <li><code>buffer: &Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Buffer&gt;</code></li>
                             <li><code>offset: u64</code> - Offset in bytes (usually 0)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.bind_index_buffer(&index_buffer, 0)?;
 </code></pre>
                     </div>
@@ -879,10 +879,10 @@ command_list.end_render_pass()?;
                         <p>Binds descriptor sets containing textures and uniform buffers.</p>
                         <p><strong>Parameters:</strong></p>
                         <ul>
-                            <li><code>pipeline: &Arc&lt;dyn RendererPipeline&gt;</code></li>
-                            <li><code>descriptor_sets: &[&Arc&lt;dyn RendererDescriptorSet&gt;]</code></li>
+                            <li><code>pipeline: &Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Pipeline&gt;</code></li>
+                            <li><code>descriptor_sets: &[&Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::DescriptorSet&gt;]</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.bind_descriptor_sets(&pipeline, &[&texture_descriptor])?;
 </code></pre>
                     </div>
@@ -900,7 +900,7 @@ command_list.end_render_pass()?;
                             <li><code>offset: u32</code> - Offset in push constant block</li>
                             <li><code>data: &[u8]</code> - Raw bytes to push</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">let time: f32 = elapsed_time;
 command_list.push_constants(0, &time.to_le_bytes())?;
 </code></pre>
@@ -919,7 +919,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                             <li><code>vertex_count: u32</code></li>
                             <li><code>first_vertex: u32</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.draw(3, 0)?; // Draw 3 vertices (1 triangle)
 </code></pre>
                     </div>
@@ -938,7 +938,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                             <li><code>first_index: u32</code></li>
                             <li><code>vertex_offset: i32</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.draw_indexed(6, 0, 0)?; // Draw 6 indices (2 triangles)
 </code></pre>
                     </div>
@@ -955,7 +955,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                         <ul>
                             <li><code>viewport: Viewport</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.set_viewport(Viewport {
     x: 0.0,
     y: 0.0,
@@ -975,7 +975,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                     </h3>
                     <div id="cmd-end-render-pass" class="accordion-content">
                         <p>Ends the currently active render pass.</p>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.end_render_pass()?;
 </code></pre>
                     </div>
@@ -988,7 +988,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                     </h3>
                     <div id="cmd-end" class="accordion-content">
                         <p>Finishes recording and finalizes the command list for submission.</p>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.end()?;
 </code></pre>
                     </div>
@@ -1000,7 +1000,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                 <h2>Swapchain</h2>
                 <p>See <a href="#create-swapchain">Renderer::create_swapchain()</a> for swapchain creation.</p>
 
-                <h3>RendererSwapchain Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::Swapchain Trait</h3>
                 <p>Manages presentation to a window with proper image acquisition and presentation synchronization.</p>
 
                 <div class="api-item">
@@ -1010,7 +1010,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                     </h3>
                     <div id="swap-acquire" class="accordion-content">
                         <p>Acquires the next available image from the swapchain. Returns the image index and a render target.</p>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;(u32, Arc&lt;dyn RendererRenderTarget&gt;)&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;(u32, Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::RenderTarget&gt;)&gt;</code></p>
                         <pre><code class="language-rust">let (image_index, render_target) = swapchain.acquire_next_image()?;
 </code></pre>
                     </div>
@@ -1027,7 +1027,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                         <ul>
                             <li><code>image_index: u32</code> - The image index from acquire_next_image</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">swapchain.present(image_index)?;
 </code></pre>
                     </div>
@@ -1066,9 +1066,9 @@ renderer.submit_with_sync(&command_list, &sync_info, image_index)?;
                 <h2>Render Target</h2>
                 <p>Represents a rendering destination (either swapchain image or texture).</p>
 
-                <h3>RendererRenderTarget Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::RenderTarget Trait</h3>
                 <div class="note">
-                    <strong>Note:</strong> RendererRenderTarget is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of render target handles. Render targets are typically obtained from swapchain.acquire_next_image() or created from textures.
+                    <strong>Note:</strong> galaxy_3d_engine::galaxy3d::render::RenderTarget is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of render target handles. Render targets are typically obtained from swapchain.acquire_next_image() or created from textures.
                 </div>
             </section>
 
@@ -1077,11 +1077,11 @@ renderer.submit_with_sync(&command_list, &sync_info, image_index)?;
                 <h2>Render Pass</h2>
                 <p>See <a href="#create-render-pass">Renderer::create_render_pass()</a> for render pass creation.</p>
 
-                <h3>RendererRenderPass Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::RenderPass Trait</h3>
                 <p>Defines the rendering configuration including color/depth attachments and load/store operations.</p>
 
                 <div class="note">
-                    <strong>Note:</strong> RendererRenderPass is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of render pass handles.
+                    <strong>Note:</strong> galaxy_3d_engine::galaxy3d::render::RenderPass is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of render pass handles.
                 </div>
 
                 <div class="api-item">
@@ -1111,11 +1111,11 @@ renderer.submit_with_sync(&command_list, &sync_info, image_index)?;
                 <h2>Pipeline</h2>
                 <p>See <a href="#create-pipeline">Renderer::create_pipeline()</a> for pipeline creation.</p>
 
-                <h3>RendererPipeline Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::Pipeline Trait</h3>
                 <p>Graphics pipeline state including shaders, vertex layout, topology, and blending.</p>
 
                 <div class="note">
-                    <strong>Note:</strong> RendererPipeline is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of pipeline handles.
+                    <strong>Note:</strong> galaxy_3d_engine::galaxy3d::render::Pipeline is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of pipeline handles.
                 </div>
 
                 <div class="api-item">
@@ -1174,7 +1174,7 @@ renderer.submit_with_sync(&command_list, &sync_info, image_index)?;
                 <h2>Buffer</h2>
                 <p>See <a href="#create-buffer">Renderer::create_buffer()</a> for buffer creation.</p>
 
-                <h3>RendererBuffer Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::Buffer Trait</h3>
                 <p>GPU buffer for storing vertex data, index data, or uniform data.</p>
 
                 <div class="api-item">
@@ -1189,7 +1189,7 @@ renderer.submit_with_sync(&command_list, &sync_info, image_index)?;
                             <li><code>offset: u64</code> - Offset in bytes</li>
                             <li><code>data: &[u8]</code> - New data</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></p>
                         <pre><code class="language-rust">let new_vertex_data: Vec&lt;f32&gt; = vec![/* updated vertices */];
 vertex_buffer.update(0, bytemuck::cast_slice(&new_vertex_data))?;
 </code></pre>
@@ -1202,11 +1202,11 @@ vertex_buffer.update(0, bytemuck::cast_slice(&new_vertex_data))?;
                 <h2>Texture</h2>
                 <p>See <a href="#create-texture">Renderer::create_texture()</a> for texture creation.</p>
 
-                <h3>RendererTexture Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::Texture Trait</h3>
                 <p>GPU texture for sampling in shaders.</p>
 
                 <div class="note">
-                    <strong>Note:</strong> RendererTexture is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of texture handles.
+                    <strong>Note:</strong> galaxy_3d_engine::galaxy3d::render::Texture is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of texture handles.
                 </div>
 
                 <div class="api-item">
@@ -1238,11 +1238,11 @@ vertex_buffer.update(0, bytemuck::cast_slice(&new_vertex_data))?;
                 <h2>Shader</h2>
                 <p>See <a href="#create-shader">Renderer::create_shader()</a> for shader creation.</p>
 
-                <h3>RendererShader Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::Shader Trait</h3>
                 <p>Compiled shader module (SPIR-V bytecode).</p>
 
                 <div class="note">
-                    <strong>Note:</strong> RendererShader is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of shader handles.
+                    <strong>Note:</strong> galaxy_3d_engine::galaxy3d::render::Shader is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of shader handles.
                 </div>
 
                 <div class="api-item">
@@ -1276,11 +1276,11 @@ let fragment_shader = renderer.create_shader(ShaderDesc {
                 <h2>Descriptor Set</h2>
                 <p>See <a href="#create-descriptor-set">Renderer::create_descriptor_set_for_texture()</a> for descriptor set creation.</p>
 
-                <h3>RendererDescriptorSet Trait</h3>
+                <h3>galaxy_3d_engine::galaxy3d::render::DescriptorSet Trait</h3>
                 <p>Binds resources (textures, uniform buffers) to shaders.</p>
 
                 <div class="note">
-                    <strong>Note:</strong> RendererDescriptorSet is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of descriptor set handles. Currently, descriptor sets are created specifically for textures using <code>create_descriptor_set_for_texture()</code>. Future versions will support custom descriptor layouts.
+                    <strong>Note:</strong> galaxy_3d_engine::galaxy3d::render::DescriptorSet is a marker trait with no public methods. It is used for type safety to prevent accidental misuse of descriptor set handles. Currently, descriptor sets are created specifically for textures using <code>create_descriptor_set_for_texture()</code>. Future versions will support custom descriptor layouts.
                 </div>
 
                 <pre><code class="language-rust">// Create texture and descriptor set

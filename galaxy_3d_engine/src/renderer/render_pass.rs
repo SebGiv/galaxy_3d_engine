@@ -1,17 +1,17 @@
-/// RendererRenderPass trait - describes how to configure a render pass
+/// RenderPass trait - describes how to configure a render pass
 
 use crate::renderer::TextureFormat;
 
 /// Render pass trait
 ///
 /// Describes how attachments are loaded, stored, and transitioned during rendering.
-pub trait RendererRenderPass: Send + Sync {
+pub trait RenderPass: Send + Sync {
     // No methods for now - just a marker trait for type safety
 }
 
 /// Descriptor for creating a render pass
 #[derive(Debug, Clone)]
-pub struct RendererRenderPassDesc {
+pub struct RenderPassDesc {
     /// Color attachments
     pub color_attachments: Vec<AttachmentDesc>,
     /// Optional depth attachment

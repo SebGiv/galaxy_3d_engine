@@ -1,11 +1,15 @@
-/// VulkanRendererBuffer - Vulkan implementation of RendererBuffer trait
+/// Buffer - Vulkan implementation of RendererBuffer trait
 
-use galaxy_3d_engine::{RendererBuffer, Galaxy3dResult, Galaxy3dError};
+use galaxy_3d_engine::galaxy3d::{
+    Result,
+    Error,
+    render::Buffer as RendererBuffer,
+};
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 
 /// Vulkan buffer implementation
-pub struct VulkanRendererBuffer {
+pub struct Buffer {
     /// Vulkan buffer
     pub(crate) buffer: vk::Buffer,
     /// GPU memory allocation
@@ -18,14 +22,14 @@ pub struct VulkanRendererBuffer {
     pub(crate) allocator: std::sync::Arc<std::sync::Mutex<gpu_allocator::vulkan::Allocator>>,
 }
 
-impl RendererBuffer for VulkanRendererBuffer {
-    fn update(&self, offset: u64, data: &[u8]) -> Galaxy3dResult<()> {
+impl RendererBuffer for Buffer {
+    fn update(&self, offset: u64, data: &[u8]) -> Result<()> {
         unsafe {
             if let Some(allocation) = &self.allocation {
                 // Map memory and copy data
                 let mapped_ptr = allocation
                     .mapped_ptr()
-                    .ok_or_else(|| Galaxy3dError::BackendError("Buffer is not CPU-accessible".to_string()))?
+                    .ok_or_else(|| Error::BackendError("Buffer is not CPU-accessible".to_string()))?
                     .as_ptr() as *mut u8;
 
                 // Copy data
@@ -37,13 +41,13 @@ impl RendererBuffer for VulkanRendererBuffer {
 
                 Ok(())
             } else {
-                Err(Galaxy3dError::BackendError("Buffer has no allocation".to_string()))
+                Err(Error::BackendError("Buffer has no allocation".to_string()))
             }
         }
     }
 }
 
-impl Drop for VulkanRendererBuffer {
+impl Drop for Buffer {
     fn drop(&mut self) {
         unsafe {
             // Free GPU memory

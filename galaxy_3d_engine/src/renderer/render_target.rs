@@ -1,11 +1,11 @@
-/// RendererRenderTarget trait - represents a render target (texture or swapchain image)
+/// RenderTarget trait - represents a render target (texture or swapchain image)
 
 use crate::renderer::{TextureFormat, TextureUsage};
 
 /// Render target trait
 ///
 /// Represents a surface that can be rendered to (either an offscreen texture or a swapchain image).
-pub trait RendererRenderTarget: Send + Sync {
+pub trait RenderTarget: Send + Sync {
     /// Get the width of the render target in pixels
     fn width(&self) -> u32;
 
@@ -18,7 +18,7 @@ pub trait RendererRenderTarget: Send + Sync {
 
 /// Descriptor for creating a render target
 #[derive(Debug, Clone)]
-pub struct RendererRenderTargetDesc {
+pub struct RenderTargetDesc {
     /// Width in pixels
     pub width: u32,
     /// Height in pixels

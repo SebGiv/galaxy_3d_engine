@@ -5,7 +5,7 @@
 
 use ash::vk;
 use colored::*;
-use galaxy_3d_engine::{DebugSeverity, DebugOutput, DebugMessageFilter, ValidationStats};
+use galaxy_3d_engine::galaxy3d::render::{DebugSeverity, DebugOutput, DebugMessageFilter, ValidationStats};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs::OpenOptions;
@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 /// Global debug configuration (shared across callbacks)
-static DEBUG_CONFIG: Mutex<Option<DebugConfig>> = Mutex::new(None);
+static DEBUG_CONFIG: Mutex<Option<Config>> = Mutex::new(None);
 
 /// Global validation statistics (thread-safe atomic counters)
 static VALIDATION_STATS: ValidationStatsTracker = ValidationStatsTracker::new();
@@ -24,7 +24,7 @@ static MESSAGE_TRACKER: Mutex<Option<MessageTracker>> = Mutex::new(None);
 
 /// Debug configuration for the callback
 #[derive(Clone)]
-pub struct DebugConfig {
+pub struct Config {
     pub severity: DebugSeverity,
     pub output: DebugOutput,
     pub message_filter: DebugMessageFilter,
@@ -98,7 +98,7 @@ impl MessageTracker {
 }
 
 /// Initialize debug configuration
-pub fn init_debug_config(config: DebugConfig) {
+pub fn init_debug_config(config: Config) {
     // Reset statistics when initializing
     VALIDATION_STATS.reset();
 

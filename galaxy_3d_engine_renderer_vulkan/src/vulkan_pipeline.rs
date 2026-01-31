@@ -1,10 +1,10 @@
-/// VulkanRendererPipeline - Vulkan implementation of RendererPipeline trait
+/// Pipeline - Vulkan implementation of RendererPipeline trait
 
-use galaxy_3d_engine::RendererPipeline;
+use galaxy_3d_engine::galaxy3d::render::Pipeline as RendererPipeline;
 use ash::vk;
 
 /// Vulkan pipeline implementation
-pub struct VulkanRendererPipeline {
+pub struct Pipeline {
     /// Vulkan graphics pipeline
     pub(crate) pipeline: vk::Pipeline,
     /// Pipeline layout (crate-private, accessed internally for descriptor set binding)
@@ -13,11 +13,11 @@ pub struct VulkanRendererPipeline {
     pub(crate) device: ash::Device,
 }
 
-impl RendererPipeline for VulkanRendererPipeline {
+impl RendererPipeline for Pipeline {
     // No public methods
 }
 
-impl Drop for VulkanRendererPipeline {
+impl Drop for Pipeline {
     fn drop(&mut self) {
         unsafe {
             // Destroy pipeline
