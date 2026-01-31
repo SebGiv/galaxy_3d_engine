@@ -6,6 +6,8 @@
 use ash::vk;
 use colored::*;
 use galaxy_3d_engine::galaxy3d::render::{DebugSeverity, DebugOutput, DebugMessageFilter, ValidationStats};
+use galaxy_3d_engine::galaxy3d::{Engine, log::LogSeverity};
+use galaxy_3d_engine::{engine_info, engine_error, engine_warn, engine_trace};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs::OpenOptions;
@@ -120,26 +122,26 @@ pub fn print_validation_stats_report() {
     let stats = get_validation_stats();
 
     if stats.total() == 0 {
-        println!("\n{}", "✓ No validation messages".green().bold());
+        engine_info!("galaxy3d::vulkan::ValidationStats", "No validation messages");
         return;
     }
 
-    println!("\n{}", "=== Validation Statistics Report ===".bright_blue().bold());
+    engine_info!("galaxy3d::vulkan::ValidationStats", "=== Validation Statistics Report ===");
 
     if stats.errors > 0 {
-        println!("  {} {}", "Errors:".red().bold(), stats.errors);
+        engine_error!("galaxy3d::vulkan::ValidationStats", "Errors: {}", stats.errors);
     }
     if stats.warnings > 0 {
-        println!("  {} {}", "Warnings:".yellow().bold(), stats.warnings);
+        engine_warn!("galaxy3d::vulkan::ValidationStats", "Warnings: {}", stats.warnings);
     }
     if stats.info > 0 {
-        println!("  {} {}", "Info:".cyan(), stats.info);
+        engine_info!("galaxy3d::vulkan::ValidationStats", "Info: {}", stats.info);
     }
     if stats.verbose > 0 {
-        println!("  {} {}", "Verbose:".bright_black(), stats.verbose);
+        engine_trace!("galaxy3d::vulkan::ValidationStats", "Verbose: {}", stats.verbose);
     }
 
-    println!("  {} {}", "Total:".white().bold(), stats.total());
+    engine_info!("galaxy3d::vulkan::ValidationStats", "Total: {}", stats.total());
 
     // Print message grouping info
     let tracker_guard = MESSAGE_TRACKER.lock().unwrap();
@@ -147,14 +149,11 @@ pub fn print_validation_stats_report() {
         let duplicate_count: u32 = tracker.messages.values().filter(|&&count| count > 1).count() as u32;
 
         if duplicate_count > 0 {
-            println!("\n  {} {} message(s) appeared multiple times",
-                "ℹ".cyan(),
-                duplicate_count
-            );
+            engine_info!("galaxy3d::vulkan::ValidationStats", "{} message(s) appeared multiple times", duplicate_count);
         }
     }
 
-    println!("{}\n", "====================================".bright_blue().bold());
+    engine_info!("galaxy3d::vulkan::ValidationStats", "====================================");
 }
 
 /// Vulkan debug messenger callback
@@ -277,36 +276,58 @@ pub unsafe extern "system" fn vulkan_debug_callback(
         String::new()
     };
 
-    // Format output (console version with colors)
-    let console_output = format!(
-        "{} {} [{}]{}\n  ├─ {}: {}\n  └─ {}\n",
-        "[VULKAN".bright_blue().bold(),
-        format!("{}]", severity_colored).bright_blue().bold(),
-        type_str.bright_black(),
-        repeat_indicator.yellow(),
-        "Message ID".bright_black(),
-        message_id_name.white(),
-        message.white()
+    // Map Vulkan severity to Engine log severity
+    let log_severity = if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+        LogSeverity::Error
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
+        LogSeverity::Warn
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::INFO) {
+        LogSeverity::Info
+    } else {
+        LogSeverity::Trace
+    };
+
+    // Format message for logging
+    let log_message = format!(
+        "[{}]{} {}: {}",
+        type_str,
+        repeat_indicator,
+        message_id_name,
+        message
     );
 
-    // Format output (file version without colors)
+    // Log using Engine logging system
+    // Only ERROR severity includes file:line information
+    if log_severity == LogSeverity::Error {
+        Engine::log_detailed(
+            log_severity,
+            "galaxy3d::vulkan::DebugMessenger",
+            log_message.clone(),
+            file!(),
+            line!()
+        );
+    } else {
+        Engine::log(
+            log_severity,
+            "galaxy3d::vulkan::DebugMessenger",
+            log_message.clone()
+        );
+    }
+
+    // Also write to file if configured (for backwards compatibility)
     let file_output = format!(
         "[VULKAN {}] [{}]{}\n  ├─ Message ID: {}\n  └─ {}\n",
         severity_str, type_str, repeat_indicator, message_id_name, message
     );
 
-    // Output to console and/or file
     match &config.output {
-        DebugOutput::Console => {
-            eprint!("{}", console_output);
-        }
         DebugOutput::File(path) => {
             write_to_file(path, &file_output);
         }
         DebugOutput::Both(path) => {
-            eprint!("{}", console_output);
             write_to_file(path, &file_output);
         }
+        _ => {}
     }
 
     // Panic on any error if strict mode enabled
@@ -326,14 +347,12 @@ pub unsafe extern "system" fn vulkan_debug_callback(
     if config.break_on_error
         && message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
     {
-        eprintln!(
-            "\n{}\n  Context: {} [{}]\n  Message: {}\n",
-            "⚠️  BREAK ON VALIDATION ERROR - Aborting execution"
-                .red()
-                .bold(),
-            message_id_name.yellow(),
-            type_str.cyan(),
-            message.white()
+        engine_error!(
+            "galaxy3d::vulkan::DebugMessenger",
+            "BREAK ON VALIDATION ERROR - Aborting execution | Context: {} [{}] | Message: {}",
+            message_id_name,
+            type_str,
+            message
         );
         std::process::abort();
     }

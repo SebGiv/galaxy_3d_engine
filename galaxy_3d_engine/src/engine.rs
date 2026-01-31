@@ -5,13 +5,18 @@
 /// concurrent access.
 
 use std::sync::{OnceLock, RwLock, Arc, Mutex};
+use std::time::SystemTime;
 use crate::renderer::Renderer;
 use crate::error::{Result, Error};
+use crate::log::{Logger, LogEntry, LogSeverity, DefaultLogger};
 
 // ===== INTERNAL STATE =====
 
 /// Global engine state storage
 static ENGINE_STATE: OnceLock<EngineState> = OnceLock::new();
+
+/// Global logger (initialized with DefaultLogger)
+static LOGGER: OnceLock<RwLock<Box<dyn Logger>>> = OnceLock::new();
 
 /// Internal state structure holding all engine singletons
 struct EngineState {
@@ -113,7 +118,12 @@ impl Engine {
         let arc_renderer: Arc<Mutex<dyn Renderer>> = Arc::new(Mutex::new(renderer));
 
         // Register as singleton
-        Self::register_renderer(arc_renderer)
+        Self::register_renderer(arc_renderer)?;
+
+        // Log successful creation
+        crate::engine_info!("galaxy3d::Engine", "Renderer singleton created successfully");
+
+        Ok(())
     }
 
     /// Register a renderer singleton (internal use)
@@ -195,6 +205,10 @@ impl Engine {
             .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
 
         *lock = None;
+
+        // Log successful destruction
+        crate::engine_info!("galaxy3d::Engine", "Renderer singleton destroyed");
+
         Ok(())
     }
 
@@ -205,6 +219,107 @@ impl Engine {
             if let Ok(mut renderer) = state.renderer.write() {
                 *renderer = None;
             }
+        }
+    }
+
+    // ===== LOGGING API =====
+
+    /// Set a custom logger
+    ///
+    /// Replace the default logger with a custom implementation (file logger, network logger, etc.)
+    ///
+    /// # Arguments
+    ///
+    /// * `logger` - Any type implementing the Logger trait
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use galaxy_3d_engine::galaxy3d::{Engine, log::{Logger, LogEntry}};
+    ///
+    /// struct FileLogger;
+    /// impl Logger for FileLogger {
+    ///     fn log(&self, entry: &LogEntry) {
+    ///         // Write to file...
+    ///     }
+    /// }
+    ///
+    /// Engine::set_logger(FileLogger);
+    /// ```
+    pub fn set_logger<L: Logger + 'static>(logger: L) {
+        let logger_lock = LOGGER.get_or_init(|| RwLock::new(Box::new(DefaultLogger)));
+        if let Ok(mut lock) = logger_lock.write() {
+            *lock = Box::new(logger);
+        }
+    }
+
+    /// Reset logger to default (DefaultLogger)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use galaxy_3d_engine::galaxy3d::Engine;
+    ///
+    /// Engine::reset_logger();
+    /// ```
+    pub fn reset_logger() {
+        let logger_lock = LOGGER.get_or_init(|| RwLock::new(Box::new(DefaultLogger)));
+        if let Ok(mut lock) = logger_lock.write() {
+            *lock = Box::new(DefaultLogger);
+        }
+    }
+
+    /// Internal logging method (for simple logs without file:line)
+    ///
+    /// Used by macros like engine_info!, engine_warn!, etc.
+    ///
+    /// # Arguments
+    ///
+    /// * `severity` - Log severity level
+    /// * `source` - Source module (e.g., "galaxy3d::Engine")
+    /// * `message` - Log message
+    pub fn log(severity: LogSeverity, source: &str, message: String) {
+        let logger_lock = LOGGER.get_or_init(|| RwLock::new(Box::new(DefaultLogger)));
+        if let Ok(lock) = logger_lock.read() {
+            lock.log(&LogEntry {
+                severity,
+                timestamp: SystemTime::now(),
+                source: source.to_string(),
+                message,
+                file: None,
+                line: None,
+            });
+        }
+    }
+
+    /// Internal logging method with file:line information (for ERROR logs)
+    ///
+    /// Used by engine_error! macro to include source location.
+    ///
+    /// # Arguments
+    ///
+    /// * `severity` - Log severity level (typically Error)
+    /// * `source` - Source module (e.g., "galaxy3d::Engine")
+    /// * `message` - Log message
+    /// * `file` - Source file path
+    /// * `line` - Source line number
+    pub fn log_detailed(
+        severity: LogSeverity,
+        source: &str,
+        message: String,
+        file: &'static str,
+        line: u32,
+    ) {
+        let logger_lock = LOGGER.get_or_init(|| RwLock::new(Box::new(DefaultLogger)));
+        if let Ok(lock) = logger_lock.read() {
+            lock.log(&LogEntry {
+                severity,
+                timestamp: SystemTime::now(),
+                source: source.to_string(),
+                message,
+                file: Some(file),
+                line: Some(line),
+            });
         }
     }
 }

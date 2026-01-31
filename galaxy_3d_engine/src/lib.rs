@@ -22,6 +22,7 @@ Backend implementations provide concrete types that implement these traits.
 // Internal modules
 mod error;
 mod engine;
+pub mod log;
 pub mod renderer;
 
 // Main galaxy3d namespace module
@@ -34,6 +35,11 @@ pub mod galaxy3d {
 
     // Renderer factory trait
     pub use crate::renderer::Renderer;
+
+    // Logging sub-module
+    pub mod log {
+        pub use crate::log::*;
+    }
 
     // Render sub-module with all rendering types
     pub mod render {

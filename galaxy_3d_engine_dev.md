@@ -2550,6 +2550,423 @@ command_list.draw_indexed_indirect_count(
 
 ---
 
+## 🔍 Internal Logging System
+
+### ⚠️ Règle importante
+
+**Tous les messages de log doivent être en anglais**, peu importe la langue du code ou des commentaires.
+
+### Objectif
+
+Créer un système de logging interne au moteur 3D, invisible pour l'utilisateur final mais permettant de remplacer le logger par défaut.
+
+### Architecture
+
+#### 1. **Trait `Logger`** - Interface de logging
+
+```rust
+pub trait Logger: Send + Sync {
+    fn log(&self, entry: &LogEntry);
+}
+
+pub struct LogEntry {
+    pub severity: LogSeverity,
+    pub timestamp: SystemTime,
+    pub source: String,        // "Vulkan", "Engine", "Renderer"
+    pub message: String,
+    pub file: Option<&'static str>,  // Pour log détaillé
+    pub line: Option<u32>,           // Pour log détaillé
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LogSeverity {
+    Trace,   // Très verbeux (désactivé par défaut)
+    Debug,   // Debug info
+    Info,    // Informations importantes
+    Warn,    // Avertissements
+    Error,   // Erreurs critiques
+}
+```
+
+#### 2. **API dans `galaxy3d::Engine`**
+
+**API Publique** (utilisateur) :
+```rust
+impl Engine {
+    /// Remplacer le logger par défaut
+    pub fn set_logger<L: Logger + 'static>(logger: L);
+
+    /// Revenir au logger par défaut (console avec couleurs)
+    pub fn reset_logger();
+}
+```
+
+**API Interne** (moteur uniquement - `pub(crate)`) :
+```rust
+impl Engine {
+    /// Log simple (sans file/line)
+    pub(crate) fn log(severity: LogSeverity, source: &str, message: String);
+
+    /// Log détaillé (avec file/line)
+    pub(crate) fn log_detailed(
+        severity: LogSeverity,
+        source: &str,
+        message: String,
+        file: &'static str,
+        line: u32
+    );
+}
+```
+
+#### 3. **Macros** - Raccourcis pour le moteur
+
+```rust
+// Log simple
+engine_trace!("source", "message");
+engine_debug!("source", "message");
+engine_info!("source", "message");
+engine_warn!("source", "message");
+engine_error!("source", "message");
+
+// Log détaillé (avec file!() et line!())
+engine_trace_detailed!("source", "message");
+engine_debug_detailed!("source", "message");
+engine_info_detailed!("source", "message");
+engine_warn_detailed!("source", "message");
+engine_error_detailed!("source", "message");
+```
+
+#### 4. **DefaultLogger** - Logger par défaut
+
+Le logger par défaut utilise `println!()` avec la crate `colored` pour afficher dans la console :
+
+- **Trace** → Gris/Cyan pâle
+- **Debug** → Cyan
+- **Info** → Vert
+- **Warn** → Jaune
+- **Error** → Rouge (gras)
+
+**Formats** :
+- Simple : `[timestamp] [SEVERITY] [Source] Message`
+- Détaillé : `[timestamp] [SEVERITY] [Source] Message (file.rs:line)`
+
+---
+
+### Intégration Vulkan - Redirection Debug Messenger
+
+Le debug messenger Vulkan capture les messages de validation et les **redirige** vers notre système de logging :
+
+```rust
+// Dans galaxy_3d_engine_renderer_vulkan/src/debug.rs
+
+unsafe extern "system" fn debug_callback(
+    severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _user_data: *mut std::ffi::c_void,
+) -> vk::Bool32 {
+    let data = &*callback_data;
+    let message = CStr::from_ptr(data.p_message).to_string_lossy();
+    let message_id = CStr::from_ptr(data.p_message_id_name).to_string_lossy();
+
+    // Conversion Vulkan → LogSeverity
+    let log_severity = match severity {
+        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => LogSeverity::Error,
+        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => LogSeverity::Warn,
+        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => LogSeverity::Info,
+        _ => LogSeverity::Trace,  // VERBOSE → TRACE
+    };
+
+    // Redirection vers notre système de log
+    Engine::log_detailed(
+        log_severity,
+        "Vulkan",
+        format!("[{}] {}", message_id, message),
+        file!(),
+        line!()
+    );
+
+    vk::FALSE
+}
+```
+
+**Résultat** : Tous les messages Vulkan passent par le `Logger` actuel → possibilité de les rediriger vers n'importe quel backend.
+
+---
+
+### Exemples d'Utilisation
+
+#### 1. Utilisation par défaut (console)
+
+```rust
+fn main() {
+    galaxy3d::Engine::initialize().unwrap();
+
+    // Le logger par défaut est déjà actif
+    // Tous les logs du moteur s'affichent dans la console avec couleurs
+
+    // ... code de l'application ...
+}
+```
+
+#### 2. Logger personnalisé - Écriture dans fichier
+
+```rust
+use galaxy_3d_engine::galaxy3d;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::sync::Mutex;
+
+struct FileLogger {
+    file: Mutex<std::fs::File>,
+}
+
+impl FileLogger {
+    fn new(path: &str) -> Self {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("Failed to open log file");
+
+        Self { file: Mutex::new(file) }
+    }
+}
+
+impl galaxy3d::log::Logger for FileLogger {
+    fn log(&self, entry: &galaxy3d::log::LogEntry) {
+        let mut file = self.file.lock().unwrap();
+
+        let log_line = if let (Some(file), Some(line)) = (entry.file, entry.line) {
+            format!(
+                "[{:?}] [{:?}] [{}] {} ({}:{})\n",
+                entry.timestamp, entry.severity, entry.source,
+                entry.message, file, line
+            )
+        } else {
+            format!(
+                "[{:?}] [{:?}] [{}] {}\n",
+                entry.timestamp, entry.severity, entry.source, entry.message
+            )
+        };
+
+        file.write_all(log_line.as_bytes()).ok();
+    }
+}
+
+fn main() {
+    galaxy3d::Engine::initialize().unwrap();
+
+    // Remplacer le logger par défaut
+    let file_logger = FileLogger::new("galaxy3d_engine.log");
+    galaxy3d::Engine::set_logger(file_logger);
+
+    // Maintenant tous les logs vont dans le fichier
+
+    // ... code de l'application ...
+}
+```
+
+#### 3. Logger réseau (JSON sur UDP)
+
+```rust
+use std::net::UdpSocket;
+
+struct NetworkLogger {
+    socket: UdpSocket,
+    server_addr: String,
+}
+
+impl galaxy3d::log::Logger for NetworkLogger {
+    fn log(&self, entry: &galaxy3d::log::LogEntry) {
+        let json = format!(
+            r#"{{"severity":"{}","source":"{}","message":"{}"}}"#,
+            format!("{:?}", entry.severity),
+            entry.source,
+            entry.message
+        );
+
+        self.socket.send_to(json.as_bytes(), &self.server_addr).ok();
+    }
+}
+```
+
+---
+
+### Bénéfices
+
+✅ **Transparence** : L'utilisateur n'a pas besoin de s'occuper du logging sauf s'il veut personnaliser
+✅ **Flexibilité** : Possibilité de rediriger vers fichier, réseau, base de données, etc.
+✅ **Uniformité** : Tous les logs (Engine, Vulkan, futurs backends) utilisent le même système
+✅ **Thread-safe** : `RwLock` permet le logging concurrent depuis plusieurs threads
+✅ **Redirection Vulkan** : Les messages de validation Vulkan sont intégrés au système
+
+---
+
+### Exemples Réels d'Utilisation dans le Moteur
+
+#### 1. Logs dans `Engine::create_renderer()` et `Engine::destroy_renderer()`
+
+```rust
+// galaxy_3d_engine/src/engine.rs
+
+pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> Result<()> {
+    let arc_renderer: Arc<Mutex<dyn Renderer>> = Arc::new(Mutex::new(renderer));
+    Self::register_renderer(arc_renderer)?;
+
+    // Log successful creation
+    crate::engine_info!("galaxy3d::Engine", "Renderer singleton created successfully");
+
+    Ok(())
+}
+
+pub fn destroy_renderer() -> Result<()> {
+    let state = ENGINE_STATE.get()
+        .ok_or_else(|| Error::InitializationFailed("Engine not initialized".to_string()))?;
+
+    let mut lock = state.renderer.write()
+        .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+
+    *lock = None;
+
+    // Log successful destruction
+    crate::engine_info!("galaxy3d::Engine", "Renderer singleton destroyed");
+
+    Ok(())
+}
+```
+
+**Sortie console** :
+```
+[2026-01-31 17:17:42.073] [INFO ] [galaxy3d::Engine] Renderer singleton created successfully
+[2026-01-31 17:18:25.341] [INFO ] [galaxy3d::Engine] Renderer singleton destroyed
+```
+
+#### 2. Logs dans le Vulkan Debug Messenger
+
+```rust
+// galaxy_3d_engine_renderer_vulkan/src/debug.rs
+
+unsafe extern "system" fn vulkan_debug_callback(...) -> vk::Bool32 {
+    // Map Vulkan severity to Engine log severity
+    let log_severity = if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+        LogSeverity::Error
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
+        LogSeverity::Warn
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::INFO) {
+        LogSeverity::Info
+    } else {
+        LogSeverity::Trace
+    };
+
+    // Format message
+    let log_message = format!(
+        "[{}]{} {}: {}",
+        type_str, repeat_indicator, message_id_name, message
+    );
+
+    // Log using Engine logging system
+    // Only ERROR severity includes file:line information
+    if log_severity == LogSeverity::Error {
+        Engine::log_detailed(
+            log_severity,
+            "galaxy3d::vulkan::DebugMessenger",
+            log_message.clone(),
+            file!(),
+            line!()
+        );
+    } else {
+        Engine::log(
+            log_severity,
+            "galaxy3d::vulkan::DebugMessenger",
+            log_message.clone()
+        );
+    }
+
+    vk::FALSE
+}
+```
+
+#### 3. Logs dans le rapport de statistiques Vulkan
+
+```rust
+// galaxy_3d_engine_renderer_vulkan/src/debug.rs
+
+pub fn print_validation_stats_report() {
+    let stats = get_validation_stats();
+
+    if stats.total() == 0 {
+        engine_info!("galaxy3d::vulkan::ValidationStats", "No validation messages");
+        return;
+    }
+
+    engine_info!("galaxy3d::vulkan::ValidationStats", "=== Validation Statistics Report ===");
+
+    if stats.errors > 0 {
+        engine_error!("galaxy3d::vulkan::ValidationStats", "Errors: {}", stats.errors);
+    }
+    if stats.warnings > 0 {
+        engine_warn!("galaxy3d::vulkan::ValidationStats", "Warnings: {}", stats.warnings);
+    }
+    if stats.info > 0 {
+        engine_info!("galaxy3d::vulkan::ValidationStats", "Info: {}", stats.info);
+    }
+    if stats.verbose > 0 {
+        engine_trace!("galaxy3d::vulkan::ValidationStats", "Verbose: {}", stats.verbose);
+    }
+
+    engine_info!("galaxy3d::vulkan::ValidationStats", "Total: {}", stats.total());
+    engine_info!("galaxy3d::vulkan::ValidationStats", "{} message(s) appeared multiple times", duplicate_count);
+    engine_info!("galaxy3d::vulkan::ValidationStats", "====================================");
+}
+```
+
+**Sortie console** :
+```
+[2026-01-31 17:18:30.120] [INFO ] [galaxy3d::vulkan::ValidationStats] === Validation Statistics Report ===
+[2026-01-31 17:18:30.121] [ERROR] [galaxy3d::vulkan::ValidationStats] Errors: 2 (debug.rs:132)
+[2026-01-31 17:18:30.121] [WARN ] [galaxy3d::vulkan::ValidationStats] Warnings: 5
+[2026-01-31 17:18:30.122] [INFO ] [galaxy3d::vulkan::ValidationStats] Info: 128
+[2026-01-31 17:18:30.122] [TRACE] [galaxy3d::vulkan::ValidationStats] Verbose: 42
+[2026-01-31 17:18:30.123] [INFO ] [galaxy3d::vulkan::ValidationStats] Total: 177
+[2026-01-31 17:18:30.123] [INFO ] [galaxy3d::vulkan::ValidationStats] 12 message(s) appeared multiple times
+[2026-01-31 17:18:30.124] [INFO ] [galaxy3d::vulkan::ValidationStats] ====================================
+```
+
+#### 4. Log d'erreur critique avec break-on-error
+
+```rust
+// galaxy_3d_engine_renderer_vulkan/src/debug.rs
+
+// Break on error if configured (for debugger attachment)
+if config.break_on_error
+    && message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
+{
+    engine_error!(
+        "galaxy3d::vulkan::DebugMessenger",
+        "BREAK ON VALIDATION ERROR - Aborting execution | Context: {} [{}] | Message: {}",
+        message_id_name,
+        type_str,
+        message
+    );
+    std::process::abort();
+}
+```
+
+**Sortie console** :
+```
+[2026-01-31 17:18:35.234] [ERROR] [galaxy3d::vulkan::DebugMessenger] BREAK ON VALIDATION ERROR - Aborting execution | Context: VUID-vkCmdDraw-None-02699 [Validation] | Message: Invalid pipeline state (debug.rs:350)
+```
+
+#### Notes Importantes
+
+- ⚠️ **Seul `engine_error!` inclut file:line automatiquement** (via `Engine::log_detailed()`)
+- ✅ Les autres macros (`engine_info!`, `engine_warn!`, `engine_trace!`, `engine_debug!`) utilisent `Engine::log()` sans file:line
+- ✅ Le source doit toujours suivre le format `"galaxy3d::module::SubModule"` pour une hiérarchie claire
+- ✅ Tous les messages doivent être en **anglais**
+
+---
+
 ## 📚 References
 
 - [Vulkan Tutorial](https://vulkan-tutorial.com/)
