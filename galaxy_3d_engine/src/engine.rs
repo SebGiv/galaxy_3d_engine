@@ -62,6 +62,25 @@ impl EngineState {
 pub struct Engine;
 
 impl Engine {
+    /// Helper to log errors before returning them (internal use)
+    ///
+    /// This ensures all Engine errors are automatically logged with proper severity
+    /// and source information, enabling better debugging and monitoring.
+    fn log_and_return_error(error: Error) -> Error {
+        match &error {
+            Error::InitializationFailed(msg) => {
+                crate::engine_error!("galaxy3d::Engine", "Initialization failed: {}", msg);
+            }
+            Error::BackendError(msg) => {
+                crate::engine_error!("galaxy3d::Engine", "Backend error: {}", msg);
+            }
+            _ => {
+                crate::engine_error!("galaxy3d::Engine", "Engine error: {}", error);
+            }
+        }
+        error
+    }
+
     /// Initialize the engine
     ///
     /// This must be called once at application startup before creating any subsystems.
@@ -132,13 +151,19 @@ impl Engine {
     /// access from other modules if needed.
     pub(crate) fn register_renderer(renderer: Arc<Mutex<dyn Renderer>>) -> Result<()> {
         let state = ENGINE_STATE.get()
-            .ok_or_else(|| Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string()))?;
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
+            ))?;
 
         let mut lock = state.renderer.write()
-            .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("Renderer lock poisoned".to_string())
+            ))?;
 
         if lock.is_some() {
-            return Err(Error::InitializationFailed("Renderer already exists. Call Renderer::destroy_singleton() first.".to_string()));
+            return Err(Self::log_and_return_error(
+                Error::InitializationFailed("Renderer already exists. Call Renderer::destroy_singleton() first.".to_string())
+            ));
         }
 
         *lock = Some(renderer);
@@ -171,13 +196,19 @@ impl Engine {
     /// ```
     pub fn renderer() -> Result<Arc<Mutex<dyn Renderer>>> {
         let state = ENGINE_STATE.get()
-            .ok_or_else(|| Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string()))?;
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
+            ))?;
 
         let lock = state.renderer.read()
-            .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("Renderer lock poisoned".to_string())
+            ))?;
 
         lock.clone()
-            .ok_or_else(|| Error::InitializationFailed("Renderer not created. Call Engine::create_renderer() first.".to_string()))
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Renderer not created. Call Engine::create_renderer() first.".to_string())
+            ))
     }
 
     /// Destroy the renderer singleton
@@ -199,10 +230,14 @@ impl Engine {
     /// ```
     pub fn destroy_renderer() -> Result<()> {
         let state = ENGINE_STATE.get()
-            .ok_or_else(|| Error::InitializationFailed("Engine not initialized".to_string()))?;
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized".to_string())
+            ))?;
 
         let mut lock = state.renderer.write()
-            .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("Renderer lock poisoned".to_string())
+            ))?;
 
         *lock = None;
 

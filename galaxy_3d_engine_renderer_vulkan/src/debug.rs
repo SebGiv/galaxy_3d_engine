@@ -10,8 +10,6 @@ use galaxy_3d_engine::galaxy3d::{Engine, log::LogSeverity};
 use galaxy_3d_engine::{engine_info, engine_error, engine_warn, engine_trace};
 use std::collections::HashMap;
 use std::ffi::CStr;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
@@ -314,22 +312,6 @@ pub unsafe extern "system" fn vulkan_debug_callback(
         );
     }
 
-    // Also write to file if configured (for backwards compatibility)
-    let file_output = format!(
-        "[VULKAN {}] [{}]{}\n  ├─ Message ID: {}\n  └─ {}\n",
-        severity_str, type_str, repeat_indicator, message_id_name, message
-    );
-
-    match &config.output {
-        DebugOutput::File(path) => {
-            write_to_file(path, &file_output);
-        }
-        DebugOutput::Both(path) => {
-            write_to_file(path, &file_output);
-        }
-        _ => {}
-    }
-
     // Panic on any error if strict mode enabled
     if config.panic_on_error
         && message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
@@ -358,15 +340,4 @@ pub unsafe extern "system" fn vulkan_debug_callback(
     }
 
     vk::FALSE // Don't abort Vulkan execution
-}
-
-/// Write message to log file
-fn write_to_file(path: &str, message: &str) {
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = writeln!(file, "{}", message);
-    }
 }
