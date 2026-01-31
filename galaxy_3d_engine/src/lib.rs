@@ -19,11 +19,17 @@ dynamic polymorphism (similar to C++ virtual inheritance). Backend implementatio
 Backend implementations provide concrete types that implement these traits.
 */
 
+// Error handling module
+pub mod error;
+
 // Renderer module containing all rendering-related types and traits
 pub mod renderer;
 
 // Engine singleton manager module
 mod galaxy_3d_engine;
+
+// Re-export error types at crate root
+pub use error::{Galaxy3dError, Galaxy3dResult};
 
 // Re-export everything from renderer module
 pub use renderer::*;

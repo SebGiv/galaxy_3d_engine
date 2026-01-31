@@ -319,7 +319,7 @@
                     <div id="galaxy3dengine-initialize" class="accordion-content">
                         <p>Initializes the global engine state. Must be called once before creating any subsystems.</p>
                         <h4>Signature</h4>
-                        <pre><code>pub fn initialize() -> RenderResult&lt;()&gt;</code></pre>
+                        <pre><code>pub fn initialize() -> Galaxy3dResult&lt;()&gt;</code></pre>
                         <h4>Example</h4>
                         <pre><code class="language-rust">use galaxy_3d_engine::Galaxy3dEngine;
 
@@ -370,7 +370,7 @@ fn main() {
                             The renderer is automatically wrapped in Arc&lt;Mutex&gt; for thread-safe access.
                         </p>
                         <h4>Signature</h4>
-                        <pre><code>pub fn create_renderer&lt;R: Renderer + 'static&gt;(renderer: R) -> RenderResult&lt;()&gt;</code></pre>
+                        <pre><code>pub fn create_renderer&lt;R: Renderer + 'static&gt;(renderer: R) -> Galaxy3dResult&lt;()&gt;</code></pre>
                         <h4>Parameters</h4>
                         <ul>
                             <li><code>renderer</code> - Any type implementing the Renderer trait</li>
@@ -407,7 +407,7 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
                     <div id="galaxy3dengine-renderer" class="accordion-content">
                         <p>Returns a shared pointer to the renderer singleton. The renderer is wrapped in a Mutex for thread-safe mutable access.</p>
                         <h4>Signature</h4>
-                        <pre><code>pub fn renderer() -> RenderResult&lt;Arc&lt;Mutex&lt;dyn Renderer&gt;&gt;&gt;</code></pre>
+                        <pre><code>pub fn renderer() -> Galaxy3dResult&lt;Arc&lt;Mutex&lt;dyn Renderer&gt;&gt;&gt;</code></pre>
                         <h4>Returns</h4>
                         <p>A shared pointer to the renderer wrapped in a Mutex</p>
                         <h4>Errors</h4>
@@ -445,7 +445,7 @@ fn create_vertex_buffer() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; 
                             (Arc pointers) will remain valid until dropped.
                         </p>
                         <h4>Signature</h4>
-                        <pre><code>pub fn destroy_renderer() -> RenderResult&lt;()&gt;</code></pre>
+                        <pre><code>pub fn destroy_renderer() -> Galaxy3dResult&lt;()&gt;</code></pre>
                         <h4>Example</h4>
                         <pre><code class="language-rust">use galaxy_3d_engine::Galaxy3dEngine;
 
@@ -492,7 +492,7 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
                             <li><code>window: &Window</code> - The winit window handle</li>
                             <li><code>config: RendererConfig</code> - Renderer configuration (validation layers, etc.)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn Renderer&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn Renderer&gt;&gt;</code></p>
                         <pre><code class="language-rust">use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
 use galaxy_3d_engine::{Renderer, RendererConfig};
 
@@ -521,7 +521,7 @@ let renderer = VulkanRenderer::new(&window, config)?;
                         <ul>
                             <li><code>desc: BufferDesc</code> - Buffer description (size, usage, data)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn RendererBuffer&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererBuffer&gt;&gt;</code></p>
                         <pre><code class="language-rust">let vertex_data: Vec&lt;f32&gt; = vec![/* vertex positions */];
 
 let vertex_buffer = renderer.create_buffer(BufferDesc {
@@ -547,7 +547,7 @@ let vertex_buffer = renderer.create_buffer(BufferDesc {
                         <ul>
                             <li><code>desc: TextureDesc</code> - Texture description (width, height, format, data)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn RendererTexture&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererTexture&gt;&gt;</code></p>
                         <pre><code class="language-rust">let image_data: Vec&lt;u8&gt; = load_image("texture.png")?;
 
 let texture = renderer.create_texture(TextureDesc {
@@ -575,7 +575,7 @@ let texture = renderer.create_texture(TextureDesc {
                         <ul>
                             <li><code>desc: ShaderDesc</code> - Shader description (stage, SPIR-V code)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn RendererShader&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererShader&gt;&gt;</code></p>
                         <pre><code class="language-rust">let vertex_spirv = include_bytes!("shaders/shader.vert.spv");
 
 let vertex_shader = renderer.create_shader(ShaderDesc {
@@ -600,7 +600,7 @@ let vertex_shader = renderer.create_shader(ShaderDesc {
                         <ul>
                             <li><code>desc: PipelineDesc</code> - Pipeline description</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn RendererPipeline&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererPipeline&gt;&gt;</code></p>
                         <pre><code class="language-rust">let pipeline = renderer.create_pipeline(PipelineDesc {
     vertex_shader: vertex_shader.clone(),
     fragment_shader: fragment_shader.clone(),
@@ -650,7 +650,7 @@ let vertex_shader = renderer.create_shader(ShaderDesc {
                         <ul>
                             <li><code>texture: &Arc&lt;dyn RendererTexture&gt;</code> - The texture to bind</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn RendererDescriptorSet&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererDescriptorSet&gt;&gt;</code></p>
                         <pre><code class="language-rust">let texture = renderer.create_texture(texture_desc)?;
 let descriptor_set = renderer.create_descriptor_set_for_texture(&texture)?;
 
@@ -670,7 +670,7 @@ command_list.bind_descriptor_sets(&pipeline, &[&descriptor_set])?;
                             Creates a command list (command buffer) for recording rendering commands.
                             Command lists can be reused across multiple frames.
                         </p>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn RendererCommandList&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererCommandList&gt;&gt;</code></p>
                         <pre><code class="language-rust">let command_list = renderer.create_command_list()?;
 
 // Command lists can be reused
@@ -698,7 +698,7 @@ let current_cmd = &command_lists[frame_index % 2];
                         <ul>
                             <li><code>window: &Window</code> - The window to present to</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn RendererSwapchain&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererSwapchain&gt;&gt;</code></p>
                         <pre><code class="language-rust">let swapchain = renderer.create_swapchain(&window)?;
 </code></pre>
                     </div>
@@ -717,7 +717,7 @@ let current_cmd = &command_lists[frame_index % 2];
                         <ul>
                             <li><code>desc: RenderPassDesc</code> - Render pass description</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;Arc&lt;dyn RendererRenderPass&gt;&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;Arc&lt;dyn RendererRenderPass&gt;&gt;</code></p>
                         <pre><code class="language-rust">let render_pass = renderer.create_render_pass(RenderPassDesc {
     color_attachments: vec![
         ColorAttachmentDesc {
@@ -750,7 +750,7 @@ let current_cmd = &command_lists[frame_index % 2];
                             <li><code>sync_info: &SwapchainSyncInfo</code> - Synchronization info from swapchain</li>
                             <li><code>image_index: u32</code> - Index of the swapchain image</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">// Typical render loop
 let (image_index, render_target) = swapchain.acquire_next_image()?;
 
@@ -784,7 +784,7 @@ swapchain.present(image_index)?;
                     </h3>
                     <div id="cmd-begin" class="accordion-content">
                         <p>Starts recording commands into the command list. Must be called before any other recording commands.</p>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.begin()?;
 // ... record commands ...
 command_list.end()?;
@@ -805,7 +805,7 @@ command_list.end()?;
                             <li><code>render_target: &Arc&lt;dyn RendererRenderTarget&gt;</code></li>
                             <li><code>clear_values: &[ClearValue]</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">let clear_values = [
     ClearValue::Color([0.0, 0.0, 0.0, 1.0]), // Black clear color
 ];
@@ -828,7 +828,7 @@ command_list.end_render_pass()?;
                         <ul>
                             <li><code>pipeline: &Arc&lt;dyn RendererPipeline&gt;</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.bind_pipeline(&pipeline)?;
 </code></pre>
                     </div>
@@ -846,7 +846,7 @@ command_list.end_render_pass()?;
                             <li><code>buffer: &Arc&lt;dyn RendererBuffer&gt;</code></li>
                             <li><code>binding: u32</code> - Binding slot (usually 0)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.bind_vertex_buffer(&vertex_buffer, 0)?;
 </code></pre>
                     </div>
@@ -864,7 +864,7 @@ command_list.end_render_pass()?;
                             <li><code>buffer: &Arc&lt;dyn RendererBuffer&gt;</code></li>
                             <li><code>offset: u64</code> - Offset in bytes (usually 0)</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.bind_index_buffer(&index_buffer, 0)?;
 </code></pre>
                     </div>
@@ -882,7 +882,7 @@ command_list.end_render_pass()?;
                             <li><code>pipeline: &Arc&lt;dyn RendererPipeline&gt;</code></li>
                             <li><code>descriptor_sets: &[&Arc&lt;dyn RendererDescriptorSet&gt;]</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.bind_descriptor_sets(&pipeline, &[&texture_descriptor])?;
 </code></pre>
                     </div>
@@ -900,7 +900,7 @@ command_list.end_render_pass()?;
                             <li><code>offset: u32</code> - Offset in push constant block</li>
                             <li><code>data: &[u8]</code> - Raw bytes to push</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">let time: f32 = elapsed_time;
 command_list.push_constants(0, &time.to_le_bytes())?;
 </code></pre>
@@ -919,7 +919,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                             <li><code>vertex_count: u32</code></li>
                             <li><code>first_vertex: u32</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.draw(3, 0)?; // Draw 3 vertices (1 triangle)
 </code></pre>
                     </div>
@@ -938,7 +938,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                             <li><code>first_index: u32</code></li>
                             <li><code>vertex_offset: i32</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.draw_indexed(6, 0, 0)?; // Draw 6 indices (2 triangles)
 </code></pre>
                     </div>
@@ -955,7 +955,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                         <ul>
                             <li><code>viewport: Viewport</code></li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.set_viewport(Viewport {
     x: 0.0,
     y: 0.0,
@@ -975,7 +975,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                     </h3>
                     <div id="cmd-end-render-pass" class="accordion-content">
                         <p>Ends the currently active render pass.</p>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.end_render_pass()?;
 </code></pre>
                     </div>
@@ -988,7 +988,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                     </h3>
                     <div id="cmd-end" class="accordion-content">
                         <p>Finishes recording and finalizes the command list for submission.</p>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">command_list.end()?;
 </code></pre>
                     </div>
@@ -1010,7 +1010,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                     </h3>
                     <div id="swap-acquire" class="accordion-content">
                         <p>Acquires the next available image from the swapchain. Returns the image index and a render target.</p>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;(u32, Arc&lt;dyn RendererRenderTarget&gt;)&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;(u32, Arc&lt;dyn RendererRenderTarget&gt;)&gt;</code></p>
                         <pre><code class="language-rust">let (image_index, render_target) = swapchain.acquire_next_image()?;
 </code></pre>
                     </div>
@@ -1027,7 +1027,7 @@ command_list.push_constants(0, &time.to_le_bytes())?;
                         <ul>
                             <li><code>image_index: u32</code> - The image index from acquire_next_image</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">swapchain.present(image_index)?;
 </code></pre>
                     </div>
@@ -1189,7 +1189,7 @@ renderer.submit_with_sync(&command_list, &sync_info, image_index)?;
                             <li><code>offset: u64</code> - Offset in bytes</li>
                             <li><code>data: &[u8]</code> - New data</li>
                         </ul>
-                        <p><strong>Returns:</strong> <code>RenderResult&lt;()&gt;</code></p>
+                        <p><strong>Returns:</strong> <code>Galaxy3dResult&lt;()&gt;</code></p>
                         <pre><code class="language-rust">let new_vertex_data: Vec&lt;f32&gt; = vec![/* updated vertices */];
 vertex_buffer.update(0, bytemuck::cast_slice(&new_vertex_data))?;
 </code></pre>

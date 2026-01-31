@@ -2,7 +2,7 @@
 
 use galaxy_3d_engine::{
     RendererCommandList, RendererRenderPass, RendererRenderTarget, RendererPipeline,
-    RendererBuffer, RendererDescriptorSet, RenderResult, RenderError, Viewport, Rect2D, ClearValue,
+    RendererBuffer, RendererDescriptorSet, Galaxy3dResult, Galaxy3dError, Viewport, Rect2D, ClearValue,
 };
 use ash::vk;
 use std::sync::Arc;
@@ -43,7 +43,7 @@ impl VulkanRendererCommandList {
     pub fn new(
         device: Arc<ash::Device>,
         graphics_queue_family: u32,
-    ) -> RenderResult<Self> {
+    ) -> Galaxy3dResult<Self> {
         unsafe {
             // Create command pool
             let command_pool_create_info = vk::CommandPoolCreateInfo::default()
@@ -51,7 +51,7 @@ impl VulkanRendererCommandList {
                 .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
             let command_pool = device.create_command_pool(&command_pool_create_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create command pool: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create command pool: {:?}", e)))?;
 
             // Allocate command buffer
             let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
@@ -60,7 +60,7 @@ impl VulkanRendererCommandList {
                 .command_buffer_count(1);
 
             let command_buffers = device.allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(|e| RenderError::BackendError(format!("Failed to allocate command buffers: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to allocate command buffers: {:?}", e)))?;
 
             Ok(Self {
                 device,
@@ -89,9 +89,9 @@ impl VulkanRendererCommandList {
         &mut self,
         descriptor_sets: &[vk::DescriptorSet],
         pipeline_layout: vk::PipelineLayout,
-    ) -> RenderResult<()> {
+    ) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         unsafe {
@@ -110,9 +110,9 @@ impl VulkanRendererCommandList {
 }
 
 impl RendererCommandList for VulkanRendererCommandList {
-    fn begin(&mut self) -> RenderResult<()> {
+    fn begin(&mut self) -> Galaxy3dResult<()> {
         if self.is_recording {
-            return Err(RenderError::BackendError("Command list already recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list already recording".to_string()));
         }
 
         unsafe {
@@ -122,7 +122,7 @@ impl RendererCommandList for VulkanRendererCommandList {
                     self.command_buffer,
                     vk::CommandBufferResetFlags::empty(),
                 )
-                .map_err(|e| RenderError::BackendError(format!("Failed to reset command buffer: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to reset command buffer: {:?}", e)))?;
 
             // Begin command buffer
             let begin_info = vk::CommandBufferBeginInfo::default()
@@ -130,7 +130,7 @@ impl RendererCommandList for VulkanRendererCommandList {
 
             self.device
                 .begin_command_buffer(self.command_buffer, &begin_info)
-                .map_err(|e| RenderError::BackendError(format!("Failed to begin command buffer: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to begin command buffer: {:?}", e)))?;
 
             self.is_recording = true;
             self.in_render_pass = false;
@@ -145,19 +145,19 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn end(&mut self) -> RenderResult<()> {
+    fn end(&mut self) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         if self.in_render_pass {
-            return Err(RenderError::BackendError("Render pass not ended before ending command list".to_string()));
+            return Err(Galaxy3dError::BackendError("Render pass not ended before ending command list".to_string()));
         }
 
         unsafe {
             self.device
                 .end_command_buffer(self.command_buffer)
-                .map_err(|e| RenderError::BackendError(format!("Failed to end command buffer: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to end command buffer: {:?}", e)))?;
 
             self.is_recording = false;
 
@@ -170,13 +170,13 @@ impl RendererCommandList for VulkanRendererCommandList {
         render_pass: &Arc<dyn RendererRenderPass>,
         render_target: &Arc<dyn RendererRenderTarget>,
         clear_values: &[ClearValue],
-    ) -> RenderResult<()> {
+    ) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         if self.in_render_pass {
-            return Err(RenderError::BackendError("Already inside a render pass".to_string()));
+            return Err(Galaxy3dError::BackendError("Already inside a render pass".to_string()));
         }
 
         unsafe {
@@ -216,7 +216,7 @@ impl RendererCommandList for VulkanRendererCommandList {
                 .layers(1);
 
             let framebuffer = self.device.create_framebuffer(&framebuffer_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create framebuffer: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create framebuffer: {:?}", e)))?;
 
             // Store framebuffer for destruction in begin() or Drop
             self.framebuffers.push(framebuffer);
@@ -246,13 +246,13 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn end_render_pass(&mut self) -> RenderResult<()> {
+    fn end_render_pass(&mut self) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         if !self.in_render_pass {
-            return Err(RenderError::BackendError("Not inside a render pass".to_string()));
+            return Err(Galaxy3dError::BackendError("Not inside a render pass".to_string()));
         }
 
         unsafe {
@@ -264,9 +264,9 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn set_viewport(&mut self, viewport: Viewport) -> RenderResult<()> {
+    fn set_viewport(&mut self, viewport: Viewport) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         unsafe {
@@ -284,9 +284,9 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn set_scissor(&mut self, scissor: Rect2D) -> RenderResult<()> {
+    fn set_scissor(&mut self, scissor: Rect2D) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         unsafe {
@@ -300,9 +300,9 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn bind_pipeline(&mut self, pipeline: &Arc<dyn RendererPipeline>) -> RenderResult<()> {
+    fn bind_pipeline(&mut self, pipeline: &Arc<dyn RendererPipeline>) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         unsafe {
@@ -323,13 +323,13 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn push_constants(&mut self, offset: u32, data: &[u8]) -> RenderResult<()> {
+    fn push_constants(&mut self, offset: u32, data: &[u8]) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         let layout = self.bound_pipeline_layout.ok_or_else(|| {
-            RenderError::BackendError("No pipeline bound for push constants".to_string())
+            Galaxy3dError::BackendError("No pipeline bound for push constants".to_string())
         })?;
 
         unsafe {
@@ -347,9 +347,9 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn bind_vertex_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64) -> RenderResult<()> {
+    fn bind_vertex_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         unsafe {
@@ -368,9 +368,9 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn bind_index_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64) -> RenderResult<()> {
+    fn bind_index_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         unsafe {
@@ -389,13 +389,13 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn draw(&mut self, vertex_count: u32, first_vertex: u32) -> RenderResult<()> {
+    fn draw(&mut self, vertex_count: u32, first_vertex: u32) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         if !self.in_render_pass {
-            return Err(RenderError::BackendError("Not inside a render pass".to_string()));
+            return Err(Galaxy3dError::BackendError("Not inside a render pass".to_string()));
         }
 
         unsafe {
@@ -411,13 +411,13 @@ impl RendererCommandList for VulkanRendererCommandList {
         }
     }
 
-    fn draw_indexed(&mut self, index_count: u32, first_index: u32, vertex_offset: i32) -> RenderResult<()> {
+    fn draw_indexed(&mut self, index_count: u32, first_index: u32, vertex_offset: i32) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         if !self.in_render_pass {
-            return Err(RenderError::BackendError("Not inside a render pass".to_string()));
+            return Err(Galaxy3dError::BackendError("Not inside a render pass".to_string()));
         }
 
         unsafe {
@@ -438,9 +438,9 @@ impl RendererCommandList for VulkanRendererCommandList {
         &mut self,
         pipeline: &Arc<dyn RendererPipeline>,
         descriptor_sets: &[&Arc<dyn RendererDescriptorSet>],
-    ) -> RenderResult<()> {
+    ) -> Galaxy3dResult<()> {
         if !self.is_recording {
-            return Err(RenderError::BackendError("Command list not recording".to_string()));
+            return Err(Galaxy3dError::BackendError("Command list not recording".to_string()));
         }
 
         unsafe {

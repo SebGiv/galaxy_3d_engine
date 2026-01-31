@@ -1,6 +1,6 @@
 /// VulkanRendererSwapchain - Vulkan implementation of RendererSwapchain trait
 
-use galaxy_3d_engine::{RendererSwapchain, RendererRenderTarget, RenderResult, RenderError, TextureFormat};
+use galaxy_3d_engine::{RendererSwapchain, RendererRenderTarget, Galaxy3dResult, Galaxy3dError, TextureFormat};
 use ash::vk;
 use std::sync::Arc;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -70,17 +70,17 @@ impl VulkanRendererSwapchain {
         present_queue: vk::Queue,
         width: u32,
         height: u32,
-    ) -> RenderResult<Self> {
+    ) -> Galaxy3dResult<Self> {
         unsafe {
             // Query surface capabilities
             let surface_capabilities = surface_loader
                 .get_physical_device_surface_capabilities(physical_device, surface)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e)))?;
 
             // Choose surface format
             let surface_formats = surface_loader
                 .get_physical_device_surface_formats(physical_device, surface)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get surface formats: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get surface formats: {:?}", e)))?;
 
             let surface_format = surface_formats
                 .iter()
@@ -106,12 +106,12 @@ impl VulkanRendererSwapchain {
             let swapchain_loader = ash::khr::swapchain::Device::new(instance, &device);
             let swapchain = swapchain_loader
                 .create_swapchain(&swapchain_create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create swapchain: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create swapchain: {:?}", e)))?;
 
             // Get swapchain images
             let swapchain_images = swapchain_loader
                 .get_swapchain_images(swapchain)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get swapchain images: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get swapchain images: {:?}", e)))?;
 
             // Create swapchain image views
             let swapchain_image_views: Vec<vk::ImageView> = swapchain_images
@@ -137,7 +137,7 @@ impl VulkanRendererSwapchain {
                     device.create_image_view(&create_info, None)
                 })
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create image views: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create image views: {:?}", e)))?;
 
             // Create render targets
             let render_targets: Vec<Arc<dyn RendererRenderTarget>> = swapchain_image_views
@@ -164,14 +164,14 @@ impl VulkanRendererSwapchain {
             for _ in 0..MAX_FRAMES_IN_FLIGHT {
                 image_available_semaphores.push(
                     device.create_semaphore(&semaphore_create_info, None)
-                        .map_err(|e| RenderError::InitializationFailed(format!("Failed to create semaphore: {:?}", e)))?
+                        .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create semaphore: {:?}", e)))?
                 );
             }
 
             for _ in 0..image_count {
                 render_finished_semaphores.push(
                     device.create_semaphore(&semaphore_create_info, None)
-                        .map_err(|e| RenderError::InitializationFailed(format!("Failed to create semaphore: {:?}", e)))?
+                        .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create semaphore: {:?}", e)))?
                 );
             }
 
@@ -224,7 +224,7 @@ impl VulkanRendererSwapchain {
 }
 
 impl RendererSwapchain for VulkanRendererSwapchain {
-    fn acquire_next_image(&mut self) -> RenderResult<(u32, Arc<dyn RendererRenderTarget>)> {
+    fn acquire_next_image(&mut self) -> Galaxy3dResult<(u32, Arc<dyn RendererRenderTarget>)> {
         unsafe {
             // Acquire next image
             let (image_index, _is_suboptimal) = self
@@ -237,9 +237,9 @@ impl RendererSwapchain for VulkanRendererSwapchain {
                 )
                 .map_err(|e| {
                     if e == vk::Result::ERROR_OUT_OF_DATE_KHR {
-                        RenderError::BackendError("Swapchain out of date".to_string())
+                        Galaxy3dError::BackendError("Swapchain out of date".to_string())
                     } else {
-                        RenderError::BackendError(format!("Failed to acquire next image: {:?}", e))
+                        Galaxy3dError::BackendError(format!("Failed to acquire next image: {:?}", e))
                     }
                 })?;
 
@@ -247,7 +247,7 @@ impl RendererSwapchain for VulkanRendererSwapchain {
         }
     }
 
-    fn present(&mut self, image_index: u32) -> RenderResult<()> {
+    fn present(&mut self, image_index: u32) -> Galaxy3dResult<()> {
         unsafe {
             let swapchains = [self.swapchain];
             let image_indices = [image_index];
@@ -267,18 +267,18 @@ impl RendererSwapchain for VulkanRendererSwapchain {
                     }
                     Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                         self.current_frame = (self.current_frame + 1) % self.max_frames_in_flight;
-                        Err(RenderError::BackendError("Swapchain out of date".to_string()))
+                        Err(Galaxy3dError::BackendError("Swapchain out of date".to_string()))
                     }
-                    Err(e) => Err(RenderError::BackendError(format!("Failed to present: {:?}", e))),
+                    Err(e) => Err(Galaxy3dError::BackendError(format!("Failed to present: {:?}", e))),
                 }
         }
     }
 
-    fn recreate(&mut self, width: u32, height: u32) -> RenderResult<()> {
+    fn recreate(&mut self, width: u32, height: u32) -> Galaxy3dResult<()> {
         unsafe {
             // Wait for device to be idle
             self.device.device_wait_idle()
-                .map_err(|e| RenderError::BackendError(format!("Failed to wait idle: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to wait idle: {:?}", e)))?;
 
             // Destroy old image views
             for image_view in &self.swapchain_image_views {
@@ -290,7 +290,7 @@ impl RendererSwapchain for VulkanRendererSwapchain {
             // Query surface capabilities with new window size
             let surface_capabilities = self.surface_loader
                 .get_physical_device_surface_capabilities(self.physical_device, self.surface)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e)))?;
 
             // Choose extent
             let extent = if surface_capabilities.current_extent.width != u32::MAX {
@@ -334,7 +334,7 @@ impl RendererSwapchain for VulkanRendererSwapchain {
 
             let swapchain = self.swapchain_loader
                 .create_swapchain(&swapchain_create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to recreate swapchain: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to recreate swapchain: {:?}", e)))?;
 
             // Destroy old swapchain
             self.swapchain_loader.destroy_swapchain(old_swapchain, None);
@@ -344,7 +344,7 @@ impl RendererSwapchain for VulkanRendererSwapchain {
             // Get new swapchain images
             self.swapchain_images = self.swapchain_loader
                 .get_swapchain_images(swapchain)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get swapchain images: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get swapchain images: {:?}", e)))?;
 
             // Recreate image views
             for &image in &self.swapchain_images {
@@ -367,7 +367,7 @@ impl RendererSwapchain for VulkanRendererSwapchain {
                     });
 
                 let image_view = self.device.create_image_view(&create_info, None)
-                    .map_err(|e| RenderError::InitializationFailed(format!("Failed to create image view: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create image view: {:?}", e)))?;
                 self.swapchain_image_views.push(image_view);
             }
 

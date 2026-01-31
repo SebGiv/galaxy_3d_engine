@@ -1,7 +1,8 @@
 /// RendererSwapchain trait - for window presentation
 
 use std::sync::Arc;
-use crate::renderer::{RenderResult, RendererRenderTarget, TextureFormat};
+use crate::Galaxy3dResult;
+use crate::renderer::{RendererRenderTarget, TextureFormat};
 
 /// Swapchain for presenting rendered images to a window
 ///
@@ -15,14 +16,14 @@ pub trait RendererSwapchain: Send + Sync {
     /// A tuple of (image_index, render_target) where:
     /// - image_index: Index of the acquired image (used for present)
     /// - render_target: The render target to render into
-    fn acquire_next_image(&mut self) -> RenderResult<(u32, Arc<dyn RendererRenderTarget>)>;
+    fn acquire_next_image(&mut self) -> Galaxy3dResult<(u32, Arc<dyn RendererRenderTarget>)>;
 
     /// Present the rendered image to the screen
     ///
     /// # Arguments
     ///
     /// * `image_index` - Index of the image to present (from acquire_next_image)
-    fn present(&mut self, image_index: u32) -> RenderResult<()>;
+    fn present(&mut self, image_index: u32) -> Galaxy3dResult<()>;
 
     /// Recreate the swapchain (e.g., after window resize)
     ///
@@ -30,7 +31,7 @@ pub trait RendererSwapchain: Send + Sync {
     ///
     /// * `width` - New width in pixels
     /// * `height` - New height in pixels
-    fn recreate(&mut self, width: u32, height: u32) -> RenderResult<()>;
+    fn recreate(&mut self, width: u32, height: u32) -> Galaxy3dResult<()>;
 
     /// Get the number of images in the swapchain
     fn image_count(&self) -> usize;

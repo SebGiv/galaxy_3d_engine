@@ -1,6 +1,6 @@
 /// VulkanRendererBuffer - Vulkan implementation of RendererBuffer trait
 
-use galaxy_3d_engine::{RendererBuffer, RenderResult, RenderError};
+use galaxy_3d_engine::{RendererBuffer, Galaxy3dResult, Galaxy3dError};
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 
@@ -19,13 +19,13 @@ pub struct VulkanRendererBuffer {
 }
 
 impl RendererBuffer for VulkanRendererBuffer {
-    fn update(&self, offset: u64, data: &[u8]) -> RenderResult<()> {
+    fn update(&self, offset: u64, data: &[u8]) -> Galaxy3dResult<()> {
         unsafe {
             if let Some(allocation) = &self.allocation {
                 // Map memory and copy data
                 let mapped_ptr = allocation
                     .mapped_ptr()
-                    .ok_or_else(|| RenderError::BackendError("Buffer is not CPU-accessible".to_string()))?
+                    .ok_or_else(|| Galaxy3dError::BackendError("Buffer is not CPU-accessible".to_string()))?
                     .as_ptr() as *mut u8;
 
                 // Copy data
@@ -37,7 +37,7 @@ impl RendererBuffer for VulkanRendererBuffer {
 
                 Ok(())
             } else {
-                Err(RenderError::BackendError("Buffer has no allocation".to_string()))
+                Err(Galaxy3dError::BackendError("Buffer has no allocation".to_string()))
             }
         }
     }

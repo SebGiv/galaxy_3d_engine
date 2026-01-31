@@ -5,7 +5,7 @@ use galaxy_3d_engine::{
     RendererTexture, RendererBuffer, RendererShader, RendererPipeline, RendererDescriptorSet,
     RendererRenderTargetDesc, RendererRenderPassDesc,
     TextureDesc, BufferDesc, ShaderDesc, PipelineDesc,
-    RenderResult, RenderError, TextureFormat, ShaderStage, BufferUsage, PrimitiveTopology,
+    Galaxy3dResult, Galaxy3dError, TextureFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
 };
 use ash::vk;
@@ -81,7 +81,7 @@ impl VulkanRenderer {
         commands: &[&dyn RendererCommandList],
         wait_semaphore: vk::Semaphore,
         signal_semaphore: vk::Semaphore,
-    ) -> RenderResult<()> {
+    ) -> Galaxy3dResult<()> {
         unsafe {
             // Wait for previous submit with this fence
             self.device
@@ -90,12 +90,12 @@ impl VulkanRenderer {
                     true,
                     u64::MAX,
                 )
-                .map_err(|e| RenderError::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
 
             // Reset fence
             self.device
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| RenderError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
 
             // Collect command buffers
             let command_buffers: Vec<vk::CommandBuffer> = commands
@@ -123,7 +123,7 @@ impl VulkanRenderer {
                     &[submit_info],
                     self.submit_fences[self.current_submit_fence],
                 )
-                .map_err(|e| RenderError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
 
             Ok(())
         }
@@ -138,11 +138,11 @@ impl VulkanRenderer {
     pub fn new<W: HasDisplayHandle + HasWindowHandle>(
         window: &W,
         config: galaxy_3d_engine::RendererConfig,
-    ) -> RenderResult<Self> {
+    ) -> Galaxy3dResult<Self> {
         unsafe {
             // Create Vulkan Entry
             let entry = ash::Entry::load()
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to load Vulkan library: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to load Vulkan library: {:?}", e)))?;
 
             // Application Info
             let app_info = vk::ApplicationInfo::default()
@@ -154,9 +154,9 @@ impl VulkanRenderer {
 
             // Get required extensions
             let display_handle = window.display_handle()
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get display handle: {}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get display handle: {}", e)))?;
             let mut extension_names = ash_window::enumerate_required_extensions(display_handle.as_raw())
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get required extensions: {}", e)))?
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get required extensions: {}", e)))?
                 .to_vec();
 
             // Add debug utils extension if validation is enabled
@@ -178,7 +178,7 @@ impl VulkanRenderer {
 
             let instance = entry
                 .create_instance(&create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create instance: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create instance: {:?}", e)))?;
 
             // Setup debug messenger if validation is enabled
             let (debug_utils_loader, debug_messenger) = if config.enable_validation {
@@ -223,7 +223,7 @@ impl VulkanRenderer {
 
                 let messenger = debug_utils
                     .create_debug_utils_messenger(&debug_info, None)
-                    .map_err(|e| RenderError::InitializationFailed(format!("Failed to create debug messenger: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create debug messenger: {:?}", e)))?;
 
                 (Some(debug_utils), Some(messenger))
             } else {
@@ -232,7 +232,7 @@ impl VulkanRenderer {
 
             // Create Surface (temporary for queue selection)
             let window_handle = window.window_handle()
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to get window handle: {}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get window handle: {}", e)))?;
             let surface = ash_window::create_surface(
                 &entry,
                 &instance,
@@ -240,19 +240,19 @@ impl VulkanRenderer {
                 window_handle.as_raw(),
                 None,
             )
-            .map_err(|e| RenderError::InitializationFailed(format!("Failed to create surface: {:?}", e)))?;
+            .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create surface: {:?}", e)))?;
 
             let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
 
             // Pick Physical Device
             let physical_devices = instance
                 .enumerate_physical_devices()
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to enumerate physical devices: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to enumerate physical devices: {:?}", e)))?;
 
             let physical_device = physical_devices
                 .into_iter()
                 .next()
-                .ok_or_else(|| RenderError::InitializationFailed("No Vulkan-capable GPU found".to_string()))?;
+                .ok_or_else(|| Galaxy3dError::InitializationFailed("No Vulkan-capable GPU found".to_string()))?;
 
             // Find Queue Families
             let queue_families = instance.get_physical_device_queue_family_properties(physical_device);
@@ -262,7 +262,7 @@ impl VulkanRenderer {
                 .enumerate()
                 .find(|(_, qf)| qf.queue_flags.contains(vk::QueueFlags::GRAPHICS))
                 .map(|(i, _)| i as u32)
-                .ok_or_else(|| RenderError::InitializationFailed("No graphics queue family found".to_string()))?;
+                .ok_or_else(|| Galaxy3dError::InitializationFailed("No graphics queue family found".to_string()))?;
 
             let present_family_index = (0..queue_families.len() as u32)
                 .find(|&i| {
@@ -270,7 +270,7 @@ impl VulkanRenderer {
                         .get_physical_device_surface_support(physical_device, i, surface)
                         .unwrap_or(false)
                 })
-                .ok_or_else(|| RenderError::InitializationFailed("No present queue family found".to_string()))?;
+                .ok_or_else(|| Galaxy3dError::InitializationFailed("No present queue family found".to_string()))?;
 
             // Destroy temporary surface
             surface_loader.destroy_surface(surface, None);
@@ -303,7 +303,7 @@ impl VulkanRenderer {
             let device = Arc::new(
                 instance
                     .create_device(physical_device, &device_create_info, None)
-                    .map_err(|e| RenderError::InitializationFailed(format!("Failed to create device: {:?}", e)))?,
+                    .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create device: {:?}", e)))?,
             );
 
             let graphics_queue = device.get_device_queue(graphics_family_index, 0);
@@ -318,7 +318,7 @@ impl VulkanRenderer {
                 buffer_device_address: false,
                 allocation_sizes: Default::default(),
             })
-            .map_err(|e| RenderError::InitializationFailed(format!("Failed to create allocator: {:?}", e)))?;
+            .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create allocator: {:?}", e)))?;
 
             // Create submit fences (2 for double buffering)
             const MAX_SUBMITS_IN_FLIGHT: usize = 2;
@@ -329,7 +329,7 @@ impl VulkanRenderer {
             for _ in 0..MAX_SUBMITS_IN_FLIGHT {
                 submit_fences.push(
                     device.create_fence(&fence_create_info, None)
-                        .map_err(|e| RenderError::InitializationFailed(format!("Failed to create fence: {:?}", e)))?
+                        .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create fence: {:?}", e)))?
                 );
             }
 
@@ -344,7 +344,7 @@ impl VulkanRenderer {
                 .max_sets(1000);
 
             let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create descriptor pool: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create descriptor pool: {:?}", e)))?;
 
             // Create texture sampler with linear filtering and repeat addressing
             let sampler_create_info = vk::SamplerCreateInfo::default()
@@ -365,7 +365,7 @@ impl VulkanRenderer {
                 .max_lod(0.0);
 
             let texture_sampler = device.create_sampler(&sampler_create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create sampler: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create sampler: {:?}", e)))?;
 
             // Create descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader
             let sampler_binding = vk::DescriptorSetLayoutBinding::default()
@@ -378,7 +378,7 @@ impl VulkanRenderer {
                 .bindings(std::slice::from_ref(&sampler_binding));
 
             let descriptor_set_layout = device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)
-                .map_err(|e| RenderError::InitializationFailed(format!("Failed to create descriptor set layout: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create descriptor set layout: {:?}", e)))?;
 
             Ok(Self {
                 _entry: entry,
@@ -472,7 +472,7 @@ impl VulkanRenderer {
     /// # Arguments
     ///
     /// * `window` - Window to create swapchain for
-    pub fn create_vulkan_swapchain(&self, window: &Window) -> RenderResult<VulkanRendererSwapchain> {
+    pub fn create_vulkan_swapchain(&self, window: &Window) -> Galaxy3dResult<VulkanRendererSwapchain> {
         // Get window size
         // TODO: Pass width/height as parameters
         let width = 800; // Temporary default
@@ -480,9 +480,9 @@ impl VulkanRenderer {
 
         // Create surface
         let display_handle = window.display_handle()
-            .map_err(|e| RenderError::InitializationFailed(format!("Failed to get display handle: {}", e)))?;
+            .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get display handle: {}", e)))?;
         let window_handle = window.window_handle()
-            .map_err(|e| RenderError::InitializationFailed(format!("Failed to get window handle: {}", e)))?;
+            .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to get window handle: {}", e)))?;
 
         let surface = unsafe {
             ash_window::create_surface(
@@ -492,7 +492,7 @@ impl VulkanRenderer {
                 window_handle.as_raw(),
                 None,
             )
-            .map_err(|e| RenderError::InitializationFailed(format!("Failed to create surface: {:?}", e)))?
+            .map_err(|e| Galaxy3dError::InitializationFailed(format!("Failed to create surface: {:?}", e)))?
         };
 
         let surface_loader = ash::khr::surface::Instance::new(&self._entry, &self.instance);
@@ -540,7 +540,7 @@ impl VulkanRenderer {
     /// # Returns
     ///
     /// A descriptor set that can be used in shaders to sample the texture
-    pub fn create_texture_descriptor_set(&self, texture: &VulkanRendererTexture) -> RenderResult<vk::DescriptorSet> {
+    pub fn create_texture_descriptor_set(&self, texture: &VulkanRendererTexture) -> Galaxy3dResult<vk::DescriptorSet> {
         unsafe {
             // Allocate descriptor set
             let layouts = [self.descriptor_set_layout];
@@ -549,7 +549,7 @@ impl VulkanRenderer {
                 .set_layouts(&layouts);
 
             let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
-                .map_err(|e| RenderError::BackendError(format!("Failed to allocate descriptor set: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to allocate descriptor set: {:?}", e)))?;
 
             let descriptor_set = descriptor_sets[0];
 
@@ -574,7 +574,7 @@ impl VulkanRenderer {
 }
 
 impl Renderer for VulkanRenderer {
-    fn create_command_list(&self) -> RenderResult<Box<dyn RendererCommandList>> {
+    fn create_command_list(&self) -> Galaxy3dResult<Box<dyn RendererCommandList>> {
         let cmd_list = VulkanRendererCommandList::new(
             self.device.clone(),
             self.graphics_queue_family,
@@ -582,7 +582,7 @@ impl Renderer for VulkanRenderer {
         Ok(Box::new(cmd_list))
     }
 
-    fn create_render_target(&self, desc: &RendererRenderTargetDesc) -> RenderResult<Arc<dyn RendererRenderTarget>> {
+    fn create_render_target(&self, desc: &RendererRenderTargetDesc) -> Galaxy3dResult<Arc<dyn RendererRenderTarget>> {
         unsafe {
             let format = self.format_to_vk(desc.format);
 
@@ -627,7 +627,7 @@ impl Renderer for VulkanRenderer {
                 .initial_layout(vk::ImageLayout::UNDEFINED);
 
             let image = self.device.create_image(&image_create_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create image: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create image: {:?}", e)))?;
 
             // Allocate memory
             let requirements = self.device.get_image_memory_requirements(image);
@@ -639,11 +639,11 @@ impl Renderer for VulkanRenderer {
                 linear: false,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             })
-            .map_err(|_e| RenderError::OutOfMemory)?;
+            .map_err(|_e| Galaxy3dError::OutOfMemory)?;
 
             // Bind memory
             self.device.bind_image_memory(image, allocation.memory(), allocation.offset())
-                .map_err(|e| RenderError::BackendError(format!("Failed to bind image memory: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to bind image memory: {:?}", e)))?;
 
             // Create image view
             let aspect_mask = if matches!(desc.usage, galaxy_3d_engine::TextureUsage::DepthStencil) {
@@ -671,7 +671,7 @@ impl Renderer for VulkanRenderer {
                 });
 
             let view = self.device.create_image_view(&view_create_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create image view: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create image view: {:?}", e)))?;
 
             Ok(Arc::new(VulkanRendererRenderTarget::new_texture_target(
                 desc.width,
@@ -683,7 +683,7 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn create_render_pass(&self, desc: &RendererRenderPassDesc) -> RenderResult<Arc<dyn RendererRenderPass>> {
+    fn create_render_pass(&self, desc: &RendererRenderPassDesc) -> Galaxy3dResult<Arc<dyn RendererRenderPass>> {
         unsafe {
             // Convert attachment descriptions
             let mut attachments = Vec::new();
@@ -760,7 +760,7 @@ impl Renderer for VulkanRenderer {
                 .dependencies(std::slice::from_ref(&dependency));
 
             let render_pass = self.device.create_render_pass(&render_pass_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create render pass: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create render pass: {:?}", e)))?;
 
             Ok(Arc::new(VulkanRendererRenderPass {
                 render_pass,
@@ -769,12 +769,12 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn create_swapchain(&self, window: &Window) -> RenderResult<Box<dyn RendererSwapchain>> {
+    fn create_swapchain(&self, window: &Window) -> Galaxy3dResult<Box<dyn RendererSwapchain>> {
         let swapchain = self.create_vulkan_swapchain(window)?;
         Ok(Box::new(swapchain))
     }
 
-    fn create_texture(&mut self, desc: TextureDesc) -> RenderResult<Arc<dyn RendererTexture>> {
+    fn create_texture(&mut self, desc: TextureDesc) -> Galaxy3dResult<Arc<dyn RendererTexture>> {
         unsafe {
             let format = self.format_to_vk(desc.format);
 
@@ -796,7 +796,7 @@ impl Renderer for VulkanRenderer {
                 .initial_layout(vk::ImageLayout::UNDEFINED);
 
             let image = self.device.create_image(&image_create_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create image: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create image: {:?}", e)))?;
 
             // Allocate memory
             let requirements = self.device.get_image_memory_requirements(image);
@@ -808,11 +808,11 @@ impl Renderer for VulkanRenderer {
                 linear: false,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             })
-            .map_err(|_e| RenderError::OutOfMemory)?;
+            .map_err(|_e| Galaxy3dError::OutOfMemory)?;
 
             // Bind memory
             self.device.bind_image_memory(image, allocation.memory(), allocation.offset())
-                .map_err(|e| RenderError::BackendError(format!("Failed to bind image memory: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to bind image memory: {:?}", e)))?;
 
             // Create image view
             let view_create_info = vk::ImageViewCreateInfo::default()
@@ -834,7 +834,7 @@ impl Renderer for VulkanRenderer {
                 });
 
             let view = self.device.create_image_view(&view_create_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create image view: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create image view: {:?}", e)))?;
 
             // Upload texture data if provided
             if let Some(data) = desc.data {
@@ -846,7 +846,7 @@ impl Renderer for VulkanRenderer {
                     .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
                 let staging_buffer = self.device.create_buffer(&staging_buffer_create_info, None)
-                    .map_err(|e| RenderError::BackendError(format!("Failed to create staging buffer: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create staging buffer: {:?}", e)))?;
 
                 let staging_requirements = self.device.get_buffer_memory_requirements(staging_buffer);
 
@@ -857,14 +857,14 @@ impl Renderer for VulkanRenderer {
                     linear: true,
                     allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
                 })
-                .map_err(|_e| RenderError::OutOfMemory)?;
+                .map_err(|_e| Galaxy3dError::OutOfMemory)?;
 
                 self.device.bind_buffer_memory(staging_buffer, staging_allocation.memory(), staging_allocation.offset())
-                    .map_err(|e| RenderError::BackendError(format!("Failed to bind staging buffer memory: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::BackendError(format!("Failed to bind staging buffer memory: {:?}", e)))?;
 
                 // 2. Copy data to staging buffer
                 let mapped_ptr = staging_allocation.mapped_ptr()
-                    .ok_or_else(|| RenderError::BackendError("Staging buffer is not mapped".to_string()))?
+                    .ok_or_else(|| Galaxy3dError::BackendError("Staging buffer is not mapped".to_string()))?
                     .as_ptr() as *mut u8;
                 std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_ptr, data.len());
 
@@ -874,7 +874,7 @@ impl Renderer for VulkanRenderer {
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
 
                 let command_pool = self.device.create_command_pool(&command_pool_create_info, None)
-                    .map_err(|e| RenderError::BackendError(format!("Failed to create command pool: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create command pool: {:?}", e)))?;
 
                 let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
                     .command_pool(command_pool)
@@ -882,7 +882,7 @@ impl Renderer for VulkanRenderer {
                     .command_buffer_count(1);
 
                 let command_buffers = self.device.allocate_command_buffers(&command_buffer_allocate_info)
-                    .map_err(|e| RenderError::BackendError(format!("Failed to allocate command buffers: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::BackendError(format!("Failed to allocate command buffers: {:?}", e)))?;
                 let command_buffer = command_buffers[0];
 
                 // Begin recording
@@ -890,7 +890,7 @@ impl Renderer for VulkanRenderer {
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
                 self.device.begin_command_buffer(command_buffer, &begin_info)
-                    .map_err(|e| RenderError::BackendError(format!("Failed to begin command buffer: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::BackendError(format!("Failed to begin command buffer: {:?}", e)))?;
 
                 // 5. Transition image layout: UNDEFINED → TRANSFER_DST_OPTIMAL
                 let barrier = vk::ImageMemoryBarrier::default()
@@ -974,7 +974,7 @@ impl Renderer for VulkanRenderer {
 
                 // End recording
                 self.device.end_command_buffer(command_buffer)
-                    .map_err(|e| RenderError::BackendError(format!("Failed to end command buffer: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::BackendError(format!("Failed to end command buffer: {:?}", e)))?;
 
                 // 8. Submit and wait for command buffer
                 let command_buffers_submit = [command_buffer];
@@ -982,16 +982,16 @@ impl Renderer for VulkanRenderer {
                     .command_buffers(&command_buffers_submit);
 
                 self.device.queue_submit(self.graphics_queue, &[submit_info], vk::Fence::null())
-                    .map_err(|e| RenderError::BackendError(format!("Failed to submit command buffer: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::BackendError(format!("Failed to submit command buffer: {:?}", e)))?;
 
                 self.device.queue_wait_idle(self.graphics_queue)
-                    .map_err(|e| RenderError::BackendError(format!("Failed to wait for queue idle: {:?}", e)))?;
+                    .map_err(|e| Galaxy3dError::BackendError(format!("Failed to wait for queue idle: {:?}", e)))?;
 
                 // 9. Clean up staging buffer
                 self.device.destroy_command_pool(command_pool, None);
                 self.device.destroy_buffer(staging_buffer, None);
                 self.allocator.lock().unwrap().free(staging_allocation)
-                    .map_err(|_e| RenderError::BackendError("Failed to free staging buffer allocation".to_string()))?;
+                    .map_err(|_e| Galaxy3dError::BackendError("Failed to free staging buffer allocation".to_string()))?;
             }
 
             Ok(Arc::new(VulkanRendererTexture {
@@ -1004,7 +1004,7 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn create_buffer(&mut self, desc: BufferDesc) -> RenderResult<Arc<dyn RendererBuffer>> {
+    fn create_buffer(&mut self, desc: BufferDesc) -> Galaxy3dResult<Arc<dyn RendererBuffer>> {
         unsafe {
             let usage = match desc.usage {
                 BufferUsage::Vertex => vk::BufferUsageFlags::VERTEX_BUFFER,
@@ -1020,7 +1020,7 @@ impl Renderer for VulkanRenderer {
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
             let buffer = self.device.create_buffer(&buffer_create_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create buffer: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create buffer: {:?}", e)))?;
 
             // Allocate memory
             let requirements = self.device.get_buffer_memory_requirements(buffer);
@@ -1032,11 +1032,11 @@ impl Renderer for VulkanRenderer {
                 linear: true,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             })
-            .map_err(|_e| RenderError::OutOfMemory)?;
+            .map_err(|_e| Galaxy3dError::OutOfMemory)?;
 
             // Bind memory
             self.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
-                .map_err(|e| RenderError::BackendError(format!("Failed to bind buffer memory: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to bind buffer memory: {:?}", e)))?;
 
             Ok(Arc::new(VulkanRendererBuffer {
                 buffer,
@@ -1048,11 +1048,11 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn create_shader(&mut self, desc: ShaderDesc) -> RenderResult<Arc<dyn RendererShader>> {
+    fn create_shader(&mut self, desc: ShaderDesc) -> Galaxy3dResult<Arc<dyn RendererShader>> {
         unsafe {
             // Ensure code is properly aligned for u32
             if desc.code.len() % 4 != 0 {
-                return Err(RenderError::InvalidResource("Shader code must be aligned to 4 bytes".to_string()));
+                return Err(Galaxy3dError::InvalidResource("Shader code must be aligned to 4 bytes".to_string()));
             }
 
             // Convert to u32 slice for SPIR-V
@@ -1065,7 +1065,7 @@ impl Renderer for VulkanRenderer {
                 .code(code_u32);
 
             let module = self.device.create_shader_module(&create_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create shader module: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create shader module: {:?}", e)))?;
 
             Ok(Arc::new(VulkanRendererShader {
                 module,
@@ -1076,7 +1076,7 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn create_pipeline(&mut self, desc: PipelineDesc) -> RenderResult<Arc<dyn RendererPipeline>> {
+    fn create_pipeline(&mut self, desc: PipelineDesc) -> Galaxy3dResult<Arc<dyn RendererPipeline>> {
         // NOTE: This implementation is temporary and creates a hardcoded render pass
         // In the new architecture, pipelines should be created with a specific render pass
         // For now, we create a simple render pass for compatibility
@@ -1116,7 +1116,7 @@ impl Renderer for VulkanRenderer {
                 .dependencies(std::slice::from_ref(&dependency));
 
             let temp_render_pass = self.device.create_render_pass(&render_pass_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create render pass: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create render pass: {:?}", e)))?;
 
             // Downcast shaders to Vulkan types
             let vertex_shader = desc.vertex_shader
@@ -1262,7 +1262,7 @@ impl Renderer for VulkanRenderer {
             }
 
             let layout = self.device.create_pipeline_layout(&layout_create_info, None)
-                .map_err(|e| RenderError::BackendError(format!("Failed to create pipeline layout: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create pipeline layout: {:?}", e)))?;
 
             // Create pipeline
             let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
@@ -1283,7 +1283,7 @@ impl Renderer for VulkanRenderer {
                 &[pipeline_create_info],
                 None,
             )
-            .map_err(|e| RenderError::BackendError(format!("Failed to create graphics pipeline: {:?}", e.1)))?;
+            .map_err(|e| Galaxy3dError::BackendError(format!("Failed to create graphics pipeline: {:?}", e.1)))?;
 
             let pipeline = pipelines[0];
 
@@ -1298,7 +1298,7 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn submit(&self, commands: &[&dyn RendererCommandList]) -> RenderResult<()> {
+    fn submit(&self, commands: &[&dyn RendererCommandList]) -> Galaxy3dResult<()> {
         unsafe {
             // Wait for previous submit with this fence
             self.device
@@ -1307,12 +1307,12 @@ impl Renderer for VulkanRenderer {
                     true,
                     u64::MAX,
                 )
-                .map_err(|e| RenderError::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
 
             // Reset fence
             self.device
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| RenderError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
 
             // Collect command buffers
             let command_buffers: Vec<vk::CommandBuffer> = commands
@@ -1333,7 +1333,7 @@ impl Renderer for VulkanRenderer {
                     &[submit_info],
                     self.submit_fences[self.current_submit_fence],
                 )
-                .map_err(|e| RenderError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
 
             Ok(())
         }
@@ -1342,7 +1342,7 @@ impl Renderer for VulkanRenderer {
     fn create_descriptor_set_for_texture(
         &self,
         texture: &Arc<dyn RendererTexture>,
-    ) -> RenderResult<Arc<dyn RendererDescriptorSet>> {
+    ) -> Galaxy3dResult<Arc<dyn RendererDescriptorSet>> {
         // Downcast to VulkanRendererTexture internally (not in demo)
         let vk_texture = texture.as_ref() as *const dyn RendererTexture as *const VulkanRendererTexture;
         let vk_texture = unsafe { &*vk_texture };
@@ -1355,7 +1355,7 @@ impl Renderer for VulkanRenderer {
                 .set_layouts(&layouts);
 
             let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
-                .map_err(|e| RenderError::BackendError(format!("Failed to allocate descriptor set: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to allocate descriptor set: {:?}", e)))?;
 
             let descriptor_set = descriptor_sets[0];
 
@@ -1391,7 +1391,7 @@ impl Renderer for VulkanRenderer {
         commands: &[&dyn RendererCommandList],
         swapchain: &dyn RendererSwapchain,
         image_index: u32,
-    ) -> RenderResult<()> {
+    ) -> Galaxy3dResult<()> {
         // Downcast swapchain to VulkanRendererSwapchain internally (not in demo)
         let vk_swapchain = swapchain as *const dyn RendererSwapchain as *const VulkanRendererSwapchain;
         let vk_swapchain = unsafe { &*vk_swapchain };
@@ -1407,12 +1407,12 @@ impl Renderer for VulkanRenderer {
                     true,
                     u64::MAX,
                 )
-                .map_err(|e| RenderError::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
 
             // Reset fence
             self.device
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| RenderError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to reset fence: {:?}", e)))?;
 
             // Collect command buffers
             let command_buffers: Vec<vk::CommandBuffer> = commands
@@ -1440,17 +1440,17 @@ impl Renderer for VulkanRenderer {
                     &[submit_info],
                     self.submit_fences[self.current_submit_fence],
                 )
-                .map_err(|e| RenderError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to submit queue: {:?}", e)))?;
 
             Ok(())
         }
     }
 
-    fn wait_idle(&self) -> RenderResult<()> {
+    fn wait_idle(&self) -> Galaxy3dResult<()> {
         unsafe {
             self.device
                 .device_wait_idle()
-                .map_err(|e| RenderError::BackendError(format!("Failed to wait idle: {:?}", e)))
+                .map_err(|e| Galaxy3dError::BackendError(format!("Failed to wait idle: {:?}", e)))
         }
     }
 

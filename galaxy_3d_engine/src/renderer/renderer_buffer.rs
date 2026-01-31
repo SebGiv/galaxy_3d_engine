@@ -1,6 +1,6 @@
 /// RendererBuffer trait and buffer descriptor
 
-use crate::renderer::RenderResult;
+use crate::Galaxy3dResult;
 
 /// Buffer usage flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,5 +35,5 @@ pub trait RendererBuffer: Send + Sync {
     ///
     /// * `offset` - Offset into the buffer in bytes
     /// * `data` - Data to write
-    fn update(&self, offset: u64, data: &[u8]) -> RenderResult<()>;
+    fn update(&self, offset: u64, data: &[u8]) -> Galaxy3dResult<()>;
 }

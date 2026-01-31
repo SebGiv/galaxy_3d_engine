@@ -5,7 +5,7 @@
 /// concurrent access.
 
 use std::sync::{OnceLock, RwLock, Arc, Mutex};
-use crate::{Renderer, RenderResult, RenderError};
+use crate::{Renderer, Galaxy3dResult, Galaxy3dError};
 
 // ===== INTERNAL STATE =====
 
@@ -51,7 +51,7 @@ impl EngineState {
 ///
 /// // Cleanup
 /// Galaxy3dEngine::shutdown();
-/// # Ok::<(), galaxy_3d_engine::RenderError>(())
+/// # Ok::<(), galaxy_3d_engine::Galaxy3dError>(())
 /// ```
 pub struct Galaxy3dEngine;
 
@@ -63,7 +63,7 @@ impl Galaxy3dEngine {
     /// # Errors
     ///
     /// Currently always succeeds, but returns Result for future extensibility.
-    pub fn initialize() -> RenderResult<()> {
+    pub fn initialize() -> Galaxy3dResult<()> {
         ENGINE_STATE.get_or_init(|| EngineState::new());
         Ok(())
     }
@@ -105,9 +105,9 @@ impl Galaxy3dEngine {
     ///
     /// Galaxy3dEngine::initialize()?;
     /// Galaxy3dEngine::create_renderer(VulkanRenderer::new(&window, config)?)?;
-    /// # Ok::<(), galaxy_3d_engine::RenderError>(())
+    /// # Ok::<(), galaxy_3d_engine::Galaxy3dError>(())
     /// ```
-    pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> RenderResult<()> {
+    pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> Galaxy3dResult<()> {
         // Wrap in Arc<Mutex<dyn Renderer>>
         let arc_renderer: Arc<Mutex<dyn Renderer>> = Arc::new(Mutex::new(renderer));
 
@@ -119,15 +119,15 @@ impl Galaxy3dEngine {
     ///
     /// This is called internally by create_renderer(). Marked pub(crate) to allow
     /// access from other modules if needed.
-    pub(crate) fn register_renderer(renderer: Arc<Mutex<dyn Renderer>>) -> RenderResult<()> {
+    pub(crate) fn register_renderer(renderer: Arc<Mutex<dyn Renderer>>) -> Galaxy3dResult<()> {
         let state = ENGINE_STATE.get()
-            .ok_or_else(|| RenderError::InitializationFailed("Engine not initialized. Call Galaxy3dEngine::initialize() first.".to_string()))?;
+            .ok_or_else(|| Galaxy3dError::InitializationFailed("Engine not initialized. Call Galaxy3dEngine::initialize() first.".to_string()))?;
 
         let mut lock = state.renderer.write()
-            .map_err(|_| RenderError::BackendError("Renderer lock poisoned".to_string()))?;
+            .map_err(|_| Galaxy3dError::BackendError("Renderer lock poisoned".to_string()))?;
 
         if lock.is_some() {
-            return Err(RenderError::InitializationFailed("Renderer already exists. Call Renderer::destroy_singleton() first.".to_string()));
+            return Err(Galaxy3dError::InitializationFailed("Renderer already exists. Call Renderer::destroy_singleton() first.".to_string()));
         }
 
         *lock = Some(renderer);
@@ -156,17 +156,17 @@ impl Galaxy3dEngine {
     /// let renderer = Galaxy3dEngine::renderer()?;
     /// let renderer_guard = renderer.lock().unwrap();
     /// // Use renderer_guard...
-    /// # Ok::<(), galaxy_3d_engine::RenderError>(())
+    /// # Ok::<(), galaxy_3d_engine::Galaxy3dError>(())
     /// ```
-    pub fn renderer() -> RenderResult<Arc<Mutex<dyn Renderer>>> {
+    pub fn renderer() -> Galaxy3dResult<Arc<Mutex<dyn Renderer>>> {
         let state = ENGINE_STATE.get()
-            .ok_or_else(|| RenderError::InitializationFailed("Engine not initialized. Call Galaxy3dEngine::initialize() first.".to_string()))?;
+            .ok_or_else(|| Galaxy3dError::InitializationFailed("Engine not initialized. Call Galaxy3dEngine::initialize() first.".to_string()))?;
 
         let lock = state.renderer.read()
-            .map_err(|_| RenderError::BackendError("Renderer lock poisoned".to_string()))?;
+            .map_err(|_| Galaxy3dError::BackendError("Renderer lock poisoned".to_string()))?;
 
         lock.clone()
-            .ok_or_else(|| RenderError::InitializationFailed("Renderer not created. Call Galaxy3dEngine::create_renderer() first.".to_string()))
+            .ok_or_else(|| Galaxy3dError::InitializationFailed("Renderer not created. Call Galaxy3dEngine::create_renderer() first.".to_string()))
     }
 
     /// Destroy the renderer singleton
@@ -184,14 +184,14 @@ impl Galaxy3dEngine {
     /// use galaxy_3d_engine::Galaxy3dEngine;
     ///
     /// Galaxy3dEngine::destroy_renderer()?;
-    /// # Ok::<(), galaxy_3d_engine::RenderError>(())
+    /// # Ok::<(), galaxy_3d_engine::Galaxy3dError>(())
     /// ```
-    pub fn destroy_renderer() -> RenderResult<()> {
+    pub fn destroy_renderer() -> Galaxy3dResult<()> {
         let state = ENGINE_STATE.get()
-            .ok_or_else(|| RenderError::InitializationFailed("Engine not initialized".to_string()))?;
+            .ok_or_else(|| Galaxy3dError::InitializationFailed("Engine not initialized".to_string()))?;
 
         let mut lock = state.renderer.write()
-            .map_err(|_| RenderError::BackendError("Renderer lock poisoned".to_string()))?;
+            .map_err(|_| Galaxy3dError::BackendError("Renderer lock poisoned".to_string()))?;
 
         *lock = None;
         Ok(())

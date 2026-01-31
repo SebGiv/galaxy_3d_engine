@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::collections::HashMap;
-use std::fmt;
 use winit::window::Window;
 
 use crate::renderer::{
@@ -13,38 +12,8 @@ use crate::renderer::{
     RendererRenderPassDesc, RendererRenderTargetDesc, RendererDescriptorSet,
 };
 
-// ============================================================================
-// Common types and error handling
-// ============================================================================
-
-/// Result type for rendering operations
-pub type RenderResult<T> = Result<T, RenderError>;
-
-/// Rendering errors
-#[derive(Debug, Clone)]
-pub enum RenderError {
-    /// Backend-specific error
-    BackendError(String),
-    /// Out of GPU memory
-    OutOfMemory,
-    /// Invalid resource
-    InvalidResource(String),
-    /// Initialization failed
-    InitializationFailed(String),
-}
-
-impl fmt::Display for RenderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RenderError::BackendError(msg) => write!(f, "Backend error: {}", msg),
-            RenderError::OutOfMemory => write!(f, "Out of GPU memory"),
-            RenderError::InvalidResource(msg) => write!(f, "Invalid resource: {}", msg),
-            RenderError::InitializationFailed(msg) => write!(f, "Initialization failed: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for RenderError {}
+// Import error types from crate root
+use crate::{Galaxy3dError, Galaxy3dResult};
 
 /// Debug severity level for validation messages
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,7 +172,7 @@ pub trait Renderer: Send + Sync {
     /// # Returns
     ///
     /// A shared pointer to the created texture
-    fn create_texture(&mut self, desc: TextureDesc) -> RenderResult<Arc<dyn RendererTexture>>;
+    fn create_texture(&mut self, desc: TextureDesc) -> Galaxy3dResult<Arc<dyn RendererTexture>>;
 
     /// Create a buffer
     ///
@@ -214,7 +183,7 @@ pub trait Renderer: Send + Sync {
     /// # Returns
     ///
     /// A shared pointer to the created buffer
-    fn create_buffer(&mut self, desc: BufferDesc) -> RenderResult<Arc<dyn RendererBuffer>>;
+    fn create_buffer(&mut self, desc: BufferDesc) -> Galaxy3dResult<Arc<dyn RendererBuffer>>;
 
     /// Create a shader
     ///
@@ -225,7 +194,7 @@ pub trait Renderer: Send + Sync {
     /// # Returns
     ///
     /// A shared pointer to the created shader
-    fn create_shader(&mut self, desc: ShaderDesc) -> RenderResult<Arc<dyn RendererShader>>;
+    fn create_shader(&mut self, desc: ShaderDesc) -> Galaxy3dResult<Arc<dyn RendererShader>>;
 
     /// Create a graphics pipeline
     ///
@@ -236,14 +205,14 @@ pub trait Renderer: Send + Sync {
     /// # Returns
     ///
     /// A shared pointer to the created pipeline
-    fn create_pipeline(&mut self, desc: PipelineDesc) -> RenderResult<Arc<dyn RendererPipeline>>;
+    fn create_pipeline(&mut self, desc: PipelineDesc) -> Galaxy3dResult<Arc<dyn RendererPipeline>>;
 
     /// Create a command list for recording rendering commands
     ///
     /// # Returns
     ///
     /// A boxed command list
-    fn create_command_list(&self) -> RenderResult<Box<dyn RendererCommandList>>;
+    fn create_command_list(&self) -> Galaxy3dResult<Box<dyn RendererCommandList>>;
 
     /// Create a render target (texture that can be rendered to)
     ///
@@ -254,7 +223,7 @@ pub trait Renderer: Send + Sync {
     /// # Returns
     ///
     /// A shared pointer to the created render target
-    fn create_render_target(&self, desc: &RendererRenderTargetDesc) -> RenderResult<Arc<dyn RendererRenderTarget>>;
+    fn create_render_target(&self, desc: &RendererRenderTargetDesc) -> Galaxy3dResult<Arc<dyn RendererRenderTarget>>;
 
     /// Create a render pass
     ///
@@ -265,7 +234,7 @@ pub trait Renderer: Send + Sync {
     /// # Returns
     ///
     /// A shared pointer to the created render pass
-    fn create_render_pass(&self, desc: &RendererRenderPassDesc) -> RenderResult<Arc<dyn RendererRenderPass>>;
+    fn create_render_pass(&self, desc: &RendererRenderPassDesc) -> Galaxy3dResult<Arc<dyn RendererRenderPass>>;
 
     /// Create a swapchain for window presentation
     ///
@@ -276,14 +245,14 @@ pub trait Renderer: Send + Sync {
     /// # Returns
     ///
     /// A boxed swapchain
-    fn create_swapchain(&self, window: &Window) -> RenderResult<Box<dyn RendererSwapchain>>;
+    fn create_swapchain(&self, window: &Window) -> Galaxy3dResult<Box<dyn RendererSwapchain>>;
 
     /// Submit command lists for execution on the GPU
     ///
     /// # Arguments
     ///
     /// * `commands` - Slice of command lists to submit
-    fn submit(&self, commands: &[&dyn RendererCommandList]) -> RenderResult<()>;
+    fn submit(&self, commands: &[&dyn RendererCommandList]) -> Galaxy3dResult<()>;
 
     /// Submit command lists with swapchain synchronization
     ///
@@ -300,7 +269,7 @@ pub trait Renderer: Send + Sync {
         commands: &[&dyn RendererCommandList],
         swapchain: &dyn RendererSwapchain,
         image_index: u32,
-    ) -> RenderResult<()>;
+    ) -> Galaxy3dResult<()>;
 
     /// Create a descriptor set for a texture
     ///
@@ -318,7 +287,7 @@ pub trait Renderer: Send + Sync {
     fn create_descriptor_set_for_texture(
         &self,
         texture: &Arc<dyn RendererTexture>,
-    ) -> RenderResult<Arc<dyn RendererDescriptorSet>>;
+    ) -> Galaxy3dResult<Arc<dyn RendererDescriptorSet>>;
 
     /// Get descriptor set layout handle
     ///
@@ -331,7 +300,7 @@ pub trait Renderer: Send + Sync {
     fn get_descriptor_set_layout_handle(&self) -> u64;
 
     /// Wait for all GPU operations to complete
-    fn wait_idle(&self) -> RenderResult<()>;
+    fn wait_idle(&self) -> Galaxy3dResult<()>;
 
     /// Get statistics about the renderer
     fn stats(&self) -> RendererStats;
@@ -350,7 +319,7 @@ pub trait Renderer: Send + Sync {
 // ============================================================================
 
 /// Renderer plugin factory function type
-type RendererPluginFactory = Box<dyn Fn(&Window, RendererConfig) -> RenderResult<Arc<Mutex<dyn Renderer>>> + Send + Sync>;
+type RendererPluginFactory = Box<dyn Fn(&Window, RendererConfig) -> Galaxy3dResult<Arc<Mutex<dyn Renderer>>> + Send + Sync>;
 
 /// Plugin registry for renderer backends
 pub struct RendererPluginRegistry {
@@ -373,7 +342,7 @@ impl RendererPluginRegistry {
     /// * `factory` - Factory function to create the plugin
     pub fn register_plugin<F>(&mut self, name: &'static str, factory: F)
     where
-        F: Fn(&Window, RendererConfig) -> RenderResult<Arc<Mutex<dyn Renderer>>> + Send + Sync + 'static,
+        F: Fn(&Window, RendererConfig) -> Galaxy3dResult<Arc<Mutex<dyn Renderer>>> + Send + Sync + 'static,
     {
         self.plugins.insert(name, Box::new(factory));
     }
@@ -389,10 +358,10 @@ impl RendererPluginRegistry {
     /// # Returns
     ///
     /// A shared, thread-safe renderer instance
-    pub fn create_renderer(&self, plugin_name: &str, window: &Window, config: RendererConfig) -> RenderResult<Arc<Mutex<dyn Renderer>>> {
+    pub fn create_renderer(&self, plugin_name: &str, window: &Window, config: RendererConfig) -> Galaxy3dResult<Arc<Mutex<dyn Renderer>>> {
         self.plugins
             .get(plugin_name)
-            .ok_or_else(|| RenderError::InitializationFailed(format!("Plugin '{}' not found", plugin_name)))?
+            .ok_or_else(|| Galaxy3dError::InitializationFailed(format!("Plugin '{}' not found", plugin_name)))?
             (window, config)
     }
 }
@@ -418,7 +387,7 @@ pub fn renderer_plugin_registry() -> &'static Mutex<Option<RendererPluginRegistr
 /// * `factory` - Factory function
 pub fn register_renderer_plugin<F>(name: &'static str, factory: F)
 where
-    F: Fn(&Window, RendererConfig) -> RenderResult<Arc<Mutex<dyn Renderer>>> + Send + Sync + 'static,
+    F: Fn(&Window, RendererConfig) -> Galaxy3dResult<Arc<Mutex<dyn Renderer>>> + Send + Sync + 'static,
 {
     renderer_plugin_registry()
         .lock()

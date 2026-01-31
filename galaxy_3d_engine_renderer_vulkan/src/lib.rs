@@ -24,7 +24,7 @@ mod vulkan_renderer_render_pass;
 mod vulkan_renderer_swapchain;
 mod vulkan_renderer_descriptor_set;
 
-use galaxy_3d_engine::{RendererConfig, RenderResult};
+use galaxy_3d_engine::{RendererConfig, Galaxy3dResult};
 use std::sync::{Arc, Mutex};
 use winit::window::Window;
 

@@ -203,16 +203,16 @@ pub struct Galaxy3dEngine;
 
 impl Galaxy3dEngine {
     /// Initialiser le moteur (appeler au démarrage)
-    pub fn initialize() -> RenderResult<()>;
+    pub fn initialize() -> Galaxy3dResult<()>;
 
     /// Créer le renderer singleton
-    pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> RenderResult<()>;
+    pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> Galaxy3dResult<()>;
 
     /// Accéder au renderer global
-    pub fn renderer() -> RenderResult<Arc<Mutex<dyn Renderer>>>;
+    pub fn renderer() -> Galaxy3dResult<Arc<Mutex<dyn Renderer>>>;
 
     /// Détruire le renderer singleton
-    pub fn destroy_renderer() -> RenderResult<()>;
+    pub fn destroy_renderer() -> Galaxy3dResult<()>;
 
     /// Shutdown complet du moteur
     pub fn shutdown();
@@ -299,7 +299,7 @@ pub struct VulkanRendererCommandList {
 }
 
 impl RendererCommandList for VulkanRendererCommandList {
-    fn begin(&mut self) -> RenderResult<()> {
+    fn begin(&mut self) -> Galaxy3dResult<()> {
         // Détruire les framebuffers du frame précédent
         for framebuffer in self.framebuffers.drain(..) {
             self.device.destroy_framebuffer(framebuffer, None);
@@ -307,7 +307,7 @@ impl RendererCommandList for VulkanRendererCommandList {
         // ...
     }
 
-    fn begin_render_pass(...) -> RenderResult<()> {
+    fn begin_render_pass(...) -> Galaxy3dResult<()> {
         let framebuffer = create_framebuffer(...)?;
         self.framebuffers.push(framebuffer); // Stocké pour plus tard
         // ...
@@ -631,7 +631,7 @@ loop {
 - Safety notes for unsafe code
 
 ### Error Handling
-- `RenderResult<T>` = `Result<T, RenderError>`
+- `Galaxy3dResult<T>` = `Result<T, Galaxy3dError>`
 - Detailed error messages with context
 - Never `unwrap()` in library code
 
@@ -1400,12 +1400,12 @@ pub enum TextureFormat {
 // Nouveau : create_texture_from_file (helper)
 impl Renderer {
     fn create_texture_from_file(&self, path: &str)
-        -> RenderResult<Arc<dyn RendererTexture>>
+        -> Galaxy3dResult<Arc<dyn RendererTexture>>
     {
         match path.extension() {
             "dds" => self.load_dds(path),
             "png" | "jpg" | "bmp" => self.load_image(path),
-            _ => Err(RenderError::UnsupportedFormat),
+            _ => Err(Galaxy3dError::UnsupportedFormat),
         }
     }
 }
@@ -2299,7 +2299,7 @@ pub struct MeshInfo {
 }
 
 impl MeshRegistry {
-    pub fn load_mesh(&mut self, path: &str) -> RenderResult<MeshId> {
+    pub fn load_mesh(&mut self, path: &str) -> Galaxy3dResult<MeshId> {
         // Charge mesh, append to global buffers
     }
 
@@ -2347,7 +2347,7 @@ pub trait RendererCommandList {
         offset: u64,
         draw_count: u32,
         stride: u32,
-    ) -> RenderResult<()>;
+    ) -> Galaxy3dResult<()>;
 
     fn draw_indexed_indirect_count(
         &mut self,
@@ -2357,14 +2357,14 @@ pub trait RendererCommandList {
         count_offset: u64,
         max_draw_count: u32,
         stride: u32,
-    ) -> RenderResult<()>;
+    ) -> Galaxy3dResult<()>;
 
     fn dispatch(
         &mut self,
         group_count_x: u32,
         group_count_y: u32,
         group_count_z: u32,
-    ) -> RenderResult<()>;
+    ) -> Galaxy3dResult<()>;
 }
 
 // Nouveau : Compute pipelines
@@ -2372,7 +2372,7 @@ impl Renderer {
     fn create_compute_pipeline(
         &self,
         desc: ComputePipelineDesc,
-    ) -> RenderResult<Arc<dyn RendererComputePipeline>>;
+    ) -> Galaxy3dResult<Arc<dyn RendererComputePipeline>>;
 }
 ```
 
@@ -2380,7 +2380,7 @@ impl Renderer {
 
 ```rust
 // VulkanRendererCommandList
-fn draw_indexed_indirect_count(&mut self, ...) -> RenderResult<()> {
+fn draw_indexed_indirect_count(&mut self, ...) -> Galaxy3dResult<()> {
     unsafe {
         let vk_buffer = downcast_buffer(buffer);
         let vk_count_buffer = downcast_buffer(count_buffer);
