@@ -23,6 +23,7 @@ use std::mem::ManuallyDrop;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
+use galaxy_3d_engine::{engine_error, engine_warn};
 
 use crate::vulkan_texture::Texture;
 use crate::vulkan_buffer::Buffer;
@@ -97,12 +98,18 @@ impl VulkanRenderer {
                     true,
                     u64::MAX,
                 )
-                .map_err(|e| Error::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to wait for submit fence: {:?}", e);
+                    Error::BackendError(format!("Failed to wait for fence: {:?}", e))
+                })?;
 
             // Reset fence
             self.device
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| Error::BackendError(format!("Failed to reset fence: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to reset submit fence: {:?}", e);
+                    Error::BackendError(format!("Failed to reset fence: {:?}", e))
+                })?;
 
             // Collect command buffers
             let command_buffers: Vec<vk::CommandBuffer> = commands
@@ -130,7 +137,10 @@ impl VulkanRenderer {
                     &[submit_info],
                     self.submit_fences[self.current_submit_fence],
                 )
-                .map_err(|e| Error::BackendError(format!("Failed to submit queue: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to submit commands to GPU queue: {:?}", e);
+                    Error::BackendError(format!("Failed to submit queue: {:?}", e))
+                })?;
 
             Ok(())
         }
@@ -635,7 +645,10 @@ impl Renderer for VulkanRenderer {
                 .initial_layout(vk::ImageLayout::UNDEFINED);
 
             let image = self.device.create_image(&image_create_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create image: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create image for render target: {:?}", e);
+                    Error::BackendError(format!("Failed to create image: {:?}", e))
+                })?;
 
             // Allocate memory
             let requirements = self.device.get_image_memory_requirements(image);
@@ -647,11 +660,18 @@ impl Renderer for VulkanRenderer {
                 linear: false,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             })
-            .map_err(|_e| Error::OutOfMemory)?;
+            .map_err(|_e| {
+                let size_mb = requirements.size as f64 / (1024.0 * 1024.0);
+                engine_error!("galaxy3d::vulkan", "Out of GPU memory for render target (required: {:.2} MB)", size_mb);
+                Error::OutOfMemory
+            })?;
 
             // Bind memory
             self.device.bind_image_memory(image, allocation.memory(), allocation.offset())
-                .map_err(|e| Error::BackendError(format!("Failed to bind image memory: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to bind image memory for render target: {:?}", e);
+                    Error::BackendError(format!("Failed to bind image memory: {:?}", e))
+                })?;
 
             // Create image view
             let aspect_mask = if matches!(desc.usage, TextureUsage::DepthStencil) {
@@ -679,7 +699,10 @@ impl Renderer for VulkanRenderer {
                 });
 
             let view = self.device.create_image_view(&view_create_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create image view: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create image view for render target: {:?}", e);
+                    Error::BackendError(format!("Failed to create image view: {:?}", e))
+                })?;
 
             Ok(Arc::new(RenderTarget::new_texture_target(
                 desc.width,
@@ -804,7 +827,10 @@ impl Renderer for VulkanRenderer {
                 .initial_layout(vk::ImageLayout::UNDEFINED);
 
             let image = self.device.create_image(&image_create_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create image: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create texture image: {:?}", e);
+                    Error::BackendError(format!("Failed to create image: {:?}", e))
+                })?;
 
             // Allocate memory
             let requirements = self.device.get_image_memory_requirements(image);
@@ -816,11 +842,18 @@ impl Renderer for VulkanRenderer {
                 linear: false,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             })
-            .map_err(|_e| Error::OutOfMemory)?;
+            .map_err(|_e| {
+                let size_mb = requirements.size as f64 / (1024.0 * 1024.0);
+                engine_error!("galaxy3d::vulkan", "Out of GPU memory for texture (size: {}x{}, {:.2} MB)", desc.width, desc.height, size_mb);
+                Error::OutOfMemory
+            })?;
 
             // Bind memory
             self.device.bind_image_memory(image, allocation.memory(), allocation.offset())
-                .map_err(|e| Error::BackendError(format!("Failed to bind image memory: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to bind texture image memory: {:?}", e);
+                    Error::BackendError(format!("Failed to bind image memory: {:?}", e))
+                })?;
 
             // Create image view
             let view_create_info = vk::ImageViewCreateInfo::default()
@@ -842,7 +875,10 @@ impl Renderer for VulkanRenderer {
                 });
 
             let view = self.device.create_image_view(&view_create_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create image view: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create texture image view: {:?}", e);
+                    Error::BackendError(format!("Failed to create image view: {:?}", e))
+                })?;
 
             // Upload texture data if provided
             if let Some(data) = desc.data {
@@ -854,7 +890,10 @@ impl Renderer for VulkanRenderer {
                     .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
                 let staging_buffer = self.device.create_buffer(&staging_buffer_create_info, None)
-                    .map_err(|e| Error::BackendError(format!("Failed to create staging buffer: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to create texture staging buffer: {:?}", e);
+                        Error::BackendError(format!("Failed to create staging buffer: {:?}", e))
+                    })?;
 
                 let staging_requirements = self.device.get_buffer_memory_requirements(staging_buffer);
 
@@ -865,10 +904,17 @@ impl Renderer for VulkanRenderer {
                     linear: true,
                     allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
                 })
-                .map_err(|_e| Error::OutOfMemory)?;
+                .map_err(|_e| {
+                    let size_mb = staging_requirements.size as f64 / (1024.0 * 1024.0);
+                    engine_error!("galaxy3d::vulkan", "Out of GPU memory for texture staging buffer ({:.2} MB)", size_mb);
+                    Error::OutOfMemory
+                })?;
 
                 self.device.bind_buffer_memory(staging_buffer, staging_allocation.memory(), staging_allocation.offset())
-                    .map_err(|e| Error::BackendError(format!("Failed to bind staging buffer memory: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to bind texture staging buffer memory: {:?}", e);
+                        Error::BackendError(format!("Failed to bind staging buffer memory: {:?}", e))
+                    })?;
 
                 // 2. Copy data to staging buffer
                 let mapped_ptr = staging_allocation.mapped_ptr()
@@ -882,7 +928,10 @@ impl Renderer for VulkanRenderer {
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
 
                 let command_pool = self.device.create_command_pool(&command_pool_create_info, None)
-                    .map_err(|e| Error::BackendError(format!("Failed to create command pool: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to create command pool for texture upload: {:?}", e);
+                        Error::BackendError(format!("Failed to create command pool: {:?}", e))
+                    })?;
 
                 let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
                     .command_pool(command_pool)
@@ -890,7 +939,10 @@ impl Renderer for VulkanRenderer {
                     .command_buffer_count(1);
 
                 let command_buffers = self.device.allocate_command_buffers(&command_buffer_allocate_info)
-                    .map_err(|e| Error::BackendError(format!("Failed to allocate command buffers: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to allocate command buffer for texture upload: {:?}", e);
+                        Error::BackendError(format!("Failed to allocate command buffers: {:?}", e))
+                    })?;
                 let command_buffer = command_buffers[0];
 
                 // Begin recording
@@ -898,7 +950,10 @@ impl Renderer for VulkanRenderer {
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
                 self.device.begin_command_buffer(command_buffer, &begin_info)
-                    .map_err(|e| Error::BackendError(format!("Failed to begin command buffer: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to begin command buffer for texture upload: {:?}", e);
+                        Error::BackendError(format!("Failed to begin command buffer: {:?}", e))
+                    })?;
 
                 // 5. Transition image layout: UNDEFINED → TRANSFER_DST_OPTIMAL
                 let barrier = vk::ImageMemoryBarrier::default()
@@ -982,7 +1037,10 @@ impl Renderer for VulkanRenderer {
 
                 // End recording
                 self.device.end_command_buffer(command_buffer)
-                    .map_err(|e| Error::BackendError(format!("Failed to end command buffer: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to end command buffer for texture upload: {:?}", e);
+                        Error::BackendError(format!("Failed to end command buffer: {:?}", e))
+                    })?;
 
                 // 8. Submit and wait for command buffer
                 let command_buffers_submit = [command_buffer];
@@ -990,10 +1048,16 @@ impl Renderer for VulkanRenderer {
                     .command_buffers(&command_buffers_submit);
 
                 self.device.queue_submit(self.graphics_queue, &[submit_info], vk::Fence::null())
-                    .map_err(|e| Error::BackendError(format!("Failed to submit command buffer: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to submit texture upload commands to GPU: {:?}", e);
+                        Error::BackendError(format!("Failed to submit command buffer: {:?}", e))
+                    })?;
 
                 self.device.queue_wait_idle(self.graphics_queue)
-                    .map_err(|e| Error::BackendError(format!("Failed to wait for queue idle: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to wait for texture upload completion: {:?}", e);
+                        Error::BackendError(format!("Failed to wait for queue idle: {:?}", e))
+                    })?;
 
                 // 9. Clean up staging buffer
                 self.device.destroy_command_pool(command_pool, None);
@@ -1028,7 +1092,10 @@ impl Renderer for VulkanRenderer {
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
             let buffer = self.device.create_buffer(&buffer_create_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create buffer: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create buffer of size {} bytes: {:?}", desc.size, e);
+                    Error::BackendError(format!("Failed to create buffer: {:?}", e))
+                })?;
 
             // Allocate memory
             let requirements = self.device.get_buffer_memory_requirements(buffer);
@@ -1040,11 +1107,18 @@ impl Renderer for VulkanRenderer {
                 linear: true,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             })
-            .map_err(|_e| Error::OutOfMemory)?;
+            .map_err(|_e| {
+                let size_mb = requirements.size as f64 / (1024.0 * 1024.0);
+                engine_error!("galaxy3d::vulkan", "Out of GPU memory for buffer (required: {:.2} MB)", size_mb);
+                Error::OutOfMemory
+            })?;
 
             // Bind memory
             self.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
-                .map_err(|e| Error::BackendError(format!("Failed to bind buffer memory: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to bind buffer memory: {:?}", e);
+                    Error::BackendError(format!("Failed to bind buffer memory: {:?}", e))
+                })?;
 
             Ok(Arc::new(Buffer {
                 buffer,
@@ -1060,6 +1134,7 @@ impl Renderer for VulkanRenderer {
         unsafe {
             // Ensure code is properly aligned for u32
             if desc.code.len() % 4 != 0 {
+                engine_warn!("galaxy3d::vulkan", "Shader code not 4-byte aligned (size: {} bytes)", desc.code.len());
                 return Err(Error::InvalidResource("Shader code must be aligned to 4 bytes".to_string()));
             }
 
@@ -1073,7 +1148,10 @@ impl Renderer for VulkanRenderer {
                 .code(code_u32);
 
             let module = self.device.create_shader_module(&create_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create shader module: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create shader module: {:?}", e);
+                    Error::BackendError(format!("Failed to create shader module: {:?}", e))
+                })?;
 
             Ok(Arc::new(Shader {
                 module,
@@ -1124,7 +1202,10 @@ impl Renderer for VulkanRenderer {
                 .dependencies(std::slice::from_ref(&dependency));
 
             let temp_render_pass = self.device.create_render_pass(&render_pass_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create render pass: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create temporary render pass for pipeline: {:?}", e);
+                    Error::BackendError(format!("Failed to create render pass: {:?}", e))
+                })?;
 
             // Downcast shaders to Vulkan types
             let vertex_shader = desc.vertex_shader
@@ -1270,7 +1351,10 @@ impl Renderer for VulkanRenderer {
             }
 
             let layout = self.device.create_pipeline_layout(&layout_create_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create pipeline layout: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create pipeline layout: {:?}", e);
+                    Error::BackendError(format!("Failed to create pipeline layout: {:?}", e))
+                })?;
 
             // Create pipeline
             let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
@@ -1291,7 +1375,10 @@ impl Renderer for VulkanRenderer {
                 &[pipeline_create_info],
                 None,
             )
-            .map_err(|e| Error::BackendError(format!("Failed to create graphics pipeline: {:?}", e.1)))?;
+            .map_err(|e| {
+                engine_error!("galaxy3d::vulkan", "Failed to create graphics pipeline: {:?}", e.1);
+                Error::BackendError(format!("Failed to create graphics pipeline: {:?}", e.1))
+            })?;
 
             let pipeline = pipelines[0];
 
@@ -1415,12 +1502,18 @@ impl Renderer for VulkanRenderer {
                     true,
                     u64::MAX,
                 )
-                .map_err(|e| Error::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to wait for submit fence (swapchain): {:?}", e);
+                    Error::BackendError(format!("Failed to wait for fence: {:?}", e))
+                })?;
 
             // Reset fence
             self.device
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| Error::BackendError(format!("Failed to reset fence: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to reset submit fence (swapchain): {:?}", e);
+                    Error::BackendError(format!("Failed to reset fence: {:?}", e))
+                })?;
 
             // Collect command buffers
             let command_buffers: Vec<vk::CommandBuffer> = commands
@@ -1448,7 +1541,10 @@ impl Renderer for VulkanRenderer {
                     &[submit_info],
                     self.submit_fences[self.current_submit_fence],
                 )
-                .map_err(|e| Error::BackendError(format!("Failed to submit queue: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to submit commands to GPU queue (swapchain): {:?}", e);
+                    Error::BackendError(format!("Failed to submit queue: {:?}", e))
+                })?;
 
             Ok(())
         }

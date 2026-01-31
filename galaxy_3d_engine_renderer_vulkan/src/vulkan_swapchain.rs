@@ -2,6 +2,7 @@
 
 use galaxy_3d_engine::galaxy3d::{Result, Error};
 use galaxy_3d_engine::galaxy3d::render::{Swapchain as RendererSwapchain, RenderTarget as RendererRenderTarget, TextureFormat};
+use galaxy_3d_engine::{engine_error, engine_info};
 use ash::vk;
 use std::sync::Arc;
 
@@ -75,12 +76,18 @@ impl Swapchain {
             // Query surface capabilities
             let surface_capabilities = surface_loader
                 .get_physical_device_surface_capabilities(physical_device, surface)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to get surface capabilities: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e))
+                })?;
 
             // Choose surface format
             let surface_formats = surface_loader
                 .get_physical_device_surface_formats(physical_device, surface)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to get surface formats: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to query surface formats: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to get surface formats: {:?}", e))
+                })?;
 
             let surface_format = surface_formats
                 .iter()
@@ -106,12 +113,18 @@ impl Swapchain {
             let swapchain_loader = ash::khr::swapchain::Device::new(instance, &device);
             let swapchain = swapchain_loader
                 .create_swapchain(&swapchain_create_info, None)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to create swapchain: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create swapchain: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to create swapchain: {:?}", e))
+                })?;
 
             // Get swapchain images
             let swapchain_images = swapchain_loader
                 .get_swapchain_images(swapchain)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to get swapchain images: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to get swapchain images: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to get swapchain images: {:?}", e))
+                })?;
 
             // Create swapchain image views
             let swapchain_image_views: Vec<vk::ImageView> = swapchain_images

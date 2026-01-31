@@ -10,6 +10,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     DescriptorSet as RendererDescriptorSet,
     Viewport, Rect2D, ClearValue,
 };
+use galaxy_3d_engine::engine_error;
 use ash::vk;
 use std::sync::Arc;
 
@@ -57,7 +58,10 @@ impl CommandList {
                 .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
             let command_pool = device.create_command_pool(&command_pool_create_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create command pool: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create command pool: {:?}", e);
+                    Error::BackendError(format!("Failed to create command pool: {:?}", e))
+                })?;
 
             // Allocate command buffer
             let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
@@ -66,7 +70,10 @@ impl CommandList {
                 .command_buffer_count(1);
 
             let command_buffers = device.allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(|e| Error::BackendError(format!("Failed to allocate command buffers: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to allocate command buffer: {:?}", e);
+                    Error::BackendError(format!("Failed to allocate command buffers: {:?}", e))
+                })?;
 
             Ok(Self {
                 device,

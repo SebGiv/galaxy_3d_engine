@@ -5,6 +5,7 @@ use galaxy_3d_engine::galaxy3d::{
     Error,
     render::Buffer as RendererBuffer,
 };
+use galaxy_3d_engine::engine_error;
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 
@@ -41,6 +42,7 @@ impl RendererBuffer for Buffer {
 
                 Ok(())
             } else {
+                engine_error!("galaxy3d::vulkan", "Buffer update failed: no GPU allocation");
                 Err(Error::BackendError("Buffer has no allocation".to_string()))
             }
         }
