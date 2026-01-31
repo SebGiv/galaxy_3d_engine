@@ -135,15 +135,19 @@ impl Logger for DefaultLogger {
     }
 }
 
-// ===== LOGGING MACROS =====
+// ===== LOGGING MACROS (INTERNAL USE ONLY) =====
 
 /// Log a TRACE message (very verbose, typically disabled)
+///
+/// **INTERNAL USE ONLY** - This macro is for engine internals.
+/// Users should implement the `Logger` trait and use their own logging system.
 ///
 /// # Example
 ///
 /// ```no_run
 /// engine_trace!("galaxy3d::Engine", "Entering function foo()");
 /// ```
+#[doc(hidden)]
 #[macro_export]
 macro_rules! engine_trace {
     ($source:expr, $($arg:tt)*) => {
@@ -157,11 +161,15 @@ macro_rules! engine_trace {
 
 /// Log a DEBUG message (development information)
 ///
+/// **INTERNAL USE ONLY** - This macro is for engine internals.
+/// Users should implement the `Logger` trait and use their own logging system.
+///
 /// # Example
 ///
 /// ```no_run
 /// engine_debug!("galaxy3d::Engine", "Initialized with {} subsystems", count);
 /// ```
+#[doc(hidden)]
 #[macro_export]
 macro_rules! engine_debug {
     ($source:expr, $($arg:tt)*) => {
@@ -175,11 +183,15 @@ macro_rules! engine_debug {
 
 /// Log an INFO message (important events)
 ///
+/// **INTERNAL USE ONLY** - This macro is for engine internals.
+/// Users should implement the `Logger` trait and use their own logging system.
+///
 /// # Example
 ///
 /// ```no_run
 /// engine_info!("galaxy3d::Engine", "Renderer initialized successfully");
 /// ```
+#[doc(hidden)]
 #[macro_export]
 macro_rules! engine_info {
     ($source:expr, $($arg:tt)*) => {
@@ -193,11 +205,15 @@ macro_rules! engine_info {
 
 /// Log a WARN message (potential issues)
 ///
+/// **INTERNAL USE ONLY** - This macro is for engine internals.
+/// Users should implement the `Logger` trait and use their own logging system.
+///
 /// # Example
 ///
 /// ```no_run
 /// engine_warn!("galaxy3d::Engine", "Performance warning: {} FPS", fps);
 /// ```
+#[doc(hidden)]
 #[macro_export]
 macro_rules! engine_warn {
     ($source:expr, $($arg:tt)*) => {
@@ -211,11 +227,15 @@ macro_rules! engine_warn {
 
 /// Log an ERROR message with file:line information
 ///
+/// **INTERNAL USE ONLY** - This macro is for engine internals.
+/// Users should implement the `Logger` trait and use their own logging system.
+///
 /// # Example
 ///
 /// ```no_run
 /// engine_error!("galaxy3d::Engine", "Failed to initialize: {}", error);
 /// ```
+#[doc(hidden)]
 #[macro_export]
 macro_rules! engine_error {
     ($source:expr, $($arg:tt)*) => {

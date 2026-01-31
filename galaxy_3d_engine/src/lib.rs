@@ -36,9 +36,10 @@ pub mod galaxy3d {
     // Renderer factory trait
     pub use crate::renderer::Renderer;
 
-    // Logging sub-module
+    // Logging sub-module (types only, NOT macros)
     pub mod log {
-        pub use crate::log::*;
+        pub use crate::log::{Logger, LogEntry, LogSeverity, DefaultLogger};
+        // Note: engine_* macros are NOT re-exported here - they are internal only
     }
 
     // Render sub-module with all rendering types
