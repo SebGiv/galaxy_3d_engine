@@ -1,5 +1,5 @@
 [workspace]
-members = ["galaxy3d_demo",
+members = [
     "galaxy_3d_engine",
     "galaxy_3d_engine_renderer_vulkan",
 ]

@@ -7,6 +7,7 @@
 use std::sync::{OnceLock, RwLock, Arc, Mutex};
 use std::time::SystemTime;
 use crate::renderer::Renderer;
+use crate::resource::ResourceManager;
 use crate::error::{Result, Error};
 use crate::log::{Logger, LogEntry, LogSeverity, DefaultLogger};
 
@@ -22,6 +23,8 @@ static LOGGER: OnceLock<RwLock<Box<dyn Logger>>> = OnceLock::new();
 struct EngineState {
     /// Renderer singleton (wrapped in Mutex for thread-safe mutable access)
     renderer: RwLock<Option<Arc<Mutex<dyn Renderer>>>>,
+    /// Resource manager singleton
+    resource_manager: RwLock<Option<Arc<Mutex<ResourceManager>>>>,
 }
 
 impl EngineState {
@@ -29,6 +32,7 @@ impl EngineState {
     fn new() -> Self {
         Self {
             renderer: RwLock::new(None),
+            resource_manager: RwLock::new(None),
         }
     }
 }
@@ -99,6 +103,10 @@ impl Engine {
     /// After calling this, you must call `initialize()` again before creating new subsystems.
     pub fn shutdown() {
         if let Some(state) = ENGINE_STATE.get() {
+            // Clear resource manager BEFORE renderer (resources reference GPU objects)
+            if let Ok(mut rm) = state.resource_manager.write() {
+                *rm = None;
+            }
             // Clear renderer
             if let Ok(mut renderer) = state.renderer.write() {
                 *renderer = None;
@@ -247,10 +255,133 @@ impl Engine {
         Ok(())
     }
 
+    // ===== RESOURCE MANAGER API =====
+
+    /// Create and register the resource manager singleton
+    ///
+    /// Creates a new ResourceManager and registers it as a global singleton.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The engine is not initialized
+    /// - A resource manager already exists
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use galaxy_3d_engine::galaxy3d::Engine;
+    ///
+    /// Engine::initialize()?;
+    /// Engine::create_resource_manager()?;
+    /// # Ok::<(), galaxy_3d_engine::galaxy3d::Error>(())
+    /// ```
+    pub fn create_resource_manager() -> Result<()> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
+            ))?;
+
+        let mut lock = state.resource_manager.write()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("ResourceManager lock poisoned".to_string())
+            ))?;
+
+        if lock.is_some() {
+            return Err(Self::log_and_return_error(
+                Error::InitializationFailed("ResourceManager already exists. Call Engine::destroy_resource_manager() first.".to_string())
+            ));
+        }
+
+        *lock = Some(Arc::new(Mutex::new(ResourceManager::new())));
+
+        crate::engine_info!("galaxy3d::Engine", "ResourceManager singleton created successfully");
+
+        Ok(())
+    }
+
+    /// Get the resource manager singleton
+    ///
+    /// Provides global access to the resource manager after it has been created.
+    ///
+    /// # Returns
+    ///
+    /// A shared pointer to the ResourceManager wrapped in a Mutex for thread-safe access
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The engine is not initialized
+    /// - The resource manager has not been created
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use galaxy_3d_engine::galaxy3d::Engine;
+    ///
+    /// let rm = Engine::resource_manager()?;
+    /// let rm_guard = rm.lock().unwrap();
+    /// // Use rm_guard...
+    /// # Ok::<(), galaxy_3d_engine::galaxy3d::Error>(())
+    /// ```
+    pub fn resource_manager() -> Result<Arc<Mutex<ResourceManager>>> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
+            ))?;
+
+        let lock = state.resource_manager.read()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("ResourceManager lock poisoned".to_string())
+            ))?;
+
+        lock.clone()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("ResourceManager not created. Call Engine::create_resource_manager() first.".to_string())
+            ))
+    }
+
+    /// Destroy the resource manager singleton
+    ///
+    /// Removes the resource manager singleton, allowing a new one to be created.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the engine is not initialized
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use galaxy_3d_engine::galaxy3d::Engine;
+    ///
+    /// Engine::destroy_resource_manager()?;
+    /// # Ok::<(), galaxy_3d_engine::galaxy3d::Error>(())
+    /// ```
+    pub fn destroy_resource_manager() -> Result<()> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized".to_string())
+            ))?;
+
+        let mut lock = state.resource_manager.write()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("ResourceManager lock poisoned".to_string())
+            ))?;
+
+        *lock = None;
+
+        crate::engine_info!("galaxy3d::Engine", "ResourceManager singleton destroyed");
+
+        Ok(())
+    }
+
     /// Reset all singletons for testing (only available in test builds)
     #[cfg(test)]
     pub fn reset_for_testing() {
         if let Some(state) = ENGINE_STATE.get() {
+            if let Ok(mut rm) = state.resource_manager.write() {
+                *rm = None;
+            }
             if let Ok(mut renderer) = state.renderer.write() {
                 *renderer = None;
             }

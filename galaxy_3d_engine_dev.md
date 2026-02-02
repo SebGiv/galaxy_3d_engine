@@ -3,7 +3,7 @@
 > **Project**: Multi-API 3D Rendering Engine in Rust
 > **Author**: Claude & User collaboration
 > **Date**: 2026-01-26
-> **Status**: Phase 8 - Textures & Transparence ✅
+> **Status**: Phase 10 - ResourceManager ✅
 
 ---
 
@@ -641,6 +641,23 @@ loop {
 ---
 
 ## ✅ Changelog
+
+### 2026-02-02 - Phase 10: ResourceManager (Empty Singleton)
+- **Nouveau module `resource/`**:
+  - ✅ Créé `resource/mod.rs` - Déclaration du module resource
+  - ✅ Créé `resource/resource_manager.rs` - Struct `ResourceManager` (vide pour l'instant)
+- **Intégration dans Engine singleton**:
+  - ✅ `Engine::create_resource_manager()` - Crée et enregistre le singleton ResourceManager
+  - ✅ `Engine::resource_manager()` - Accès global au ResourceManager (`Arc<Mutex<ResourceManager>>`)
+  - ✅ `Engine::destroy_resource_manager()` - Détruit le singleton ResourceManager
+  - ✅ `Engine::shutdown()` - Détruit le ResourceManager **avant** le Renderer (ordre de destruction sûr)
+  - ✅ `EngineState` mis à jour avec champ `resource_manager`
+- **Workspace**:
+  - ✅ Retiré `galaxy3d_demo` du workspace Cargo.toml (la demo est un projet externe)
+- **Architecture**:
+  - Pas de trait/backend, struct concrète simple
+  - Même pattern singleton que le Renderer (OnceLock + RwLock + Arc<Mutex>)
+  - Les ressources seront ajoutées ultérieurement
 
 ### 2026-01-27 - Phase 9: Backend-Agnostic API (100% Portable)
 - **Abstraction Complète**:

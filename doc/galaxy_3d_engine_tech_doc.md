@@ -117,18 +117,21 @@ Galaxy/
 galaxy_3d_engine/src/
 ├── lib.rs                 # Public exports, plugin registry
 ├── engine.rs              # galaxy_3d_engine::galaxy3d::Engine singleton manager
-└── renderer/
+├── renderer/
+│   ├── mod.rs             # Module declarations
+│   ├── renderer.rs        # Renderer trait (factory interface)
+│   ├── buffer.rs          # galaxy_3d_engine::galaxy3d::render::Buffer trait + BufferDesc
+│   ├── texture.rs         # galaxy_3d_engine::galaxy3d::render::Texture trait + TextureDesc
+│   ├── shader.rs          # galaxy_3d_engine::galaxy3d::render::Shader trait + ShaderDesc
+│   ├── pipeline.rs        # galaxy_3d_engine::galaxy3d::render::Pipeline trait + PipelineDesc
+│   ├── command_list.rs    # galaxy_3d_engine::galaxy3d::render::CommandList trait
+│   ├── render_target.rs   # galaxy_3d_engine::galaxy3d::render::RenderTarget trait
+│   ├── render_pass.rs     # galaxy_3d_engine::galaxy3d::render::RenderPass trait
+│   ├── swapchain.rs       # galaxy_3d_engine::galaxy3d::render::Swapchain trait
+│   └── descriptor_set.rs  # galaxy_3d_engine::galaxy3d::render::DescriptorSet trait
+└── resource/
     ├── mod.rs             # Module declarations
-    ├── renderer.rs        # Renderer trait (factory interface)
-    ├── buffer.rs          # galaxy_3d_engine::galaxy3d::render::Buffer trait + BufferDesc
-    ├── texture.rs         # galaxy_3d_engine::galaxy3d::render::Texture trait + TextureDesc
-    ├── shader.rs          # galaxy_3d_engine::galaxy3d::render::Shader trait + ShaderDesc
-    ├── pipeline.rs        # galaxy_3d_engine::galaxy3d::render::Pipeline trait + PipelineDesc
-    ├── command_list.rs    # galaxy_3d_engine::galaxy3d::render::CommandList trait
-    ├── render_target.rs   # galaxy_3d_engine::galaxy3d::render::RenderTarget trait
-    ├── render_pass.rs     # galaxy_3d_engine::galaxy3d::render::RenderPass trait
-    ├── swapchain.rs       # galaxy_3d_engine::galaxy3d::render::Swapchain trait
-    └── descriptor_set.rs  # galaxy_3d_engine::galaxy3d::render::DescriptorSet trait
+    └── resource_manager.rs # ResourceManager struct (centralized resource storage)
 ```
 
 ### galaxy_3d_engine_renderer_vulkan (Vulkan Backend)
@@ -265,6 +268,17 @@ pub trait galaxy_3d_engine::galaxy3d::render::CommandList: Send + Sync { ... }
 ```
 
 Renderer is typically wrapped in `Arc<Mutex<dyn Renderer>>` for multi-threaded access.
+
+The `ResourceManager` is a concrete struct (not a trait) managed as a singleton in `Engine`:
+
+```rust
+// Engine singleton API
+Engine::create_resource_manager() -> Result<()>
+Engine::resource_manager() -> Result<Arc<Mutex<ResourceManager>>>
+Engine::destroy_resource_manager() -> Result<()>
+```
+
+The ResourceManager is destroyed **before** the Renderer during `Engine::shutdown()` to ensure safe resource cleanup order (resources may hold references to GPU objects).
 
 ---
 

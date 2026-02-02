@@ -259,6 +259,7 @@
                     <ul id="galaxy3dengine-section">
                         <li><a href="#galaxy3dengine-initialization">Initialisation</a></li>
                         <li><a href="#galaxy3dengine-renderer-management">Gestion du Renderer</a></li>
+                        <li><a href="#galaxy3dengine-resource-manager">Resource Manager</a></li>
                     </ul>
                 </li>
                 <li>
@@ -463,9 +464,103 @@ fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
                     </div>
                 </div>
 
+                <h3 id="galaxy3dengine-resource-manager">Resource Manager</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('galaxy3dengine-create-resource-manager')">
+                        <span>Engine::create_resource_manager()</span>
+                        <span class="summary">Crée le singleton resource manager</span>
+                    </h3>
+                    <div id="galaxy3dengine-create-resource-manager" class="accordion-content">
+                        <p>
+                            Crée un nouveau ResourceManager et l'enregistre comme singleton global.
+                            Le ResourceManager fournit un stockage centralisé et un accès aux ressources du moteur.
+                        </p>
+                        <h4>Signature</h4>
+                        <pre><code>pub fn create_resource_manager() -> galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></pre>
+                        <h4>Erreurs</h4>
+                        <ul>
+                            <li>Engine non initialisé</li>
+                            <li>ResourceManager déjà existant</li>
+                        </ul>
+                        <h4>Exemple</h4>
+                        <pre><code class="language-rust">use galaxy_3d_engine::galaxy3d::Engine;
+
+fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Engine::initialize()?;
+    Engine::create_resource_manager()?;
+    // Le ResourceManager est maintenant disponible globalement
+    Ok(())
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('galaxy3dengine-resource-manager')">
+                        <span>Engine::resource_manager()</span>
+                        <span class="summary">Récupère le singleton resource manager</span>
+                    </h3>
+                    <div id="galaxy3dengine-resource-manager" class="accordion-content">
+                        <p>
+                            Retourne un pointeur partagé vers le ResourceManager enveloppé dans un Mutex pour un accès thread-safe.
+                        </p>
+                        <h4>Signature</h4>
+                        <pre><code>pub fn resource_manager() -> galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;Mutex&lt;ResourceManager&gt;&gt;&gt;</code></pre>
+                        <h4>Erreurs</h4>
+                        <ul>
+                            <li>Engine non initialisé</li>
+                            <li>ResourceManager non créé</li>
+                        </ul>
+                        <h4>Exemple</h4>
+                        <pre><code class="language-rust">use galaxy_3d_engine::galaxy3d::Engine;
+
+fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Engine::initialize()?;
+    Engine::create_resource_manager()?;
+
+    let rm = Engine::resource_manager()?;
+    let rm_guard = rm.lock().unwrap();
+    // Utiliser rm_guard...
+
+    Ok(())
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('galaxy3dengine-destroy-resource-manager')">
+                        <span>Engine::destroy_resource_manager()</span>
+                        <span class="summary">Détruit le singleton resource manager</span>
+                    </h3>
+                    <div id="galaxy3dengine-destroy-resource-manager" class="accordion-content">
+                        <p>
+                            Supprime le singleton resource manager du stockage global.
+                            Doit être appelé avant de détruire le renderer, car les ressources peuvent référencer des objets GPU.
+                        </p>
+                        <h4>Signature</h4>
+                        <pre><code>pub fn destroy_resource_manager() -> galaxy_3d_engine::galaxy3d::Result&lt;()&gt;</code></pre>
+                        <h4>Exemple</h4>
+                        <pre><code class="language-rust">use galaxy_3d_engine::galaxy3d::Engine;
+
+fn main() -> Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    Engine::initialize()?;
+    Engine::create_resource_manager()?;
+
+    // ... utiliser les ressources ...
+
+    // Nettoyage (resource manager avant renderer)
+    Engine::destroy_resource_manager()?;
+    Engine::destroy_renderer()?;
+    Engine::shutdown();
+
+    Ok(())
+}</code></pre>
+                    </div>
+                </div>
+
                 <div class="note">
-                    <strong>Thread Safety :</strong> galaxy_3d_engine::galaxy3d::Engine utilise OnceLock + RwLock pour une gestion thread-safe des singletons.
-                    Plusieurs threads peuvent accéder au renderer en toute sécurité simultanément (avec verrouillage mutex interne).
+                    <strong>Thread Safety :</strong> Engine utilise OnceLock + RwLock pour une gestion thread-safe des singletons.
+                    Plusieurs threads peuvent accéder au renderer et au resource manager en toute sécurité simultanément (avec verrouillage mutex interne).
                 </div>
             </section>
 

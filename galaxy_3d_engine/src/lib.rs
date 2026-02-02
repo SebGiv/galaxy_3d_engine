@@ -24,6 +24,7 @@ mod error;
 mod engine;
 pub mod log;
 pub mod renderer;
+pub mod resource;
 
 // Main galaxy3d namespace module
 pub mod galaxy3d {
@@ -45,6 +46,11 @@ pub mod galaxy3d {
     // Render sub-module with all rendering types
     pub mod render {
         pub use crate::renderer::*;
+    }
+
+    // Resource sub-module
+    pub mod resource {
+        pub use crate::resource::*;
     }
 }
 

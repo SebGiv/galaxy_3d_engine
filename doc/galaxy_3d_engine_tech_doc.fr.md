@@ -117,18 +117,21 @@ Galaxy/
 galaxy_3d_engine/src/
 ├── lib.rs                 # Exportations publiques, registre de plugins
 ├── engine.rs              # Gestionnaire singleton galaxy_3d_engine::galaxy3d::Engine
-└── renderer/
+├── renderer/
+│   ├── mod.rs             # Déclarations de modules
+│   ├── renderer.rs        # Trait Renderer (interface de fabrique)
+│   ├── buffer.rs          # Trait galaxy_3d_engine::galaxy3d::render::Buffer + BufferDesc
+│   ├── texture.rs         # Trait galaxy_3d_engine::galaxy3d::render::Texture + TextureDesc
+│   ├── shader.rs          # Trait galaxy_3d_engine::galaxy3d::render::Shader + ShaderDesc
+│   ├── pipeline.rs        # Trait galaxy_3d_engine::galaxy3d::render::Pipeline + PipelineDesc
+│   ├── command_list.rs    # Trait galaxy_3d_engine::galaxy3d::render::CommandList
+│   ├── render_target.rs   # Trait galaxy_3d_engine::galaxy3d::render::RenderTarget
+│   ├── render_pass.rs     # Trait galaxy_3d_engine::galaxy3d::render::RenderPass
+│   ├── swapchain.rs       # Trait galaxy_3d_engine::galaxy3d::render::Swapchain
+│   └── descriptor_set.rs  # Trait galaxy_3d_engine::galaxy3d::render::DescriptorSet
+└── resource/
     ├── mod.rs             # Déclarations de modules
-    ├── renderer.rs        # Trait Renderer (interface de fabrique)
-    ├── buffer.rs          # Trait galaxy_3d_engine::galaxy3d::render::Buffer + BufferDesc
-    ├── texture.rs         # Trait galaxy_3d_engine::galaxy3d::render::Texture + TextureDesc
-    ├── shader.rs          # Trait galaxy_3d_engine::galaxy3d::render::Shader + ShaderDesc
-    ├── pipeline.rs        # Trait galaxy_3d_engine::galaxy3d::render::Pipeline + PipelineDesc
-    ├── command_list.rs    # Trait galaxy_3d_engine::galaxy3d::render::CommandList
-    ├── render_target.rs   # Trait galaxy_3d_engine::galaxy3d::render::RenderTarget
-    ├── render_pass.rs     # Trait galaxy_3d_engine::galaxy3d::render::RenderPass
-    ├── swapchain.rs       # Trait galaxy_3d_engine::galaxy3d::render::Swapchain
-    └── descriptor_set.rs  # Trait galaxy_3d_engine::galaxy3d::render::DescriptorSet
+    └── resource_manager.rs # Struct ResourceManager (stockage centralisé des ressources)
 ```
 
 ### galaxy_3d_engine_renderer_vulkan (Backend Vulkan)
@@ -265,6 +268,17 @@ pub trait galaxy_3d_engine::galaxy3d::render::CommandList: Send + Sync { ... }
 ```
 
 Le renderer est généralement enveloppé dans `Arc<Mutex<dyn Renderer>>` pour l'accès multi-thread.
+
+Le `ResourceManager` est une struct concrète (pas un trait) gérée comme singleton dans `Engine` :
+
+```rust
+// API singleton Engine
+Engine::create_resource_manager() -> Result<()>
+Engine::resource_manager() -> Result<Arc<Mutex<ResourceManager>>>
+Engine::destroy_resource_manager() -> Result<()>
+```
+
+Le ResourceManager est détruit **avant** le Renderer lors de `Engine::shutdown()` pour garantir un ordre de nettoyage sûr des ressources (les ressources peuvent contenir des références à des objets GPU).
 
 ---
 
