@@ -395,11 +395,16 @@ Claude doit **toujours consulter le dossier `doc/`** pour :
    - Coder la feature (code + commentaires en anglais)
    - Mettre à jour `galaxy_3d_engine_dev.md` avec l'avancement
 
-4. **Documentation**
-   - Mettre à jour `doc/galaxy_3d_engine.html` (EN) - Documentation API
-   - Mettre à jour `doc/galaxy_3d_engine_fr.html` (FR) - Documentation API
-   - Mettre à jour `doc/galaxy_3d_engine_tech_doc.md` (EN) - Documentation technique
-   - Mettre à jour `doc/galaxy_3d_engine_tech_doc.fr.md` (FR) - Documentation technique
+4. **Documentation** (via agents esclaves en parallèle)
+   - ⚠️ **OBLIGATOIRE** : La mise à jour de `galaxy_3d_engine_dev.md` et de tous les fichiers du dossier `doc/` doit être déléguée à des **agents esclaves** (sub-agents) lancés en parallèle via l'outil Task
+   - Chaque fichier de documentation est mis à jour par un agent dédié, en arrière-plan
+   - Les agents reçoivent le contexte des changements et travaillent de manière autonome
+   - Fichiers concernés :
+     - `galaxy_3d_engine_dev.md` - Design document
+     - `doc/galaxy_3d_engine.html` (EN) - Documentation API
+     - `doc/galaxy_3d_engine_fr.html` (FR) - Documentation API
+     - `doc/galaxy_3d_engine_tech_doc.md` (EN) - Documentation technique
+     - `doc/galaxy_3d_engine_tech_doc.fr.md` (FR) - Documentation technique
 
 5. **Commit**
    - Exposer le message de commit

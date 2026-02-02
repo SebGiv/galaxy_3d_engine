@@ -130,8 +130,9 @@ galaxy_3d_engine/src/
 │   ├── swapchain.rs       # Trait galaxy_3d_engine::galaxy3d::render::Swapchain
 │   └── descriptor_set.rs  # Trait galaxy_3d_engine::galaxy3d::render::DescriptorSet
 └── resource/
-    ├── mod.rs             # Déclarations de modules
-    └── resource_manager.rs # Struct ResourceManager (stockage centralisé des ressources)
+    ├── mod.rs             # Déclarations de modules et ré-exports
+    ├── resource_manager.rs # Struct ResourceManager (stockage textures + méthodes de création)
+    └── texture.rs          # Trait Texture + SimpleTexture, AtlasTexture, ArrayTexture
 ```
 
 ### galaxy_3d_engine_renderer_vulkan (Backend Vulkan)
@@ -279,6 +280,58 @@ Engine::destroy_resource_manager() -> Result<()>
 ```
 
 Le ResourceManager est détruit **avant** le Renderer lors de `Engine::shutdown()` pour garantir un ordre de nettoyage sûr des ressources (les ressources peuvent contenir des références à des objets GPU).
+
+### Système de Textures Ressource (Architecture 3 niveaux)
+
+Le moteur utilise une architecture de textures à 3 niveaux :
+
+| Niveau | Module | Rôle |
+|--------|--------|------|
+| Bas | `render::Texture` | Handle GPU brut (`dyn Trait`, spécifique au backend : vk::Image, etc.) |
+| Moyen | `resource::Texture` | Registre nommé : 1 texture GPU + N sous-régions nommées |
+| Haut | `scene::Texture` | Objet de scène utilisé dans les materials/meshes (futur) |
+
+Le trait `resource::Texture` utilise des trait objects (`dyn Texture`) pour le dispatch dynamique — similaire à l'héritage virtuel C++. Trois implémentations concrètes :
+
+```rust
+pub trait Texture: Send + Sync {
+    fn render_texture(&self) -> &Arc<dyn render::Texture>;
+    fn descriptor_set(&self) -> &Arc<dyn DescriptorSet>;
+    fn region_names(&self) -> Vec<&str>;
+    // Méthodes de downcast explicites (pas Any)
+    fn as_simple(&self) -> Option<&SimpleTexture>;
+    fn as_atlas(&self) -> Option<&AtlasTexture>;
+    fn as_atlas_mut(&mut self) -> Option<&mut AtlasTexture>;
+    fn as_array(&self) -> Option<&ArrayTexture>;
+    fn as_array_mut(&mut self) -> Option<&mut ArrayTexture>;
+}
+```
+
+| Type | Description | Données |
+|------|-------------|---------|
+| `SimpleTexture` | 1 texture = 1 image, mapping 1:1 | Aucune sous-région |
+| `AtlasTexture` | 1 image, N régions UV nommées | `HashMap<String, AtlasRegion>` |
+| `ArrayTexture` | Texture array GPU, N couches nommées | `HashMap<String, u32>` |
+
+Le `ResourceManager` stocke les textures comme `HashMap<String, Arc<dyn Texture>>` et fournit des méthodes de création qui appellent le `Renderer` en interne :
+
+```rust
+// Méthodes de création (appellent le Renderer en interne)
+rm.create_simple_texture("skybox".into(), TextureDesc { ... })?;
+rm.create_atlas_texture("tileset".into(), desc, &[region1, region2])?;
+rm.create_array_texture("terrain".into(), desc, &[layer1, layer2])?;
+
+// Les régions/couches peuvent aussi être ajoutées après la création
+rm.add_atlas_region("tileset", "new_tile".into(), AtlasRegion { ... })?;
+rm.add_array_layer("terrain", "snow".into(), 3)?;
+
+// Accès
+let tex = rm.get_texture("tileset").unwrap();
+let atlas = tex.as_atlas().unwrap();
+let region = atlas.get_region("grass").unwrap();
+```
+
+La mutation des régions/couches post-création utilise `Arc::get_mut` + downcast via `as_atlas_mut()`/`as_array_mut()` pour un accès mutable sûr.
 
 ---
 
@@ -1154,12 +1207,15 @@ pub fn print_validation_stats_report();
 
 ## Extensibilité future
 
-### Caractéristiques prévues (Phase 10+)
+### Caractéristiques complétées
 
-**Phase 10-12 : Système de texture avancé**
+**Phase 10 : ResourceManager** — Singleton vide pour le stockage centralisé des ressources
+**Phase 11 : Textures Ressource** — Trait `resource::Texture` avec SimpleTexture, AtlasTexture, ArrayTexture + API texture du ResourceManager
 
-- Atlas de textures
-- Tableaux de textures
+### Caractéristiques prévues (Phase 12+)
+
+**Phase 12+ : Fonctionnalités texture avancées**
+
 - Textures sans liaison (indexation de descripteur)
 - Textures virtuelles
 - Génération de mipmap (CPU : Lanczos-3, GPU : Box filter)

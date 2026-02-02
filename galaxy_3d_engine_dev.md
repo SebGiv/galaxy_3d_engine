@@ -3,7 +3,7 @@
 > **Project**: Multi-API 3D Rendering Engine in Rust
 > **Author**: Claude & User collaboration
 > **Date**: 2026-01-26
-> **Status**: Phase 10 - ResourceManager ✅
+> **Status**: Phase 11 - Resource Textures ✅
 
 ---
 
@@ -361,6 +361,58 @@ swapchain.present(image_idx)?;
 
 ---
 
+### 6. Resource Texture Architecture (Implémenté Phase 11)
+
+**Decision**: Architecture à 3 niveaux de textures
+
+**Les 3 niveaux** :
+
+| Niveau | Module | Rôle |
+|--------|--------|------|
+| Bas | `render::Texture` | Handle GPU brut (`dyn Trait`, backend-specific : vk::Image, etc.) |
+| Moyen | `resource::Texture` | Registre nommé : 1 GPU texture + N sous-régions nommées |
+| Haut | `scene::Texture` | Texture finale utilisée dans un material/mesh d'une scène 3D (à développer plus tard) |
+
+**Approche retenue** : Trait object (`dyn Texture`) — style C++ virtual
+
+- Un trait `resource::Texture` commun avec dispatch dynamique (vtable)
+- Des implémentations concrètes par type de texture GPU : `SimpleTexture`, `AtlasTexture`, `ArrayTexture`
+- Stockage uniforme dans le ResourceManager : `HashMap<String, Arc<dyn Texture>>`
+- Pas de `match`/`enum` pour différencier les types — le trait dispatch fait le travail
+- Downcast explicite via méthodes `as_atlas()`, `as_array()` sur le trait (Option A, pas `Any`)
+
+**Pourquoi pas les autres approches** :
+- ❌ Enum `TextureRegion` : oblige un `match` à chaque manipulation
+- ❌ Generics `Texture<R: Region>` : impossible de mélanger les types dans un même HashMap
+
+**Types concrets implémentés** :
+
+| Type | Description | Données spécifiques |
+|------|-------------|---------------------|
+| `SimpleTexture` | 1 texture = 1 image, mapping 1:1 | Aucune sous-région |
+| `AtlasTexture` | 1 image, N sous-régions UV | `HashMap<String, AtlasRegion>` (u, v, width, height) |
+| `ArrayTexture` | Texture array GPU, N layers nommés | `HashMap<String, u32>` (layer index) |
+
+**Chaque implémentation contient** :
+- `render_texture: Arc<dyn render::Texture>` — le handle GPU
+- `descriptor_set: Arc<dyn render::DescriptorSet>` — pour le binding au rendu
+- Ses données spécifiques (régions, layers, etc.)
+
+**Création des textures** :
+- Se fait via le `ResourceManager` qui appelle le `Renderer` en interne
+- L'utilisateur ne manipule pas le renderer directement pour les ressources
+- Régions/layers peuvent être passées à la création (`&[AtlasRegionDesc]` / `&[ArrayLayerDesc]`) ou ajoutées plus tard
+- Ex: `rm.create_simple_texture("skybox".into(), TextureDesc { ... })?`
+- Ex: `rm.create_atlas_texture("tileset".into(), desc, &[region1, region2])?`
+- Ex: `rm.create_atlas_texture("tileset".into(), desc, &[])?` puis `rm.add_atlas_region(...)?`
+
+**Nom du 3ème niveau** : `scene` (retenu)
+- S'étend naturellement : `scene::Texture`, `scene::Material`, `scene::Mesh`, `scene::Light`, `scene::Camera`
+- Correspond au niveau "objet dans une scène 3D"
+- Non développé pour l'instant, c'est un concept futur
+
+---
+
 ## 🏗️ Architecture Overview
 
 ### Cargo Workspace Structure
@@ -372,7 +424,13 @@ Galaxy/                                  # Workspace root
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs
+│           ├── engine.rs               # Engine singleton manager
+│           ├── error.rs                # Error types
 │           ├── plugin.rs               # Plugin registry (deprecated)
+│           ├── resource/
+│           │   ├── mod.rs              # Resource module exports
+│           │   ├── resource_manager.rs # ResourceManager (texture storage + creation)
+│           │   └── texture.rs          # Texture trait + SimpleTexture, AtlasTexture, ArrayTexture
 │           └── renderer/
 │               ├── mod.rs
 │               ├── renderer.rs  # Renderer trait (avec nouvelles méthodes) ✨
@@ -642,6 +700,32 @@ loop {
 
 ## ✅ Changelog
 
+### 2026-02-02 - Phase 11: Resource Textures
+- **Nouveau trait `resource::Texture`**:
+  - ✅ Trait `Texture` avec `render_texture()`, `descriptor_set()`, `region_names()`
+  - ✅ Downcast explicite : `as_simple()`, `as_atlas()`, `as_atlas_mut()`, `as_array()`, `as_array_mut()`
+  - ✅ `SimpleTexture` — texture simple sans sous-régions
+  - ✅ `AtlasTexture` — atlas avec `HashMap<String, AtlasRegion>` (u, v, width, height)
+  - ✅ `ArrayTexture` — texture array avec `HashMap<String, u32>` (layer index)
+- **Types de données**:
+  - ✅ `AtlasRegion` — coordonnées UV d'une sous-région
+  - ✅ `AtlasRegionDesc` — descripteur pour création batch de régions
+  - ✅ `ArrayLayerDesc` — descripteur pour création batch de layers
+- **ResourceManager étendu**:
+  - ✅ `create_simple_texture(name, TextureDesc)` — crée texture GPU + descriptor set via renderer
+  - ✅ `create_atlas_texture(name, TextureDesc, &[AtlasRegionDesc])` — atlas avec régions optionnelles
+  - ✅ `create_array_texture(name, TextureDesc, &[ArrayLayerDesc])` — array avec layers optionnels
+  - ✅ `get_texture(name)` — accès par nom
+  - ✅ `remove_texture(name)` — suppression par nom
+  - ✅ `texture_count()` — nombre de textures
+  - ✅ `add_atlas_region(texture_name, region_name, AtlasRegion)` — ajout de région post-création
+  - ✅ `add_array_layer(texture_name, layer_name, u32)` — ajout de layer post-création
+  - ✅ Mutation via `Arc::get_mut` + downcast `as_atlas_mut()`/`as_array_mut()`
+- **Architecture**:
+  - Stockage uniforme : `HashMap<String, Arc<dyn Texture>>`
+  - Création via ResourceManager appelle le Renderer en interne
+  - Régions/layers flexibles : passées à la création OU ajoutées plus tard (`&[]` accepté)
+
 ### 2026-02-02 - Phase 10: ResourceManager (Empty Singleton)
 - **Nouveau module `resource/`**:
   - ✅ Créé `resource/mod.rs` - Déclaration du module resource
@@ -788,12 +872,30 @@ loop {
 
 **Status**: API 100% portable, backend Direct3D 12 possible sans modifier la demo ✅
 
-### Phase 10: Index Buffers (TODO)
+### ✅ Phase 10: ResourceManager (DONE)
+- [x] Module `resource/` avec `ResourceManager` struct (vide)
+- [x] Singleton Engine: `create_resource_manager()`, `resource_manager()`, `destroy_resource_manager()`
+- [x] `shutdown()` détruit ResourceManager avant Renderer (ordre sûr)
+- [x] Retiré `galaxy3d_demo` du workspace
+
+**Status**: ResourceManager singleton vide, prêt pour les ressources ✅
+
+### ✅ Phase 11: Resource Textures (DONE)
+- [x] Trait `resource::Texture` avec downcast explicite (as_simple, as_atlas, as_array)
+- [x] `SimpleTexture`, `AtlasTexture`, `ArrayTexture` — 3 types concrets
+- [x] `AtlasRegion`, `AtlasRegionDesc`, `ArrayLayerDesc` — types de données
+- [x] ResourceManager étendu : création, accès, suppression, modification de textures
+- [x] Création via renderer interne (GPU texture + descriptor set)
+- [x] Régions/layers flexibles : passées à la création OU ajoutées plus tard
+
+**Status**: Système de textures resource complet, intégré au ResourceManager ✅
+
+### Phase 12: Index Buffers (TODO)
 - [ ] Index buffer creation
 - [ ] `draw_indexed()` support
 - [ ] Complex geometry (quads, pentagones, etc.)
 
-### Phase 11: Advanced Features (TODO)
+### Phase 13: Advanced Features (TODO)
 - [ ] Uniform buffers
 - [ ] Texture arrays
 - [ ] Compute shaders

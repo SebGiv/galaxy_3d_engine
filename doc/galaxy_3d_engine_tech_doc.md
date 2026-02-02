@@ -130,8 +130,9 @@ galaxy_3d_engine/src/
 │   ├── swapchain.rs       # galaxy_3d_engine::galaxy3d::render::Swapchain trait
 │   └── descriptor_set.rs  # galaxy_3d_engine::galaxy3d::render::DescriptorSet trait
 └── resource/
-    ├── mod.rs             # Module declarations
-    └── resource_manager.rs # ResourceManager struct (centralized resource storage)
+    ├── mod.rs             # Module declarations and re-exports
+    ├── resource_manager.rs # ResourceManager struct (texture storage + creation methods)
+    └── texture.rs          # Texture trait + SimpleTexture, AtlasTexture, ArrayTexture
 ```
 
 ### galaxy_3d_engine_renderer_vulkan (Vulkan Backend)
@@ -279,6 +280,58 @@ Engine::destroy_resource_manager() -> Result<()>
 ```
 
 The ResourceManager is destroyed **before** the Renderer during `Engine::shutdown()` to ensure safe resource cleanup order (resources may hold references to GPU objects).
+
+### Resource Texture System (3-Level Architecture)
+
+The engine uses a 3-level texture architecture:
+
+| Level | Module | Role |
+|-------|--------|------|
+| Low | `render::Texture` | Raw GPU handle (`dyn Trait`, backend-specific: vk::Image, etc.) |
+| Mid | `resource::Texture` | Named resource registry: 1 GPU texture + N named sub-regions |
+| High | `scene::Texture` | Scene object used in materials/meshes (future) |
+
+The `resource::Texture` trait uses trait objects (`dyn Texture`) for dynamic dispatch — similar to C++ virtual inheritance. Three concrete implementations:
+
+```rust
+pub trait Texture: Send + Sync {
+    fn render_texture(&self) -> &Arc<dyn render::Texture>;
+    fn descriptor_set(&self) -> &Arc<dyn DescriptorSet>;
+    fn region_names(&self) -> Vec<&str>;
+    // Explicit downcast methods (not Any)
+    fn as_simple(&self) -> Option<&SimpleTexture>;
+    fn as_atlas(&self) -> Option<&AtlasTexture>;
+    fn as_atlas_mut(&mut self) -> Option<&mut AtlasTexture>;
+    fn as_array(&self) -> Option<&ArrayTexture>;
+    fn as_array_mut(&mut self) -> Option<&mut ArrayTexture>;
+}
+```
+
+| Type | Description | Data |
+|------|-------------|------|
+| `SimpleTexture` | 1 texture = 1 image, 1:1 mapping | No sub-regions |
+| `AtlasTexture` | 1 image, N named UV regions | `HashMap<String, AtlasRegion>` |
+| `ArrayTexture` | GPU texture array, N named layers | `HashMap<String, u32>` |
+
+The `ResourceManager` stores textures as `HashMap<String, Arc<dyn Texture>>` and provides creation methods that internally call the `Renderer` to create GPU textures and descriptor sets:
+
+```rust
+// Creation methods (call Renderer internally)
+rm.create_simple_texture("skybox".into(), TextureDesc { ... })?;
+rm.create_atlas_texture("tileset".into(), desc, &[region1, region2])?;
+rm.create_array_texture("terrain".into(), desc, &[layer1, layer2])?;
+
+// Regions/layers can also be added after creation
+rm.add_atlas_region("tileset", "new_tile".into(), AtlasRegion { ... })?;
+rm.add_array_layer("terrain", "snow".into(), 3)?;
+
+// Access
+let tex = rm.get_texture("tileset").unwrap();
+let atlas = tex.as_atlas().unwrap();
+let region = atlas.get_region("grass").unwrap();
+```
+
+Mutation of regions/layers post-creation uses `Arc::get_mut` + downcast via `as_atlas_mut()`/`as_array_mut()` for safe mutable access.
 
 ---
 
@@ -1153,12 +1206,15 @@ pub fn print_validation_stats_report();
 
 ## Future Extensibility
 
-### Planned Features (Phase 10+)
+### Completed Features
 
-**Phase 10-12: Advanced Texture System**
+**Phase 10: ResourceManager** — Empty singleton for centralized resource storage
+**Phase 11: Resource Textures** — `resource::Texture` trait with SimpleTexture, AtlasTexture, ArrayTexture + ResourceManager texture API
 
-- Texture atlases
-- Texture arrays
+### Planned Features (Phase 12+)
+
+**Phase 12+: Advanced Texture Features**
+
 - Bindless textures (descriptor indexing)
 - Virtual texturing
 - Mipmap generation (CPU: Lanczos-3, GPU: Box filter)

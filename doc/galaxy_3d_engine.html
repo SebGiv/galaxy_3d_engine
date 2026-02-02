@@ -279,6 +279,14 @@
                 <li><a href="#texture">Texture</a></li>
                 <li><a href="#shader">Shader</a></li>
                 <li><a href="#descriptor-set">Descriptor Set</a></li>
+                <li>
+                    <span class="toc-toggle" onclick="toggleSection('resource-texture-section')">Resource Textures</span>
+                    <ul id="resource-texture-section">
+                        <li><a href="#resource-texture-trait">Texture Trait</a></li>
+                        <li><a href="#resource-texture-types">Concrete Types</a></li>
+                        <li><a href="#resource-texture-manager">ResourceManager Texture API</a></li>
+                    </ul>
+                </li>
             </ul>
         </nav>
 
@@ -1474,6 +1482,189 @@ fn main() {
 
                 <div class="note">
                     <strong>Important:</strong> The engine's internal logging macros (<code>engine_trace!</code>, <code>engine_debug!</code>, <code>engine_info!</code>, <code>engine_warn!</code>, <code>engine_error!</code>) are hidden from the public API (<code>#[doc(hidden)]</code>) and should NOT be used by applications. Applications should implement the Logger trait to capture engine logs.
+                </div>
+            </section>
+
+            <!-- Resource Textures -->
+            <section id="resource-texture">
+                <a href="#toc" class="back-to-toc">↑ Table of Contents</a>
+                <h2>Resource Textures</h2>
+                <p>Resource-level texture types that wrap low-level <code>render::Texture</code> (GPU) objects with additional metadata for the resource system. Part of the 3-level texture architecture:</p>
+                <ul>
+                    <li><strong>render::Texture</strong> — GPU handle (low-level, backend-specific)</li>
+                    <li><strong>resource::Texture</strong> — Named resource with sub-regions (this module)</li>
+                    <li><strong>scene::Texture</strong> — Scene object (future)</li>
+                </ul>
+
+                <h3 id="resource-texture-trait">Texture Trait</h3>
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-texture-trait-detail')">
+                        resource::Texture
+                        <span class="summary">Trait for uniform access to any texture resource</span>
+                    </h3>
+                    <div id="resource-texture-trait-detail" class="accordion-content">
+                        <p>Provides uniform access to any texture resource regardless of its concrete type (simple, atlas, or array). Uses trait objects (<code>dyn Texture</code>) for dynamic dispatch — similar to C++ virtual inheritance.</p>
+                        <pre><code>pub trait Texture: Send + Sync {
+    fn render_texture(&amp;self) -&gt; &amp;Arc&lt;dyn render::Texture&gt;;
+    fn descriptor_set(&amp;self) -&gt; &amp;Arc&lt;dyn DescriptorSet&gt;;
+    fn region_names(&amp;self) -&gt; Vec&lt;&amp;str&gt;;
+
+    // Downcast methods (return None for wrong type)
+    fn as_simple(&amp;self) -&gt; Option&lt;&amp;SimpleTexture&gt;;
+    fn as_atlas(&amp;self) -&gt; Option&lt;&amp;AtlasTexture&gt;;
+    fn as_atlas_mut(&amp;mut self) -&gt; Option&lt;&amp;mut AtlasTexture&gt;;
+    fn as_array(&amp;self) -&gt; Option&lt;&amp;ArrayTexture&gt;;
+    fn as_array_mut(&amp;mut self) -&gt; Option&lt;&amp;mut ArrayTexture&gt;;
+}</code></pre>
+                    </div>
+                </div>
+
+                <h3 id="resource-texture-types">Concrete Types</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-simple-texture')">
+                        SimpleTexture
+                        <span class="summary">Single texture with no sub-regions</span>
+                    </h3>
+                    <div id="resource-simple-texture" class="accordion-content">
+                        <p>The simplest resource texture type — wraps a GPU texture and its descriptor set with no additional metadata. One texture = one image, 1:1 mapping.</p>
+                        <pre><code>pub struct SimpleTexture {
+    render_texture: Arc&lt;dyn render::Texture&gt;,
+    descriptor_set: Arc&lt;dyn DescriptorSet&gt;,
+}</code></pre>
+                        <p><strong>Usage:</strong></p>
+                        <pre><code>// Created via ResourceManager
+let rm = Engine::resource_manager()?;
+let mut rm_guard = rm.lock().unwrap();
+rm_guard.create_simple_texture("skybox".into(), TextureDesc {
+    width: 512, height: 512,
+    format: TextureFormat::R8G8B8A8_SRGB,
+    usage: TextureUsage::Sampled,
+    data: Some(image_data),
+})?;</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-atlas-texture')">
+                        AtlasTexture
+                        <span class="summary">Texture atlas with named UV regions</span>
+                    </h3>
+                    <div id="resource-atlas-texture" class="accordion-content">
+                        <p>Wraps a single GPU texture that contains multiple sub-images arranged spatially. Each sub-image is identified by name and described by UV coordinates (<code>AtlasRegion</code>).</p>
+                        <pre><code>pub struct AtlasTexture {
+    render_texture: Arc&lt;dyn render::Texture&gt;,
+    descriptor_set: Arc&lt;dyn DescriptorSet&gt;,
+    regions: HashMap&lt;String, AtlasRegion&gt;,
+}
+
+pub struct AtlasRegion {
+    pub u: f32,      // Left edge (0.0..1.0)
+    pub v: f32,      // Top edge (0.0..1.0)
+    pub width: f32,  // Width in UV space
+    pub height: f32, // Height in UV space
+}</code></pre>
+                        <p>Regions can be provided at creation time and/or added later:</p>
+                        <pre><code>// Create with regions
+rm_guard.create_atlas_texture("tileset".into(), desc, &amp;[
+    AtlasRegionDesc { name: "grass".into(), region: AtlasRegion { u: 0.0, v: 0.0, width: 0.25, height: 0.25 } },
+    AtlasRegionDesc { name: "stone".into(), region: AtlasRegion { u: 0.25, v: 0.0, width: 0.25, height: 0.25 } },
+])?;
+
+// Or create empty and add later
+rm_guard.create_atlas_texture("sprites".into(), desc, &amp;[])?;
+rm_guard.add_atlas_region("sprites", "player".into(),
+    AtlasRegion { u: 0.0, v: 0.0, width: 0.5, height: 0.5 })?;
+
+// Access a region
+let tex = rm_guard.get_texture("tileset").unwrap();
+let atlas = tex.as_atlas().unwrap();
+let grass = atlas.get_region("grass").unwrap();</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-array-texture')">
+                        ArrayTexture
+                        <span class="summary">Texture array with named layers</span>
+                    </h3>
+                    <div id="resource-array-texture" class="accordion-content">
+                        <p>Wraps a GPU texture array where each layer is identified by name and mapped to a layer index.</p>
+                        <pre><code>pub struct ArrayTexture {
+    render_texture: Arc&lt;dyn render::Texture&gt;,
+    descriptor_set: Arc&lt;dyn DescriptorSet&gt;,
+    layers: HashMap&lt;String, u32&gt;,
+}</code></pre>
+                        <p>Layers can be provided at creation time and/or added later:</p>
+                        <pre><code>// Create with layers
+rm_guard.create_array_texture("terrain".into(), desc, &amp;[
+    ArrayLayerDesc { name: "grass".into(), layer: 0 },
+    ArrayLayerDesc { name: "dirt".into(), layer: 1 },
+])?;
+
+// Or create empty and add later
+rm_guard.create_array_texture("materials".into(), desc, &amp;[])?;
+rm_guard.add_array_layer("materials", "wood".into(), 0)?;</code></pre>
+                    </div>
+                </div>
+
+                <h3 id="resource-texture-manager">ResourceManager Texture API</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('rm-create-simple')">
+                        ResourceManager::create_simple_texture()
+                        <span class="summary">Create and register a simple texture</span>
+                    </h3>
+                    <div id="rm-create-simple" class="accordion-content">
+                        <p>Creates a GPU texture and descriptor set via the renderer, then registers the resource.</p>
+                        <pre><code>pub fn create_simple_texture(&amp;mut self, name: String, desc: TextureDesc) -&gt; Result&lt;()&gt;</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('rm-create-atlas')">
+                        ResourceManager::create_atlas_texture()
+                        <span class="summary">Create and register an atlas texture</span>
+                    </h3>
+                    <div id="rm-create-atlas" class="accordion-content">
+                        <p>Creates a GPU texture + descriptor set, then wraps it as an AtlasTexture with optional initial regions. Pass <code>&amp;[]</code> for regions to add them later.</p>
+                        <pre><code>pub fn create_atlas_texture(&amp;mut self, name: String, desc: TextureDesc, regions: &amp;[AtlasRegionDesc]) -&gt; Result&lt;()&gt;</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('rm-create-array')">
+                        ResourceManager::create_array_texture()
+                        <span class="summary">Create and register an array texture</span>
+                    </h3>
+                    <div id="rm-create-array" class="accordion-content">
+                        <p>Creates a GPU texture + descriptor set, then wraps it as an ArrayTexture with optional initial layers. Pass <code>&amp;[]</code> for layers to add them later.</p>
+                        <pre><code>pub fn create_array_texture(&amp;mut self, name: String, desc: TextureDesc, layers: &amp;[ArrayLayerDesc]) -&gt; Result&lt;()&gt;</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('rm-get-texture')">
+                        ResourceManager::get_texture() / remove_texture() / texture_count()
+                        <span class="summary">Access and manage registered textures</span>
+                    </h3>
+                    <div id="rm-get-texture" class="accordion-content">
+                        <pre><code>pub fn get_texture(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;Arc&lt;dyn Texture&gt;&gt;
+pub fn remove_texture(&amp;mut self, name: &amp;str) -&gt; bool
+pub fn texture_count(&amp;self) -&gt; usize</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('rm-add-region-layer')">
+                        ResourceManager::add_atlas_region() / add_array_layer()
+                        <span class="summary">Add regions/layers to existing textures post-creation</span>
+                    </h3>
+                    <div id="rm-add-region-layer" class="accordion-content">
+                        <p>Uses <code>Arc::get_mut</code> for safe mutable access. Fails if other references to the texture Arc exist.</p>
+                        <pre><code>pub fn add_atlas_region(&amp;mut self, texture_name: &amp;str, region_name: String, region: AtlasRegion) -&gt; Result&lt;()&gt;
+pub fn add_array_layer(&amp;mut self, texture_name: &amp;str, layer_name: String, layer: u32) -&gt; Result&lt;()&gt;</code></pre>
+                    </div>
                 </div>
             </section>
         </main>
