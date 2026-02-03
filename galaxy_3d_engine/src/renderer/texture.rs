@@ -1,5 +1,7 @@
 /// Texture trait, texture descriptor, and texture info
 
+use crate::error::{Error, Result};
+
 /// Texture and vertex attribute format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
@@ -111,4 +113,21 @@ impl TextureInfo {
 pub trait Texture: Send + Sync {
     /// Get the read-only properties of this texture
     fn info(&self) -> &TextureInfo;
+
+    /// Update a single layer of a texture array with new pixel data
+    ///
+    /// Uploads pixel data to a specific layer of an existing texture array.
+    /// The texture must have been created with array_layers > 1.
+    ///
+    /// Default implementation returns an error. Override in backend implementations.
+    ///
+    /// # Arguments
+    ///
+    /// * `layer` - Target layer index (0-based)
+    /// * `data` - Raw pixel data to upload
+    fn update_layer(&self, _layer: u32, _data: &[u8]) -> Result<()> {
+        Err(Error::BackendError(
+            "update_layer not supported by this backend".to_string()
+        ))
+    }
 }

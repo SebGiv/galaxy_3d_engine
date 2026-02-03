@@ -34,6 +34,7 @@ use crate::vulkan_render_target::RenderTarget;
 use crate::vulkan_render_pass::RenderPass;
 use crate::vulkan_swapchain::Swapchain;
 use crate::vulkan_descriptor_set::DescriptorSet;
+use crate::vulkan_context::GpuContext;
 
 /// Vulkan device implementation
 ///
@@ -74,6 +75,9 @@ pub struct VulkanRenderer {
     debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
     /// Debug messenger handle
     debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+
+    /// Shared GPU context for all resources (textures, buffers)
+    gpu_context: Arc<GpuContext>,
 }
 
 impl VulkanRenderer {
@@ -397,6 +401,24 @@ impl VulkanRenderer {
             let descriptor_set_layout = device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)
                 .map_err(|e| Error::InitializationFailed(format!("Failed to create descriptor set layout: {:?}", e)))?;
 
+            // Create upload command pool (TRANSIENT + RESET for reusable one-shot uploads)
+            let upload_pool_create_info = vk::CommandPoolCreateInfo::default()
+                .queue_family_index(graphics_family_index)
+                .flags(vk::CommandPoolCreateFlags::TRANSIENT | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+
+            let upload_command_pool = device.create_command_pool(&upload_pool_create_info, None)
+                .map_err(|e| Error::InitializationFailed(format!("Failed to create upload command pool: {:?}", e)))?;
+
+            // Create shared GPU context for all resources
+            let allocator_arc = Arc::new(Mutex::new(allocator));
+            let gpu_context = Arc::new(GpuContext::new(
+                (*device).clone(),
+                Arc::clone(&allocator_arc),
+                graphics_queue,
+                graphics_family_index,
+                upload_command_pool,
+            ));
+
             Ok(Self {
                 _entry: entry,
                 instance,
@@ -406,7 +428,7 @@ impl VulkanRenderer {
                 graphics_queue_family: graphics_family_index,
                 present_queue,
                 present_queue_family: present_family_index,
-                allocator: ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
+                allocator: ManuallyDrop::new(allocator_arc),
                 submit_fences,
                 current_submit_fence: 0,
                 descriptor_pool,
@@ -414,6 +436,7 @@ impl VulkanRenderer {
                 descriptor_set_layout,
                 debug_utils_loader,
                 debug_messenger,
+                gpu_context,
             })
         }
     }
@@ -1196,14 +1219,13 @@ impl Renderer for VulkanRenderer {
                 array_layers,
             };
 
-            Ok(Arc::new(Texture {
+            Ok(Arc::new(Texture::new(
+                Arc::clone(&self.gpu_context),
                 image,
                 view,
-                allocation: Some(allocation),
-                device: (*self.device).clone(),
-                allocator: (*self.allocator).clone(),
+                allocation,
                 info,
-            }))
+            )))
         }
     }
 
@@ -1251,13 +1273,12 @@ impl Renderer for VulkanRenderer {
                     Error::BackendError(format!("Failed to bind buffer memory: {:?}", e))
                 })?;
 
-            Ok(Arc::new(Buffer {
+            Ok(Arc::new(Buffer::new(
+                Arc::clone(&self.gpu_context),
                 buffer,
-                allocation: Some(allocation),
-                size: desc.size,
-                device: (*self.device).clone(),
-                allocator: (*self.allocator).clone(),
-            }))
+                allocation,
+                desc.size,
+            )))
         }
     }
 

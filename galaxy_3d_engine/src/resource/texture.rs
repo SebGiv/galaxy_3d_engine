@@ -61,8 +61,9 @@ pub trait Texture: Send + Sync {
 
     /// Add a layer mapping to this texture (array textures only)
     ///
+    /// If `data` is provided, uploads pixel data to the specified layer.
     /// Default implementation returns an error. Override in ArrayTexture.
-    fn add_array_layer(&mut self, _name: String, _layer: u32) -> Result<()> {
+    fn add_array_layer(&mut self, _name: String, _layer: u32, _data: Option<&[u8]>) -> Result<()> {
         Err(Error::BackendError(
             "This texture type does not support array layers".to_string()
         ))
@@ -100,6 +101,8 @@ pub struct ArrayLayerDesc {
     pub name: String,
     /// Layer index in the texture array
     pub layer: u32,
+    /// Optional pixel data to upload for this layer
+    pub data: Option<Vec<u8>>,
 }
 
 // ===== SIMPLE TEXTURE =====
@@ -305,7 +308,12 @@ impl Texture for ArrayTexture {
         Some(self)
     }
 
-    fn add_array_layer(&mut self, name: String, layer: u32) -> Result<()> {
+    fn add_array_layer(&mut self, name: String, layer: u32, data: Option<&[u8]>) -> Result<()> {
+        // If pixel data is provided, upload it to the GPU via the render texture
+        if let Some(pixel_data) = data {
+            self.render_texture.update_layer(layer, pixel_data)?;
+        }
+
         self.add_layer_internal(name, layer);
         Ok(())
     }

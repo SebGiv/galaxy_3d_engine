@@ -11,6 +11,7 @@ The backend is registered as a plugin and can be selected at runtime.
 
 // Internal modules
 mod vulkan;
+mod vulkan_context;
 mod vulkan_texture;
 mod vulkan_buffer;
 mod vulkan_shader;

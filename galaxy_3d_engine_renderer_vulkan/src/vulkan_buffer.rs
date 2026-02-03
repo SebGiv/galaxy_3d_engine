@@ -8,19 +8,37 @@ use galaxy_3d_engine::galaxy3d::{
 use galaxy_3d_engine::engine_error;
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
+use std::sync::Arc;
+
+use crate::vulkan_context::GpuContext;
 
 /// Vulkan buffer implementation
 pub struct Buffer {
+    /// Shared GPU context (device, allocator, queue, command pool)
+    ctx: Arc<GpuContext>,
     /// Vulkan buffer
     pub(crate) buffer: vk::Buffer,
     /// GPU memory allocation
     pub(crate) allocation: Option<Allocation>,
     /// Buffer size
     pub(crate) size: u64,
-    /// Vulkan device (for cleanup)
-    pub(crate) device: ash::Device,
-    /// GPU allocator (for cleanup)
-    pub(crate) allocator: std::sync::Arc<std::sync::Mutex<gpu_allocator::vulkan::Allocator>>,
+}
+
+impl Buffer {
+    /// Create a new Vulkan buffer
+    pub fn new(
+        ctx: Arc<GpuContext>,
+        buffer: vk::Buffer,
+        allocation: Allocation,
+        size: u64,
+    ) -> Self {
+        Self {
+            ctx,
+            buffer,
+            allocation: Some(allocation),
+            size,
+        }
+    }
 }
 
 impl RendererBuffer for Buffer {
@@ -55,13 +73,13 @@ impl Drop for Buffer {
             // Free GPU memory
             if let Some(allocation) = self.allocation.take() {
                 // Don't panic if lock fails - we still need to destroy the buffer
-                if let Ok(mut allocator) = self.allocator.lock() {
+                if let Ok(mut allocator) = self.ctx.allocator.lock() {
                     allocator.free(allocation).ok();
                 }
             }
 
             // Destroy buffer
-            self.device.destroy_buffer(self.buffer, None);
+            self.ctx.device.destroy_buffer(self.buffer, None);
         }
     }
 }
