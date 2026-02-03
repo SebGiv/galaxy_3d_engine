@@ -390,7 +390,7 @@ pub trait Renderer: Send + Sync {
 | Trait | Méthodes | Objectif |
 |-------|---------|---------|
 | **galaxy_3d_engine::galaxy3d::render::Buffer** | `update(offset, data)` | Buffer GPU (vertex/index/uniform) |
-| **galaxy_3d_engine::galaxy3d::render::Texture** | _(marqueur)_ | Ressource texture GPU |
+| **galaxy_3d_engine::galaxy3d::render::Texture** | `info()` | Ressource texture GPU (2D ou array) |
 | **galaxy_3d_engine::galaxy3d::render::Shader** | _(marqueur)_ | Module shader compilé (SPIR-V) |
 | **galaxy_3d_engine::galaxy3d::render::Pipeline** | _(marqueur)_ | État du pipeline graphique |
 | **galaxy_3d_engine::galaxy3d::render::DescriptorSet** | _(marqueur)_ | Liaison de ressource (textures, uniformes) |
@@ -489,7 +489,22 @@ pub struct TextureDesc {
     pub height: u32,
     pub format: TextureFormat,
     pub usage: TextureUsage,
-    pub data: Option<Vec<u8>>,  // Données de pixel initiales
+    pub array_layers: u32,           // 1 = 2D simple, >1 = texture array
+    pub data: Option<TextureData>,   // Données de pixel initiales
+}
+
+pub enum TextureData {
+    /// Données d'image unique (pour textures simples, ou couche 0 d'un array)
+    Single(Vec<u8>),
+
+    /// Données par couche pour texture arrays.
+    /// Seules les couches listées sont uploadées ; les autres restent non initialisées.
+    Layers(Vec<TextureLayerData>),
+}
+
+pub struct TextureLayerData {
+    pub layer: u32,      // Index de couche cible (0-based)
+    pub data: Vec<u8>,   // Octets de pixels bruts pour cette couche
 }
 
 pub enum TextureFormat {
@@ -511,6 +526,22 @@ pub enum TextureUsage {
     RenderTarget,            // Pièce jointe de couleur
     SampledAndRenderTarget,  // Les deux
     DepthStencil,           // Pièce jointe de profondeur/stencil
+}
+```
+
+#### TextureInfo (Propriétés en lecture seule)
+
+```rust
+pub struct TextureInfo {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,
+    pub usage: TextureUsage,
+    pub array_layers: u32,
+}
+
+impl TextureInfo {
+    pub fn is_array(&self) -> bool { self.array_layers > 1 }
 }
 ```
 
@@ -1278,7 +1309,7 @@ let renderer = create_renderer("d3d12", &window, config)?;
 | `galaxy_3d_engine::galaxy3d::render::CommandList` | Enregistrement de commandes | `begin`, `begin_render_pass`, `bind_pipeline`, `bind_descriptor_sets`, `draw`, `end` |
 | `galaxy_3d_engine::galaxy3d::render::Swapchain` | Présentation | `acquire_next_image`, `present`, `recreate` |
 | `galaxy_3d_engine::galaxy3d::render::Buffer` | Buffer GPU | `update` |
-| `galaxy_3d_engine::galaxy3d::render::Texture` | Texture GPU | _(marqueur)_ |
+| `galaxy_3d_engine::galaxy3d::render::Texture` | Texture GPU | `info()` |
 | `galaxy_3d_engine::galaxy3d::render::Shader` | Module shader | _(marqueur)_ |
 | `galaxy_3d_engine::galaxy3d::render::Pipeline` | Pipeline graphique | _(marqueur)_ |
 | `galaxy_3d_engine::galaxy3d::render::DescriptorSet` | Liaison de ressource | _(marqueur)_ |
@@ -1291,7 +1322,7 @@ let renderer = create_renderer("d3d12", &window, config)?;
 |------|---------|------------|
 | `galaxy_3d_engine::galaxy3d::render::Config` | Configuration du moteur | `enable_validation`, `debug_severity`, `debug_output` |
 | `BufferDesc` | Création de buffer | `size`, `usage` (Vertex/Index/Uniform/Storage) |
-| `TextureDesc` | Création de texture | `width`, `height`, `format`, `usage`, `data` |
+| `TextureDesc` | Création de texture | `width`, `height`, `format`, `usage`, `array_layers`, `data` |
 | `ShaderDesc` | Création de shader | `code` (SPIR-V), `stage`, `entry_point` |
 | `PipelineDesc` | Création de pipeline | `shaders`, `vertex_layout`, `topology`, `push_constants`, `blending` |
 | `galaxy_3d_engine::galaxy3d::render::RenderPassDesc` | Passe de rendu | `color_attachments`, `depth_attachment` |

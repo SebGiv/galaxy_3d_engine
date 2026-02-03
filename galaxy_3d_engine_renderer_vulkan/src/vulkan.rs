@@ -9,7 +9,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Shader as RendererShader, Pipeline as RendererPipeline,
     DescriptorSet as RendererDescriptorSet,
     RenderTargetDesc, RenderPassDesc,
-    TextureDesc, BufferDesc, ShaderDesc, PipelineDesc,
+    TextureDesc, TextureData, TextureInfo, BufferDesc, ShaderDesc, PipelineDesc,
     TextureFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
     RendererStats, VertexInputRate,
@@ -808,6 +808,14 @@ impl Renderer for VulkanRenderer {
     fn create_texture(&mut self, desc: TextureDesc) -> Result<Arc<dyn RendererTexture>> {
         unsafe {
             let format = self.format_to_vk(desc.format);
+            let array_layers = desc.array_layers.max(1);
+
+            // Determine image view type based on array layers
+            let view_type = if array_layers > 1 {
+                vk::ImageViewType::TYPE_2D_ARRAY
+            } else {
+                vk::ImageViewType::TYPE_2D
+            };
 
             // Create image
             let image_create_info = vk::ImageCreateInfo::default()
@@ -819,7 +827,7 @@ impl Renderer for VulkanRenderer {
                     depth: 1,
                 })
                 .mip_levels(1)
-                .array_layers(1)
+                .array_layers(array_layers)
                 .samples(vk::SampleCountFlags::TYPE_1)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
@@ -844,7 +852,7 @@ impl Renderer for VulkanRenderer {
             })
             .map_err(|_e| {
                 let size_mb = requirements.size as f64 / (1024.0 * 1024.0);
-                engine_error!("galaxy3d::vulkan", "Out of GPU memory for texture (size: {}x{}, {:.2} MB)", desc.width, desc.height, size_mb);
+                engine_error!("galaxy3d::vulkan", "Out of GPU memory for texture (size: {}x{}, layers: {}, {:.2} MB)", desc.width, desc.height, array_layers, size_mb);
                 Error::OutOfMemory
             })?;
 
@@ -858,7 +866,7 @@ impl Renderer for VulkanRenderer {
             // Create image view
             let view_create_info = vk::ImageViewCreateInfo::default()
                 .image(image)
-                .view_type(vk::ImageViewType::TYPE_2D)
+                .view_type(view_type)
                 .format(format)
                 .components(vk::ComponentMapping {
                     r: vk::ComponentSwizzle::IDENTITY,
@@ -871,7 +879,7 @@ impl Renderer for VulkanRenderer {
                     base_mip_level: 0,
                     level_count: 1,
                     base_array_layer: 0,
-                    layer_count: 1,
+                    layer_count: array_layers,
                 });
 
             let view = self.device.create_image_view(&view_create_info, None)
@@ -880,49 +888,32 @@ impl Renderer for VulkanRenderer {
                     Error::BackendError(format!("Failed to create image view: {:?}", e))
                 })?;
 
-            // Upload texture data if provided
-            if let Some(data) = desc.data {
-                // 1. Create staging buffer (CPU-visible)
-                let buffer_size = data.len() as u64;
-                let staging_buffer_create_info = vk::BufferCreateInfo::default()
-                    .size(buffer_size)
-                    .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE);
+            // Collect upload items: Vec<(layer_index, &[u8])>
+            let upload_items: Vec<(u32, &[u8])> = match &desc.data {
+                Some(TextureData::Single(data)) => {
+                    vec![(0, data.as_slice())]
+                }
+                Some(TextureData::Layers(layers)) => {
+                    // Validate layer indices
+                    for layer_data in layers {
+                        if layer_data.layer >= array_layers {
+                            engine_error!("galaxy3d::vulkan", "Layer index {} exceeds array_layers {}", layer_data.layer, array_layers);
+                            return Err(Error::BackendError(format!(
+                                "Layer index {} out of range (array_layers = {})", layer_data.layer, array_layers
+                            )));
+                        }
+                    }
+                    layers.iter().map(|ld| (ld.layer, ld.data.as_slice())).collect()
+                }
+                None => {
+                    vec![]
+                }
+            };
 
-                let staging_buffer = self.device.create_buffer(&staging_buffer_create_info, None)
-                    .map_err(|e| {
-                        engine_error!("galaxy3d::vulkan", "Failed to create texture staging buffer: {:?}", e);
-                        Error::BackendError(format!("Failed to create staging buffer: {:?}", e))
-                    })?;
+            let has_data = !upload_items.is_empty();
 
-                let staging_requirements = self.device.get_buffer_memory_requirements(staging_buffer);
-
-                let staging_allocation = self.allocator.lock().unwrap().allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-                    name: "texture_staging_buffer",
-                    requirements: staging_requirements,
-                    location: gpu_allocator::MemoryLocation::CpuToGpu,
-                    linear: true,
-                    allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
-                })
-                .map_err(|_e| {
-                    let size_mb = staging_requirements.size as f64 / (1024.0 * 1024.0);
-                    engine_error!("galaxy3d::vulkan", "Out of GPU memory for texture staging buffer ({:.2} MB)", size_mb);
-                    Error::OutOfMemory
-                })?;
-
-                self.device.bind_buffer_memory(staging_buffer, staging_allocation.memory(), staging_allocation.offset())
-                    .map_err(|e| {
-                        engine_error!("galaxy3d::vulkan", "Failed to bind texture staging buffer memory: {:?}", e);
-                        Error::BackendError(format!("Failed to bind staging buffer memory: {:?}", e))
-                    })?;
-
-                // 2. Copy data to staging buffer
-                let mapped_ptr = staging_allocation.mapped_ptr()
-                    .ok_or_else(|| Error::BackendError("Staging buffer is not mapped".to_string()))?
-                    .as_ptr() as *mut u8;
-                std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_ptr, data.len());
-
-                // 4. Create a one-time command buffer
+            if has_data {
+                // Create a one-time command buffer for upload
                 let command_pool_create_info = vk::CommandPoolCreateInfo::default()
                     .queue_family_index(self.graphics_queue_family)
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);
@@ -945,7 +936,6 @@ impl Renderer for VulkanRenderer {
                     })?;
                 let command_buffer = command_buffers[0];
 
-                // Begin recording
                 let begin_info = vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
@@ -955,8 +945,8 @@ impl Renderer for VulkanRenderer {
                         Error::BackendError(format!("Failed to begin command buffer: {:?}", e))
                     })?;
 
-                // 5. Transition image layout: UNDEFINED → TRANSFER_DST_OPTIMAL
-                let barrier = vk::ImageMemoryBarrier::default()
+                // Transition all layers: UNDEFINED → TRANSFER_DST_OPTIMAL
+                let barrier_to_transfer = vk::ImageMemoryBarrier::default()
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -967,7 +957,7 @@ impl Renderer for VulkanRenderer {
                         base_mip_level: 0,
                         level_count: 1,
                         base_array_layer: 0,
-                        layer_count: 1,
+                        layer_count: array_layers,
                     })
                     .src_access_mask(vk::AccessFlags::empty())
                     .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
@@ -979,37 +969,85 @@ impl Renderer for VulkanRenderer {
                     vk::DependencyFlags::empty(),
                     &[],
                     &[],
-                    &[barrier],
+                    &[barrier_to_transfer],
                 );
 
-                // 6. Copy from staging buffer to image
-                let region = vk::BufferImageCopy::default()
-                    .buffer_offset(0)
-                    .buffer_row_length(0)
-                    .buffer_image_height(0)
-                    .image_subresource(vk::ImageSubresourceLayers {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        mip_level: 0,
-                        base_array_layer: 0,
-                        layer_count: 1,
+                // Upload each layer with its own staging buffer
+                let mut staging_buffers: Vec<(vk::Buffer, gpu_allocator::vulkan::Allocation)> = Vec::new();
+
+                for (layer_index, data) in &upload_items {
+                    let buffer_size = data.len() as u64;
+
+                    // Create staging buffer
+                    let staging_buffer_create_info = vk::BufferCreateInfo::default()
+                        .size(buffer_size)
+                        .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+                    let staging_buffer = self.device.create_buffer(&staging_buffer_create_info, None)
+                        .map_err(|e| {
+                            engine_error!("galaxy3d::vulkan", "Failed to create staging buffer for layer {}: {:?}", layer_index, e);
+                            Error::BackendError(format!("Failed to create staging buffer: {:?}", e))
+                        })?;
+
+                    let staging_requirements = self.device.get_buffer_memory_requirements(staging_buffer);
+
+                    let staging_allocation = self.allocator.lock().unwrap().allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                        name: "texture_staging_buffer",
+                        requirements: staging_requirements,
+                        location: gpu_allocator::MemoryLocation::CpuToGpu,
+                        linear: true,
+                        allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
                     })
-                    .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-                    .image_extent(vk::Extent3D {
-                        width: desc.width,
-                        height: desc.height,
-                        depth: 1,
-                    });
+                    .map_err(|_e| {
+                        let size_mb = staging_requirements.size as f64 / (1024.0 * 1024.0);
+                        engine_error!("galaxy3d::vulkan", "Out of GPU memory for texture staging buffer layer {} ({:.2} MB)", layer_index, size_mb);
+                        Error::OutOfMemory
+                    })?;
 
-                self.device.cmd_copy_buffer_to_image(
-                    command_buffer,
-                    staging_buffer,
-                    image,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    &[region],
-                );
+                    self.device.bind_buffer_memory(staging_buffer, staging_allocation.memory(), staging_allocation.offset())
+                        .map_err(|e| {
+                            engine_error!("galaxy3d::vulkan", "Failed to bind staging buffer memory for layer {}: {:?}", layer_index, e);
+                            Error::BackendError(format!("Failed to bind staging buffer memory: {:?}", e))
+                        })?;
 
-                // 7. Transition image layout: TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
-                let barrier = vk::ImageMemoryBarrier::default()
+                    // Copy data to staging buffer
+                    let mapped_ptr = staging_allocation.mapped_ptr()
+                        .ok_or_else(|| Error::BackendError("Staging buffer is not mapped".to_string()))?
+                        .as_ptr() as *mut u8;
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_ptr, data.len());
+
+                    // Record copy command for this layer
+                    let region = vk::BufferImageCopy::default()
+                        .buffer_offset(0)
+                        .buffer_row_length(0)
+                        .buffer_image_height(0)
+                        .image_subresource(vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: *layer_index,
+                            layer_count: 1,
+                        })
+                        .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                        .image_extent(vk::Extent3D {
+                            width: desc.width,
+                            height: desc.height,
+                            depth: 1,
+                        });
+
+                    self.device.cmd_copy_buffer_to_image(
+                        command_buffer,
+                        staging_buffer,
+                        image,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[region],
+                    );
+
+                    staging_buffers.push((staging_buffer, staging_allocation));
+                }
+
+                // Transition all layers: TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
+                let barrier_to_shader = vk::ImageMemoryBarrier::default()
                     .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -1020,7 +1058,7 @@ impl Renderer for VulkanRenderer {
                         base_mip_level: 0,
                         level_count: 1,
                         base_array_layer: 0,
-                        layer_count: 1,
+                        layer_count: array_layers,
                     })
                     .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .dst_access_mask(vk::AccessFlags::SHADER_READ);
@@ -1032,17 +1070,16 @@ impl Renderer for VulkanRenderer {
                     vk::DependencyFlags::empty(),
                     &[],
                     &[],
-                    &[barrier],
+                    &[barrier_to_shader],
                 );
 
-                // End recording
+                // End recording, submit, and wait
                 self.device.end_command_buffer(command_buffer)
                     .map_err(|e| {
                         engine_error!("galaxy3d::vulkan", "Failed to end command buffer for texture upload: {:?}", e);
                         Error::BackendError(format!("Failed to end command buffer: {:?}", e))
                     })?;
 
-                // 8. Submit and wait for command buffer
                 let command_buffers_submit = [command_buffer];
                 let submit_info = vk::SubmitInfo::default()
                     .command_buffers(&command_buffers_submit);
@@ -1059,12 +1096,105 @@ impl Renderer for VulkanRenderer {
                         Error::BackendError(format!("Failed to wait for queue idle: {:?}", e))
                     })?;
 
-                // 9. Clean up staging buffer
+                // Clean up staging buffers and command pool
                 self.device.destroy_command_pool(command_pool, None);
-                self.device.destroy_buffer(staging_buffer, None);
-                self.allocator.lock().unwrap().free(staging_allocation)
-                    .map_err(|_e| Error::BackendError("Failed to free staging buffer allocation".to_string()))?;
+                for (staging_buf, staging_alloc) in staging_buffers {
+                    self.device.destroy_buffer(staging_buf, None);
+                    self.allocator.lock().unwrap().free(staging_alloc)
+                        .map_err(|_e| Error::BackendError("Failed to free staging buffer allocation".to_string()))?;
+                }
+            } else {
+                // No data to upload — transition directly to SHADER_READ_ONLY_OPTIMAL
+                let command_pool_create_info = vk::CommandPoolCreateInfo::default()
+                    .queue_family_index(self.graphics_queue_family)
+                    .flags(vk::CommandPoolCreateFlags::TRANSIENT);
+
+                let command_pool = self.device.create_command_pool(&command_pool_create_info, None)
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to create command pool for layout transition: {:?}", e);
+                        Error::BackendError(format!("Failed to create command pool: {:?}", e))
+                    })?;
+
+                let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+                    .command_pool(command_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1);
+
+                let command_buffers = self.device.allocate_command_buffers(&command_buffer_allocate_info)
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to allocate command buffer for layout transition: {:?}", e);
+                        Error::BackendError(format!("Failed to allocate command buffers: {:?}", e))
+                    })?;
+                let command_buffer = command_buffers[0];
+
+                let begin_info = vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+                self.device.begin_command_buffer(command_buffer, &begin_info)
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to begin command buffer for layout transition: {:?}", e);
+                        Error::BackendError(format!("Failed to begin command buffer: {:?}", e))
+                    })?;
+
+                let barrier = vk::ImageMemoryBarrier::default()
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: array_layers,
+                    })
+                    .src_access_mask(vk::AccessFlags::empty())
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ);
+
+                self.device.cmd_pipeline_barrier(
+                    command_buffer,
+                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                    vk::PipelineStageFlags::FRAGMENT_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier],
+                );
+
+                self.device.end_command_buffer(command_buffer)
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to end command buffer for layout transition: {:?}", e);
+                        Error::BackendError(format!("Failed to end command buffer: {:?}", e))
+                    })?;
+
+                let command_buffers_submit = [command_buffer];
+                let submit_info = vk::SubmitInfo::default()
+                    .command_buffers(&command_buffers_submit);
+
+                self.device.queue_submit(self.graphics_queue, &[submit_info], vk::Fence::null())
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to submit layout transition: {:?}", e);
+                        Error::BackendError(format!("Failed to submit command buffer: {:?}", e))
+                    })?;
+
+                self.device.queue_wait_idle(self.graphics_queue)
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to wait for layout transition: {:?}", e);
+                        Error::BackendError(format!("Failed to wait for queue idle: {:?}", e))
+                    })?;
+
+                self.device.destroy_command_pool(command_pool, None);
             }
+
+            // Build TextureInfo from the descriptor
+            let info = TextureInfo {
+                width: desc.width,
+                height: desc.height,
+                format: desc.format,
+                usage: desc.usage,
+                array_layers,
+            };
 
             Ok(Arc::new(Texture {
                 image,
@@ -1072,6 +1202,7 @@ impl Renderer for VulkanRenderer {
                 allocation: Some(allocation),
                 device: (*self.device).clone(),
                 allocator: (*self.allocator).clone(),
+                info,
             }))
         }
     }

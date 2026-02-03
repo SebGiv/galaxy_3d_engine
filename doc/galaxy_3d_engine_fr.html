@@ -639,26 +639,41 @@ let vertex_buffer = renderer.create_buffer(BufferDesc {
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('create-texture')">
                         <span>create_texture()</span>
-                        <span class="summary">Crée une texture GPU avec données initiales optionnelles</span>
+                        <span class="summary">Crée une texture GPU (2D ou array) avec données initiales optionnelles</span>
                     </h3>
                     <div id="create-texture" class="accordion-content">
                         <p>
-                            Crée une texture GPU et upload optionnellement des données d'image initiales.
+                            Crée une texture GPU (2D simple ou texture array) et upload optionnellement des données d'image initiales.
                             Gère les transitions de layout et le staging buffer en interne.
                         </p>
                         <p><strong>Paramètres :</strong></p>
                         <ul>
-                            <li><code>desc: TextureDesc</code> - Description de la texture (largeur, hauteur, format, données)</li>
+                            <li><code>desc: TextureDesc</code> - Description de la texture (largeur, hauteur, format, array_layers, données)</li>
                         </ul>
                         <p><strong>Retourne :</strong> <code>galaxy_3d_engine::galaxy3d::Result&lt;Arc&lt;dyn galaxy_3d_engine::galaxy3d::render::Texture&gt;&gt;</code></p>
-                        <pre><code class="language-rust">let image_data: Vec&lt;u8&gt; = load_image("texture.png")?;
+                        <pre><code class="language-rust">// Texture 2D simple
+let image_data: Vec&lt;u8&gt; = load_image("texture.png")?;
 
 let texture = renderer.create_texture(TextureDesc {
     width: 512,
     height: 512,
     format: TextureFormat::R8G8B8A8_SRGB,
     usage: TextureUsage::Sampled,
-    data: Some(image_data),
+    array_layers: 1,
+    data: Some(TextureData::Single(image_data)),
+})?;
+
+// Texture array (4 couches)
+let texture_array = renderer.create_texture(TextureDesc {
+    width: 256,
+    height: 256,
+    format: TextureFormat::R8G8B8A8_SRGB,
+    usage: TextureUsage::Sampled,
+    array_layers: 4,
+    data: Some(TextureData::Layers(vec![
+        TextureLayerData { layer: 0, data: grass_data },
+        TextureLayerData { layer: 1, data: dirt_data },
+    ])),
 })?;
 </code></pre>
                     </div>
@@ -1306,10 +1321,84 @@ vertex_buffer.update(0, bytemuck::cast_slice(&new_vertex_data))?;
                 <p>Voir <a href="#create-texture">Renderer::create_texture()</a> pour la création de texture.</p>
 
                 <h3>Trait galaxy_3d_engine::galaxy3d::render::Texture</h3>
-                <p>Texture GPU pour le sampling dans les shaders.</p>
+                <p>Texture GPU pour le sampling dans les shaders. Supporte les textures 2D simples et les texture arrays.</p>
 
-                <div class="note">
-                    <strong>Note :</strong> galaxy_3d_engine::galaxy3d::render::Texture est un trait marqueur sans méthodes publiques. Il est utilisé pour la sécurité de type afin d'éviter l'utilisation incorrecte accidentelle des handles de texture.
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('texture-info')">
+                        <span>info()</span>
+                        <span class="summary">Obtenir les propriétés en lecture seule de la texture</span>
+                    </h3>
+                    <div id="texture-info" class="accordion-content">
+                        <p>Retourne une référence vers les propriétés en lecture seule de la texture.</p>
+                        <p><strong>Retourne :</strong> <code>&amp;TextureInfo</code></p>
+                        <pre><code class="language-rust">let texture = renderer.create_texture(desc)?;
+let info = texture.info();
+println!("Taille : {}x{}, couches : {}", info.width, info.height, info.array_layers);
+println!("Est array : {}", info.is_array());
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('texture-info-struct')">
+                        <span>TextureInfo</span>
+                        <span class="summary">Propriétés de texture en lecture seule</span>
+                    </h3>
+                    <div id="texture-info-struct" class="accordion-content">
+                        <pre><code class="language-rust">pub struct TextureInfo {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,
+    pub usage: TextureUsage,
+    pub array_layers: u32,
+}
+
+impl TextureInfo {
+    pub fn is_array(&amp;self) -&gt; bool { self.array_layers &gt; 1 }
+}
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('texture-desc')">
+                        <span>TextureDesc</span>
+                        <span class="summary">Descripteur de création de texture</span>
+                    </h3>
+                    <div id="texture-desc" class="accordion-content">
+                        <pre><code class="language-rust">pub struct TextureDesc {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,
+    pub usage: TextureUsage,
+    pub array_layers: u32,           // 1 = 2D simple, &gt;1 = texture array
+    pub data: Option&lt;TextureData&gt;,   // Données initiales optionnelles
+}
+</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('texture-data')">
+                        <span>TextureData</span>
+                        <span class="summary">Données initiales de texture pour upload</span>
+                    </h3>
+                    <div id="texture-data" class="accordion-content">
+                        <pre><code class="language-rust">pub enum TextureData {
+    /// Données d'image unique (pour textures simples, ou couche 0 d'un array)
+    Single(Vec&lt;u8&gt;),
+
+    /// Données par couche pour texture arrays.
+    /// Seules les couches listées sont uploadées ; les autres restent non initialisées.
+    Layers(Vec&lt;TextureLayerData&gt;),
+}
+
+pub struct TextureLayerData {
+    pub layer: u32,      // Index de couche cible (0-based)
+    pub data: Vec&lt;u8&gt;,   // Octets de pixels bruts pour cette couche
+}
+</code></pre>
+                    </div>
                 </div>
 
                 <div class="api-item">
@@ -1329,7 +1418,8 @@ vertex_buffer.update(0, bytemuck::cast_slice(&new_vertex_data))?;
     height: 512,
     format: TextureFormat::R8G8B8A8_SRGB,
     usage: TextureUsage::Sampled,
-    data: Some(image_data),
+    array_layers: 1,
+    data: Some(TextureData::Single(image_data)),
 })?;
 </code></pre>
                     </div>
@@ -1587,6 +1677,7 @@ rm_guard.add_array_layer("materials", "wood".into(), 0)?;</code></pre>
                         <span class="summary">Créer et enregistrer une texture simple</span>
                     </h3>
                     <div id="rm-create-simple" class="accordion-content">
+                        <p><strong>Validation :</strong> <code>desc.array_layers</code> doit être 1.</p>
                         <pre><code>pub fn create_simple_texture(&amp;mut self, name: String, desc: TextureDesc) -&gt; Result&lt;()&gt;</code></pre>
                     </div>
                 </div>
@@ -1597,6 +1688,7 @@ rm_guard.add_array_layer("materials", "wood".into(), 0)?;</code></pre>
                         <span class="summary">Créer et enregistrer une texture atlas</span>
                     </h3>
                     <div id="rm-create-atlas" class="accordion-content">
+                        <p><strong>Validation :</strong> <code>desc.array_layers</code> doit être 1 (atlas utilise des régions UV, pas des couches array).</p>
                         <pre><code>pub fn create_atlas_texture(&amp;mut self, name: String, desc: TextureDesc, regions: &amp;[AtlasRegionDesc]) -&gt; Result&lt;()&gt;</code></pre>
                     </div>
                 </div>
@@ -1607,6 +1699,7 @@ rm_guard.add_array_layer("materials", "wood".into(), 0)?;</code></pre>
                         <span class="summary">Créer et enregistrer une texture array</span>
                     </h3>
                     <div id="rm-create-array" class="accordion-content">
+                        <p><strong>Validation :</strong> <code>desc.array_layers</code> doit être &gt; 1. Les indices de couche dans <code>layers</code> doivent être &lt; <code>desc.array_layers</code>.</p>
                         <pre><code>pub fn create_array_texture(&amp;mut self, name: String, desc: TextureDesc, layers: &amp;[ArrayLayerDesc]) -&gt; Result&lt;()&gt;</code></pre>
                     </div>
                 </div>

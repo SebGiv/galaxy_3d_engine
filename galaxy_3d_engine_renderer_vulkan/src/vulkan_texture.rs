@@ -1,6 +1,7 @@
 /// Texture - Vulkan implementation of RendererTexture trait
 
 use galaxy_3d_engine::galaxy3d::render::Texture as RendererTexture;
+use galaxy_3d_engine::galaxy3d::render::TextureInfo;
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 
@@ -16,10 +17,14 @@ pub struct Texture {
     pub(crate) device: ash::Device,
     /// GPU allocator (for cleanup)
     pub(crate) allocator: std::sync::Arc<std::sync::Mutex<gpu_allocator::vulkan::Allocator>>,
+    /// Read-only texture properties
+    pub(crate) info: TextureInfo,
 }
 
 impl RendererTexture for Texture {
-    // No methods for now
+    fn info(&self) -> &TextureInfo {
+        &self.info
+    }
 }
 
 impl Drop for Texture {

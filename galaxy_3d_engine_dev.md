@@ -361,7 +361,7 @@ swapchain.present(image_idx)?;
 
 ---
 
-### 6. Resource Texture Architecture (Implémenté Phase 11)
+### 6. Resource Texture Architecture (Implémenté Phase 11 + 11b)
 
 **Decision**: Architecture à 3 niveaux de textures
 
@@ -369,14 +369,21 @@ swapchain.present(image_idx)?;
 
 | Niveau | Module | Rôle |
 |--------|--------|------|
-| Bas | `render::Texture` | Handle GPU brut (`dyn Trait`, backend-specific : vk::Image, etc.) |
+| Bas | `render::Texture` | Handle GPU brut (`dyn Trait`, backend-specific : vk::Image, etc.) + propriétés via `info()` |
 | Moyen | `resource::Texture` | Registre nommé : 1 GPU texture + N sous-régions nommées |
 | Haut | `scene::Texture` | Texture finale utilisée dans un material/mesh d'une scène 3D (à développer plus tard) |
 
-**Approche retenue** : Trait object (`dyn Texture`) — style C++ virtual
+**Niveau render (Phase 11b)** :
+- Trait `render::Texture` avec méthode `fn info(&self) -> &TextureInfo`
+- `TextureInfo` : propriétés lecture seule (width, height, format, usage, array_layers) + `is_array()`
+- `TextureDesc` supporte textures simples (`array_layers = 1`) et texture arrays (`array_layers > 1`)
+- `TextureData` enum : `Single(Vec<u8>)` pour texture simple, `Layers(Vec<TextureLayerData>)` pour upload multi-layer
+- Backend Vulkan crée `TYPE_2D` ou `TYPE_2D_ARRAY` selon `array_layers`
+
+**Approche retenue (niveau resource)** : Trait object (`dyn Texture`) — style C++ virtual
 
 - Un trait `resource::Texture` commun avec dispatch dynamique (vtable)
-- Des implémentations concrètes par type de texture GPU : `SimpleTexture`, `AtlasTexture`, `ArrayTexture`
+- Des implémentations concrètes par type de texture : `SimpleTexture`, `AtlasTexture`, `ArrayTexture`
 - Stockage uniforme dans le ResourceManager : `HashMap<String, Arc<dyn Texture>>`
 - Pas de `match`/`enum` pour différencier les types — le trait dispatch fait le travail
 - Downcast explicite via méthodes `as_atlas()`, `as_array()` sur le trait (Option A, pas `Any`)
@@ -579,6 +586,32 @@ swapchain.present(image_idx)?;
 1. Destroy remaining framebuffers
 2. Destroy command pool (libère command buffer)
 
+### Optimisation Future : Staging Buffer Unique pour Upload Multi-Layer
+
+**Contexte** : Lors de l'upload de données vers une texture array (N layers), plutôt que de créer N staging buffers séparés, on peut utiliser un **seul staging buffer** contenant toutes les données concaténées.
+
+**Principe** :
+```
+Staging Buffer unique (taille = somme de toutes les layers) :
+┌──────────────┬──────────────┬──────────────┬──────────────┐
+│ layer 0 data │ layer 1 data │ layer 2 data │ layer 3 data │
+│ offset: 0    │ offset: 4MB  │ offset: 8MB  │ offset: 12MB │
+└──────────────┴──────────────┴──────────────┴──────────────┘
+
+→ Un seul appel cmd_copy_buffer_to_image avec N régions BufferImageCopy :
+  BufferImageCopy[0] : buffer_offset=0,   base_array_layer=0
+  BufferImageCopy[1] : buffer_offset=4MB, base_array_layer=1
+  BufferImageCopy[2] : buffer_offset=8MB, base_array_layer=2
+  BufferImageCopy[3] : buffer_offset=12MB, base_array_layer=3
+```
+
+**Avantages** :
+- 1 allocation mémoire au lieu de N
+- 1 appel Vulkan au lieu de N
+- Moins de overhead CPU et GPU
+
+**Status** : À implémenter lors de l'optimisation du système de texture array. Pour la première implémentation, un staging buffer par layer est acceptable.
+
 ---
 
 ## 📦 Dependencies
@@ -699,6 +732,30 @@ loop {
 ---
 
 ## ✅ Changelog
+
+### 2026-02-02 - Phase 11b: Texture Array GPU Support & TextureInfo
+- **`render::TextureDesc` modifié**:
+  - ✅ Nouveau champ `array_layers: u32` (1 = texture simple, >1 = texture array)
+  - ✅ Champ `data` changé de `Option<Vec<u8>>` vers `Option<TextureData>`
+- **Nouveaux types `render`**:
+  - ✅ `TextureData` enum — `Single(Vec<u8>)` ou `Layers(Vec<TextureLayerData>)`
+  - ✅ `TextureLayerData` struct — `{ layer: u32, data: Vec<u8> }`
+  - ✅ `TextureInfo` struct — propriétés lecture seule (width, height, format, usage, array_layers) + `is_array()`
+- **Trait `render::Texture` étendu**:
+  - ✅ Méthode `fn info(&self) -> &TextureInfo` (était vide avant)
+- **Backend Vulkan**:
+  - ✅ `create_texture()` supporte `array_layers > 1`
+  - ✅ Image view `TYPE_2D_ARRAY` pour texture arrays, `TYPE_2D` pour textures simples
+  - ✅ Barriers couvrent toutes les layers
+  - ✅ Upload multi-layer (un staging buffer par layer, copie vers `base_array_layer`)
+  - ✅ Transition directe `UNDEFINED → SHADER_READ_ONLY` si aucune donnée
+  - ✅ Validation des indices de layer
+  - ✅ `VulkanTexture` stocke `TextureInfo`
+- **ResourceManager**:
+  - ✅ `create_simple_texture()` valide `array_layers == 1`
+  - ✅ `create_atlas_texture()` valide `array_layers == 1`
+  - ✅ `create_array_texture()` valide `array_layers > 1` + indices de layer
+- **Demo**: Adaptée au nouveau format `TextureData::Single`
 
 ### 2026-02-02 - Phase 11: Resource Textures
 - **Nouveau trait `resource::Texture`**:
@@ -889,6 +946,16 @@ loop {
 - [x] Régions/layers flexibles : passées à la création OU ajoutées plus tard
 
 **Status**: Système de textures resource complet, intégré au ResourceManager ✅
+
+### ✅ Phase 11b: Texture Array GPU Support & TextureInfo (DONE)
+- [x] `TextureDesc` étendu avec `array_layers` et `data: Option<TextureData>`
+- [x] Nouveaux types : `TextureData`, `TextureLayerData`, `TextureInfo`
+- [x] Trait `render::Texture` avec méthode `info()` retournant `&TextureInfo`
+- [x] Backend Vulkan : texture arrays GPU (TYPE_2D_ARRAY, upload multi-layer)
+- [x] ResourceManager : validation `array_layers` dans les 3 méthodes de création
+- [x] Demo adaptée au nouveau format
+
+**Status**: Support complet texture array GPU au niveau render, propriétés accessibles via `info()` ✅
 
 ### Phase 12: Index Buffers (TODO)
 - [ ] Index buffer creation

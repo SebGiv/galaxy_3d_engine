@@ -42,6 +42,13 @@ impl ResourceManager {
             )));
         }
 
+        // Simple textures must have array_layers == 1
+        if desc.array_layers != 1 {
+            return Err(Error::BackendError(format!(
+                "SimpleTexture requires array_layers = 1, got {}", desc.array_layers
+            )));
+        }
+
         let renderer_arc = Engine::renderer()?;
         let mut renderer = renderer_arc.lock()
             .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
@@ -73,6 +80,13 @@ impl ResourceManager {
         if self.textures.contains_key(&name) {
             return Err(Error::BackendError(format!(
                 "Texture '{}' already exists in ResourceManager", name
+            )));
+        }
+
+        // Atlas textures must have array_layers == 1 (single image with UV sub-regions)
+        if desc.array_layers != 1 {
+            return Err(Error::BackendError(format!(
+                "AtlasTexture requires array_layers = 1, got {}", desc.array_layers
             )));
         }
 
@@ -108,6 +122,23 @@ impl ResourceManager {
             return Err(Error::BackendError(format!(
                 "Texture '{}' already exists in ResourceManager", name
             )));
+        }
+
+        // Array textures must have array_layers > 1
+        if desc.array_layers <= 1 {
+            return Err(Error::BackendError(format!(
+                "ArrayTexture requires array_layers > 1, got {}", desc.array_layers
+            )));
+        }
+
+        // Validate that layer name mappings don't exceed array_layers
+        for layer_desc in layers {
+            if layer_desc.layer >= desc.array_layers {
+                return Err(Error::BackendError(format!(
+                    "ArrayLayerDesc '{}' references layer {} but array_layers = {}",
+                    layer_desc.name, layer_desc.layer, desc.array_layers
+                )));
+            }
         }
 
         let renderer_arc = Engine::renderer()?;
