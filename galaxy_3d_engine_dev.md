@@ -3,7 +3,7 @@
 > **Project**: Multi-API 3D Rendering Engine in Rust
 > **Author**: Claude & User collaboration
 > **Date**: 2026-01-26
-> **Status**: Phase 11 - Resource Textures ✅
+> **Status**: Phase 11c - Resource Texture Refactoring ✅
 
 ---
 
@@ -361,7 +361,7 @@ swapchain.present(image_idx)?;
 
 ---
 
-### 6. Resource Texture Architecture (Implémenté Phase 11 + 11b)
+### 6. Resource Texture Architecture (Implémenté Phase 11 + 11b + 11c)
 
 **Decision**: Architecture à 3 niveaux de textures
 
@@ -400,18 +400,27 @@ swapchain.present(image_idx)?;
 | `AtlasTexture` | 1 image, N sous-régions UV | `HashMap<String, AtlasRegion>` (u, v, width, height) |
 | `ArrayTexture` | Texture array GPU, N layers nommés | `HashMap<String, u32>` (layer index) |
 
-**Chaque implémentation contient** :
+**Chaque implémentation contient** (Phase 11c):
+- `renderer: Arc<Mutex<dyn Renderer>>` — référence au renderer (pour futures fonctionnalités)
 - `render_texture: Arc<dyn render::Texture>` — le handle GPU
 - `descriptor_set: Arc<dyn render::DescriptorSet>` — pour le binding au rendu
 - Ses données spécifiques (régions, layers, etc.)
 
+**Trait `resource::Texture` méthodes** (Phase 11c):
+- `render_texture()`, `descriptor_set()`, `region_names()` — accès aux données
+- `add_atlas_region(name, region) -> Result<()>` — implémentation par défaut (erreur)
+- `add_array_layer(name, layer) -> Result<()>` — implémentation par défaut (erreur)
+- Override dans `AtlasTexture` et `ArrayTexture` pour la vraie logique
+
 **Création des textures** :
 - Se fait via le `ResourceManager` qui appelle le `Renderer` en interne
 - L'utilisateur ne manipule pas le renderer directement pour les ressources
+- **Les fonctions retournent maintenant la texture créée** (`Arc<dyn Texture>`) pour usage immédiat
 - Régions/layers peuvent être passées à la création (`&[AtlasRegionDesc]` / `&[ArrayLayerDesc]`) ou ajoutées plus tard
-- Ex: `rm.create_simple_texture("skybox".into(), TextureDesc { ... })?`
-- Ex: `rm.create_atlas_texture("tileset".into(), desc, &[region1, region2])?`
-- Ex: `rm.create_atlas_texture("tileset".into(), desc, &[])?` puis `rm.add_atlas_region(...)?`
+- Ex: `let tex = rm.create_simple_texture("skybox".into(), TextureDesc { ... })?;`
+- Ex: `let atlas = rm.create_atlas_texture("tileset".into(), desc, &[region1, region2])?;`
+- Ex: `rm.create_atlas_texture("tileset".into(), desc, &[])?; rm.add_atlas_region(...)?`
+- **`get_texture()` renommé en `texture()`** (convention Rust, Phase 11c)
 
 **Nom du 3ème niveau** : `scene` (retenu)
 - S'étend naturellement : `scene::Texture`, `scene::Material`, `scene::Mesh`, `scene::Light`, `scene::Camera`
@@ -733,6 +742,27 @@ loop {
 
 ## ✅ Changelog
 
+### 2026-02-03 - Phase 11c: Resource Texture Refactoring
+- **Trait `resource::Texture` étendu**:
+  - ✅ Nouvelles méthodes avec implémentation par défaut :
+    - `add_atlas_region(name, region) -> Result<()>` — erreur par défaut
+    - `add_array_layer(name, layer) -> Result<()>` — erreur par défaut
+  - ✅ Override dans `AtlasTexture::add_atlas_region()` — ajoute région à la HashMap
+  - ✅ Override dans `ArrayTexture::add_array_layer()` — ajoute layer à la HashMap
+- **Structs modifiées (stockent le Renderer)**:
+  - ✅ `SimpleTexture` — nouveau champ `renderer: Arc<Mutex<dyn Renderer>>`
+  - ✅ `AtlasTexture` — nouveau champ `renderer: Arc<Mutex<dyn Renderer>>`
+  - ✅ `ArrayTexture` — nouveau champ `renderer: Arc<Mutex<dyn Renderer>>`
+  - ✅ Constructeurs `new()` prennent maintenant le renderer en premier argument
+- **ResourceManager amélioré**:
+  - ✅ `create_simple_texture()` retourne `Result<Arc<dyn Texture>>` (au lieu de `Result<()>`)
+  - ✅ `create_atlas_texture()` retourne `Result<Arc<dyn Texture>>` (au lieu de `Result<()>`)
+  - ✅ `create_array_texture()` retourne `Result<Arc<dyn Texture>>` (au lieu de `Result<()>`)
+  - ✅ `get_texture()` renommé en `texture()` (convention Rust)
+  - ✅ `add_atlas_region()` délègue au trait `Texture::add_atlas_region()`
+  - ✅ `add_array_layer()` délègue au trait `Texture::add_array_layer()`
+  - ✅ Logs info ajoutés pour la création de textures
+
 ### 2026-02-02 - Phase 11b: Texture Array GPU Support & TextureInfo
 - **`render::TextureDesc` modifié**:
   - ✅ Nouveau champ `array_layers: u32` (1 = texture simple, >1 = texture array)
@@ -956,6 +986,16 @@ loop {
 - [x] Demo adaptée au nouveau format
 
 **Status**: Support complet texture array GPU au niveau render, propriétés accessibles via `info()` ✅
+
+### ✅ Phase 11c: Resource Texture Refactoring (DONE)
+- [x] Trait `resource::Texture` avec méthodes par défaut `add_atlas_region()` et `add_array_layer()`
+- [x] Structs stockent `Arc<Mutex<dyn Renderer>>` pour futures fonctionnalités
+- [x] Fonctions `create_*_texture()` retournent `Arc<dyn Texture>` (au lieu de `Result<()>`)
+- [x] `get_texture()` renommé en `texture()` (convention Rust)
+- [x] ResourceManager délègue aux méthodes du trait
+- [x] Logs info ajoutés lors de la création de textures
+
+**Status**: API améliorée, textures accessibles directement après création, délégation aux traits ✅
 
 ### Phase 12: Index Buffers (TODO)
 - [ ] Index buffer creation

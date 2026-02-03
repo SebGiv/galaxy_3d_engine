@@ -10,10 +10,12 @@
 /// All types implement the `Texture` trait for uniform access via trait objects.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use crate::error::{Error, Result};
 use crate::renderer::{
     Texture as RenderTexture,
     DescriptorSet,
+    Renderer,
 };
 
 // ===== TRAIT =====
@@ -47,6 +49,24 @@ pub trait Texture: Send + Sync {
 
     /// Downcast to mutable ArrayTexture (returns None for other types)
     fn as_array_mut(&mut self) -> Option<&mut ArrayTexture> { None }
+
+    /// Add a region to this texture (atlas textures only)
+    ///
+    /// Default implementation returns an error. Override in AtlasTexture.
+    fn add_atlas_region(&mut self, _name: String, _region: AtlasRegion) -> Result<()> {
+        Err(Error::BackendError(
+            "This texture type does not support atlas regions".to_string()
+        ))
+    }
+
+    /// Add a layer mapping to this texture (array textures only)
+    ///
+    /// Default implementation returns an error. Override in ArrayTexture.
+    fn add_array_layer(&mut self, _name: String, _layer: u32) -> Result<()> {
+        Err(Error::BackendError(
+            "This texture type does not support array layers".to_string()
+        ))
+    }
 }
 
 // ===== DATA TYPES =====
@@ -89,6 +109,8 @@ pub struct ArrayLayerDesc {
 /// The simplest resource texture type — wraps a GPU texture and its
 /// descriptor set with no additional metadata.
 pub struct SimpleTexture {
+    #[allow(dead_code)]
+    renderer: Arc<Mutex<dyn Renderer>>,
     render_texture: Arc<dyn RenderTexture>,
     descriptor_set: Arc<dyn DescriptorSet>,
 }
@@ -96,10 +118,12 @@ pub struct SimpleTexture {
 impl SimpleTexture {
     /// Create a new simple texture resource
     pub fn new(
+        renderer: Arc<Mutex<dyn Renderer>>,
         render_texture: Arc<dyn RenderTexture>,
         descriptor_set: Arc<dyn DescriptorSet>,
     ) -> Self {
         Self {
+            renderer,
             render_texture,
             descriptor_set,
         }
@@ -134,6 +158,8 @@ impl Texture for SimpleTexture {
 ///
 /// Regions can be provided at creation time and/or added later.
 pub struct AtlasTexture {
+    #[allow(dead_code)]
+    renderer: Arc<Mutex<dyn Renderer>>,
     render_texture: Arc<dyn RenderTexture>,
     descriptor_set: Arc<dyn DescriptorSet>,
     regions: HashMap<String, AtlasRegion>,
@@ -144,6 +170,7 @@ impl AtlasTexture {
     ///
     /// Pass `&[]` for `regions` to create an empty atlas and add regions later.
     pub fn new(
+        renderer: Arc<Mutex<dyn Renderer>>,
         render_texture: Arc<dyn RenderTexture>,
         descriptor_set: Arc<dyn DescriptorSet>,
         regions: &[AtlasRegionDesc],
@@ -153,14 +180,15 @@ impl AtlasTexture {
             map.insert(desc.name.clone(), desc.region.clone());
         }
         Self {
+            renderer,
             render_texture,
             descriptor_set,
             regions: map,
         }
     }
 
-    /// Add or update a region in the atlas
-    pub fn add_region(&mut self, name: String, region: AtlasRegion) {
+    /// Add or update a region in the atlas (internal method)
+    fn add_region_internal(&mut self, name: String, region: AtlasRegion) {
         self.regions.insert(name, region);
     }
 
@@ -195,6 +223,11 @@ impl Texture for AtlasTexture {
     fn as_atlas_mut(&mut self) -> Option<&mut AtlasTexture> {
         Some(self)
     }
+
+    fn add_atlas_region(&mut self, name: String, region: AtlasRegion) -> Result<()> {
+        self.add_region_internal(name, region);
+        Ok(())
+    }
 }
 
 // ===== ARRAY TEXTURE =====
@@ -206,6 +239,8 @@ impl Texture for AtlasTexture {
 ///
 /// Layers can be provided at creation time and/or added later.
 pub struct ArrayTexture {
+    #[allow(dead_code)]
+    renderer: Arc<Mutex<dyn Renderer>>,
     render_texture: Arc<dyn RenderTexture>,
     descriptor_set: Arc<dyn DescriptorSet>,
     layers: HashMap<String, u32>,
@@ -216,6 +251,7 @@ impl ArrayTexture {
     ///
     /// Pass `&[]` for `layers` to create an empty array texture and add layers later.
     pub fn new(
+        renderer: Arc<Mutex<dyn Renderer>>,
         render_texture: Arc<dyn RenderTexture>,
         descriptor_set: Arc<dyn DescriptorSet>,
         layers: &[ArrayLayerDesc],
@@ -225,14 +261,15 @@ impl ArrayTexture {
             map.insert(desc.name.clone(), desc.layer);
         }
         Self {
+            renderer,
             render_texture,
             descriptor_set,
             layers: map,
         }
     }
 
-    /// Add or update a layer mapping
-    pub fn add_layer(&mut self, name: String, layer: u32) {
+    /// Add or update a layer mapping (internal method)
+    fn add_layer_internal(&mut self, name: String, layer: u32) {
         self.layers.insert(name, layer);
     }
 
@@ -266,5 +303,10 @@ impl Texture for ArrayTexture {
 
     fn as_array_mut(&mut self) -> Option<&mut ArrayTexture> {
         Some(self)
+    }
+
+    fn add_array_layer(&mut self, name: String, layer: u32) -> Result<()> {
+        self.add_layer_internal(name, layer);
+        Ok(())
     }
 }

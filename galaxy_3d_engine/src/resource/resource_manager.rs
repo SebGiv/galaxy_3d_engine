@@ -30,12 +30,13 @@ impl ResourceManager {
     /// Create a simple texture (no sub-regions) and register it
     ///
     /// Internally creates the GPU texture and descriptor set via the renderer.
+    /// Returns the created texture for immediate use.
     ///
     /// # Arguments
     ///
     /// * `name` - Unique name for this texture resource
     /// * `desc` - GPU texture description (format, size, data, etc.)
-    pub fn create_simple_texture(&mut self, name: String, desc: TextureDesc) -> Result<()> {
+    pub fn create_simple_texture(&mut self, name: String, desc: TextureDesc) -> Result<Arc<dyn Texture>> {
         if self.textures.contains_key(&name) {
             return Err(Error::BackendError(format!(
                 "Texture '{}' already exists in ResourceManager", name
@@ -50,21 +51,31 @@ impl ResourceManager {
         }
 
         let renderer_arc = Engine::renderer()?;
-        let mut renderer = renderer_arc.lock()
-            .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+        let render_texture;
+        let descriptor_set;
+        {
+            let mut renderer = renderer_arc.lock()
+                .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
 
-        let render_texture = renderer.create_texture(desc)?;
-        let descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
+            render_texture = renderer.create_texture(desc)?;
+            descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
+        }
 
-        let texture = SimpleTexture::new(render_texture, descriptor_set);
-        self.textures.insert(name, Arc::new(texture));
-        Ok(())
+        let texture: Arc<dyn Texture> = Arc::new(SimpleTexture::new(
+            renderer_arc,
+            render_texture,
+            descriptor_set,
+        ));
+        self.textures.insert(name.clone(), Arc::clone(&texture));
+        crate::engine_info!("galaxy3d::ResourceManager", "Created SimpleTexture resource '{}'", name);
+        Ok(texture)
     }
 
     /// Create an atlas texture and register it
     ///
     /// Pass `&[]` for `regions` to create an empty atlas and add regions later
     /// via `add_atlas_region()`.
+    /// Returns the created texture for immediate use.
     ///
     /// # Arguments
     ///
@@ -76,7 +87,7 @@ impl ResourceManager {
         name: String,
         desc: TextureDesc,
         regions: &[AtlasRegionDesc],
-    ) -> Result<()> {
+    ) -> Result<Arc<dyn Texture>> {
         if self.textures.contains_key(&name) {
             return Err(Error::BackendError(format!(
                 "Texture '{}' already exists in ResourceManager", name
@@ -91,21 +102,32 @@ impl ResourceManager {
         }
 
         let renderer_arc = Engine::renderer()?;
-        let mut renderer = renderer_arc.lock()
-            .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+        let render_texture;
+        let descriptor_set;
+        {
+            let mut renderer = renderer_arc.lock()
+                .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
 
-        let render_texture = renderer.create_texture(desc)?;
-        let descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
+            render_texture = renderer.create_texture(desc)?;
+            descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
+        }
 
-        let texture = AtlasTexture::new(render_texture, descriptor_set, regions);
-        self.textures.insert(name, Arc::new(texture));
-        Ok(())
+        let texture: Arc<dyn Texture> = Arc::new(AtlasTexture::new(
+            renderer_arc,
+            render_texture,
+            descriptor_set,
+            regions,
+        ));
+        self.textures.insert(name.clone(), Arc::clone(&texture));
+        crate::engine_info!("galaxy3d::ResourceManager", "Created AtlasTexture resource '{}' with {} initial regions", name, regions.len());
+        Ok(texture)
     }
 
     /// Create an array texture and register it
     ///
     /// Pass `&[]` for `layers` to create an empty array texture and add layers
     /// later via `add_array_layer()`.
+    /// Returns the created texture for immediate use.
     ///
     /// # Arguments
     ///
@@ -117,46 +139,59 @@ impl ResourceManager {
         name: String,
         desc: TextureDesc,
         layers: &[ArrayLayerDesc],
-    ) -> Result<()> {
+    ) -> Result<Arc<dyn Texture>> {
         if self.textures.contains_key(&name) {
             return Err(Error::BackendError(format!(
                 "Texture '{}' already exists in ResourceManager", name
             )));
         }
 
+        let array_layers = desc.array_layers;
+
         // Array textures must have array_layers > 1
-        if desc.array_layers <= 1 {
+        if array_layers <= 1 {
             return Err(Error::BackendError(format!(
-                "ArrayTexture requires array_layers > 1, got {}", desc.array_layers
+                "ArrayTexture requires array_layers > 1, got {}", array_layers
             )));
         }
 
         // Validate that layer name mappings don't exceed array_layers
         for layer_desc in layers {
-            if layer_desc.layer >= desc.array_layers {
+            if layer_desc.layer >= array_layers {
                 return Err(Error::BackendError(format!(
                     "ArrayLayerDesc '{}' references layer {} but array_layers = {}",
-                    layer_desc.name, layer_desc.layer, desc.array_layers
+                    layer_desc.name, layer_desc.layer, array_layers
                 )));
             }
         }
 
         let renderer_arc = Engine::renderer()?;
-        let mut renderer = renderer_arc.lock()
-            .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+        let render_texture;
+        let descriptor_set;
+        {
+            let mut renderer = renderer_arc.lock()
+                .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
 
-        let render_texture = renderer.create_texture(desc)?;
-        let descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
+            render_texture = renderer.create_texture(desc)?;
+            descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
+        }
 
-        let texture = ArrayTexture::new(render_texture, descriptor_set, layers);
-        self.textures.insert(name, Arc::new(texture));
-        Ok(())
+        let texture: Arc<dyn Texture> = Arc::new(ArrayTexture::new(
+            renderer_arc,
+            render_texture,
+            descriptor_set,
+            layers,
+        ));
+        self.textures.insert(name.clone(), Arc::clone(&texture));
+        crate::engine_info!("galaxy3d::ResourceManager", "Created ArrayTexture resource '{}' with {} array layers and {} named layers",
+            name, array_layers, layers.len());
+        Ok(texture)
     }
 
     // ===== TEXTURE ACCESS =====
 
     /// Get a texture by name
-    pub fn get_texture(&self, name: &str) -> Option<&Arc<dyn Texture>> {
+    pub fn texture(&self, name: &str) -> Option<&Arc<dyn Texture>> {
         self.textures.get(name)
     }
 
@@ -201,13 +236,8 @@ impl ResourceManager {
                 "Cannot mutate texture '{}': other references exist", texture_name
             )))?;
 
-        let atlas = texture.as_atlas_mut()
-            .ok_or_else(|| Error::BackendError(format!(
-                "Texture '{}' is not an AtlasTexture", texture_name
-            )))?;
-
-        atlas.add_region(region_name, region);
-        Ok(())
+        // Delegate to the trait method (will return error if not an AtlasTexture)
+        texture.add_atlas_region(region_name, region)
     }
 
     /// Add a layer mapping to an existing array texture
@@ -237,12 +267,7 @@ impl ResourceManager {
                 "Cannot mutate texture '{}': other references exist", texture_name
             )))?;
 
-        let array = texture.as_array_mut()
-            .ok_or_else(|| Error::BackendError(format!(
-                "Texture '{}' is not an ArrayTexture", texture_name
-            )))?;
-
-        array.add_layer(layer_name, layer);
-        Ok(())
+        // Delegate to the trait method (will return error if not an ArrayTexture)
+        texture.add_array_layer(layer_name, layer)
     }
 }
