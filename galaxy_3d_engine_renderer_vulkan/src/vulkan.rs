@@ -41,13 +41,13 @@ use crate::vulkan_context::GpuContext;
 /// Central object for creating resources and submitting commands.
 /// Completely separated from swapchain and presentation logic.
 pub struct VulkanRenderer {
-    /// Vulkan entry
+    /// Vulkan entry (needed for swapchain surface creation)
     _entry: ash::Entry,
-    /// Vulkan instance
-    instance: ash::Instance,
+    /// Vulkan instance reference (stored in GpuContext, kept here for swapchain creation)
+    _instance: ash::Instance,
     /// Physical device
     physical_device: vk::PhysicalDevice,
-    /// Logical device
+    /// Logical device reference (stored in GpuContext, kept here for convenience)
     device: Arc<ash::Device>,
 
     /// Graphics queue
@@ -55,9 +55,10 @@ pub struct VulkanRenderer {
     graphics_queue_family: u32,
     /// Present queue (may be same as graphics)
     present_queue: vk::Queue,
+    #[allow(dead_code)]
     present_queue_family: u32,
 
-    /// GPU memory allocator
+    /// GPU memory allocator reference (stored in GpuContext)
     allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
 
     /// Fences for submit synchronization
@@ -71,12 +72,8 @@ pub struct VulkanRenderer {
     /// Descriptor set layout
     descriptor_set_layout: vk::DescriptorSetLayout,
 
-    /// Debug utils loader (for validation layers)
-    debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
-    /// Debug messenger handle
-    debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
-
     /// Shared GPU context for all resources (textures, buffers)
+    /// Owns device, instance, and debug messenger destruction
     gpu_context: Arc<GpuContext>,
 }
 
@@ -410,6 +407,7 @@ impl VulkanRenderer {
                 .map_err(|e| Error::InitializationFailed(format!("Failed to create upload command pool: {:?}", e)))?;
 
             // Create shared GPU context for all resources
+            // GpuContext owns device, instance, and debug messenger destruction
             let allocator_arc = Arc::new(Mutex::new(allocator));
             let gpu_context = Arc::new(GpuContext::new(
                 (*device).clone(),
@@ -417,11 +415,14 @@ impl VulkanRenderer {
                 graphics_queue,
                 graphics_family_index,
                 upload_command_pool,
+                instance.clone(),
+                debug_utils_loader,
+                debug_messenger,
             ));
 
             Ok(Self {
                 _entry: entry,
-                instance,
+                _instance: instance,
                 physical_device,
                 device,
                 graphics_queue,
@@ -434,8 +435,6 @@ impl VulkanRenderer {
                 descriptor_pool,
                 texture_sampler,
                 descriptor_set_layout,
-                debug_utils_loader,
-                debug_messenger,
                 gpu_context,
             })
         }
@@ -527,7 +526,7 @@ impl VulkanRenderer {
         let surface = unsafe {
             ash_window::create_surface(
                 &self._entry,
-                &self.instance,
+                &self._instance,
                 display_handle.as_raw(),
                 window_handle.as_raw(),
                 None,
@@ -535,12 +534,12 @@ impl VulkanRenderer {
             .map_err(|e| Error::InitializationFailed(format!("Failed to create surface: {:?}", e)))?
         };
 
-        let surface_loader = ash::khr::surface::Instance::new(&self._entry, &self.instance);
+        let surface_loader = ash::khr::surface::Instance::new(&self._entry, &self._instance);
 
         Swapchain::new(
             self.device.clone(),
             self.physical_device,
-            &self.instance,
+            &self._instance,
             surface,
             surface_loader,
             self.present_queue,
@@ -1739,19 +1738,25 @@ impl Drop for VulkanRenderer {
             // Destroy descriptor pool
             self.device.destroy_descriptor_pool(self.descriptor_pool, None);
 
-            // Drop allocator explicitly before destroying device
-            ManuallyDrop::drop(&mut self.allocator);
-
-            // Destroy device
-            self.device.destroy_device(None);
-
-            // Destroy debug messenger if present
-            if let (Some(debug_utils), Some(debug_messenger)) = (&self.debug_utils_loader, self.debug_messenger) {
-                debug_utils.destroy_debug_utils_messenger(debug_messenger, None);
+            // Destroy upload command pool from GpuContext
+            {
+                let mut pool = self.gpu_context.upload_command_pool.lock().unwrap();
+                if *pool != vk::CommandPool::null() {
+                    self.device.destroy_command_pool(*pool, None);
+                    *pool = vk::CommandPool::null();
+                }
             }
 
-            // Destroy instance
-            self.instance.destroy_instance(None);
+            // Drop allocator explicitly BEFORE destroying device
+            ManuallyDrop::drop(&mut self.allocator);
+
+            // Cleanup debug config to prevent callbacks during device destruction
+            crate::debug::cleanup_debug_config();
+
+            // Destroy device and instance directly (not via GpuContext::drop)
+            // This avoids potential issues with drop ordering and callback exceptions on Windows
+            self.device.destroy_device(None);
+            self._instance.destroy_instance(None);
         }
     }
 }

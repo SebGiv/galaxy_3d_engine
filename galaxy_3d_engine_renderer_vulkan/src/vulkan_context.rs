@@ -8,18 +8,23 @@
 
 use ash::vk;
 use gpu_allocator::vulkan::Allocator;
+use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex};
 
 /// Shared GPU context for all Vulkan resources.
 ///
 /// This struct is shared (via `Arc`) by all GPU resources (textures, buffers, etc.)
 /// to avoid duplicating device/allocator/queue references in each resource.
+///
+/// Note: Device and instance destruction is handled by VulkanRenderer::drop()
+/// to avoid issues with drop ordering and callback exceptions on Windows.
 pub struct GpuContext {
     /// Vulkan logical device
     pub device: ash::Device,
 
     /// GPU memory allocator (shared, requires mutex for thread safety)
-    pub allocator: Arc<Mutex<Allocator>>,
+    /// Wrapped in ManuallyDrop to ensure it's dropped BEFORE the device is destroyed
+    pub allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
 
     /// Graphics queue for command submission
     pub graphics_queue: vk::Queue,
@@ -30,6 +35,18 @@ pub struct GpuContext {
     /// Reusable command pool for one-shot upload operations
     /// (created with TRANSIENT + RESET_COMMAND_BUFFER flags)
     pub upload_command_pool: Mutex<vk::CommandPool>,
+
+    /// Vulkan instance (kept for reference, destroyed by VulkanRenderer)
+    #[allow(dead_code)]
+    instance: ash::Instance,
+
+    /// Debug utils loader (for validation layers)
+    #[allow(dead_code)]
+    debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
+
+    /// Debug messenger handle
+    #[allow(dead_code)]
+    debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
 
 impl GpuContext {
@@ -42,31 +59,36 @@ impl GpuContext {
     /// * `graphics_queue` - Graphics queue for command submission
     /// * `graphics_queue_family` - Graphics queue family index
     /// * `upload_command_pool` - Command pool for upload operations
+    /// * `instance` - Vulkan instance
+    /// * `debug_utils_loader` - Debug utils loader (if validation enabled)
+    /// * `debug_messenger` - Debug messenger handle (if validation enabled)
     pub fn new(
         device: ash::Device,
         allocator: Arc<Mutex<Allocator>>,
         graphics_queue: vk::Queue,
         graphics_queue_family: u32,
         upload_command_pool: vk::CommandPool,
+        instance: ash::Instance,
+        debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
+        debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
     ) -> Self {
         Self {
             device,
-            allocator,
+            allocator: ManuallyDrop::new(allocator),
             graphics_queue,
             graphics_queue_family,
             upload_command_pool: Mutex::new(upload_command_pool),
+            instance,
+            debug_utils_loader,
+            debug_messenger,
         }
     }
 }
 
 impl Drop for GpuContext {
     fn drop(&mut self) {
-        unsafe {
-            // Destroy the upload command pool
-            let pool = *self.upload_command_pool.lock().unwrap();
-            if pool != vk::CommandPool::null() {
-                self.device.destroy_command_pool(pool, None);
-            }
-        }
+        // NOTE: Device and instance destruction is handled by VulkanRenderer::drop()
+        // to avoid issues with drop ordering and callback exceptions on Windows.
+        // This Drop impl intentionally does nothing.
     }
 }

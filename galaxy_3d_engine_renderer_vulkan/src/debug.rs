@@ -115,6 +115,20 @@ pub fn get_validation_stats() -> ValidationStats {
     VALIDATION_STATS.get_stats()
 }
 
+/// Cleanup debug configuration before shutdown
+/// This should be called before destroying the debug messenger to prevent
+/// callbacks from accessing invalid state during shutdown
+pub fn cleanup_debug_config() {
+    // Clear config first - this will make callbacks return early
+    if let Ok(mut config) = DEBUG_CONFIG.lock() {
+        *config = None;
+    }
+    // Clear message tracker
+    if let Ok(mut tracker) = MESSAGE_TRACKER.lock() {
+        *tracker = None;
+    }
+}
+
 /// Print validation statistics report
 pub fn print_validation_stats_report() {
     let stats = get_validation_stats();
@@ -164,6 +178,29 @@ pub unsafe extern "system" fn vulkan_debug_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _user_data: *mut std::os::raw::c_void,
 ) -> vk::Bool32 {
+    // Wrap everything in catch_unwind to prevent panics from propagating across FFI boundary
+    // (panics in extern "system" functions are undefined behavior)
+    let result = std::panic::catch_unwind(|| {
+        vulkan_debug_callback_inner(message_severity, message_type, p_callback_data)
+    });
+
+    match result {
+        Ok(ret) => ret,
+        Err(_) => vk::FALSE, // Panic occurred, ignore and continue
+    }
+}
+
+/// Inner implementation of the debug callback (can safely panic, will be caught)
+unsafe fn vulkan_debug_callback_inner(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+) -> vk::Bool32 {
+    // Early exit if callback data is null (can happen during shutdown)
+    if p_callback_data.is_null() {
+        return vk::FALSE;
+    }
+
     // Get callback data
     let callback_data = *p_callback_data;
     let message_id_name = if callback_data.p_message_id_name.is_null() {
@@ -181,8 +218,11 @@ pub unsafe extern "system" fn vulkan_debug_callback(
             .unwrap_or("Invalid UTF-8")
     };
 
-    // Get config
-    let config_guard = DEBUG_CONFIG.lock().unwrap();
+    // Get config (use try_lock to avoid panic during shutdown)
+    let config_guard = match DEBUG_CONFIG.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => return vk::FALSE, // Mutex poisoned or locked, ignore
+    };
     let config = match config_guard.as_ref() {
         Some(cfg) => cfg.clone(),
         None => return vk::FALSE, // No config, ignore
@@ -251,17 +291,21 @@ pub unsafe extern "system" fn vulkan_debug_callback(
         "General"
     };
 
-    // Track message for grouping
+    // Track message for grouping (use try_lock to avoid panic during shutdown)
     let occurrence_count = if config.enable_stats {
-        let mut tracker_guard = MESSAGE_TRACKER.lock().unwrap();
-        if let Some(tracker) = tracker_guard.as_mut() {
-            tracker.track_message(message)
-        } else {
-            // Initialize tracker if not done yet
-            *tracker_guard = Some(MessageTracker {
-                messages: HashMap::new(),
-            });
-            tracker_guard.as_mut().unwrap().track_message(message)
+        match MESSAGE_TRACKER.try_lock() {
+            Ok(mut tracker_guard) => {
+                if let Some(tracker) = tracker_guard.as_mut() {
+                    tracker.track_message(message)
+                } else {
+                    // Initialize tracker if not done yet
+                    *tracker_guard = Some(MessageTracker {
+                        messages: HashMap::new(),
+                    });
+                    tracker_guard.as_mut().unwrap().track_message(message)
+                }
+            }
+            Err(_) => 1, // Mutex poisoned or locked, use default count
         }
     } else {
         1
