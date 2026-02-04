@@ -52,7 +52,7 @@ Claude: "J'ai identifié l'erreur : [explication]. Je corrige maintenant en suiv
   - **Documentation Technique** :
     - `galaxy_3d_engine_tech_doc.md` : Documentation technique complète en anglais
     - `galaxy_3d_engine_tech_doc.fr.md` : Documentation technique complète en français
-  - **Mise à jour automatique** : Claude doit mettre à jour TOUTES ces documentations au fur et à mesure du développement
+  - **Mise à jour sur demande** : Claude doit mettre à jour ces documentations UNIQUEMENT quand l'utilisateur le demande explicitement
   - **Référence principale** : Claude doit se référer au dossier `doc/` pour comprendre comment fonctionne le moteur
 
 ---
@@ -66,11 +66,10 @@ Claude: "J'ai identifié l'erreur : [explication]. Je corrige maintenant en suiv
 1. 📋 **CRÉER UNE TODO LIST avec l'outil TodoWrite** contenant OBLIGATOIREMENT :
    - Toutes les étapes de développement (création fichiers, modifications, tests, etc.)
    - ⚠️ **OBLIGATOIRE** : "Mettre à jour galaxy_3d_engine_dev.md"
-   - ⚠️ **OBLIGATOIRE** : "Mettre à jour doc/galaxy_3d_engine.html" (si API publique change)
-   - ⚠️ **OBLIGATOIRE** : "Mettre à jour doc/galaxy_3d_engine_fr.html" (si API publique change)
-   - ⚠️ **OBLIGATOIRE** : "Mettre à jour doc/galaxy_3d_engine_tech_doc.md" (si architecture change)
-   - ⚠️ **OBLIGATOIRE** : "Mettre à jour doc/galaxy_3d_engine_tech_doc.fr.md" (si architecture change)
    - Étape finale de commit
+
+   📝 **Note sur la documentation** : Les mises à jour de `doc/` (HTML et tech docs) ne sont PAS automatiques.
+   Ajouter ces étapes UNIQUEMENT si l'utilisateur le demande explicitement.
 
 2. ✋ **Exposer clairement** ce qui va être fait (changements prévus, fichiers impactés, approche technique)
 
@@ -295,9 +294,9 @@ Texture
 - ✅ Facile à trouver ce qu'on cherche
 
 **Mise à jour** :
-- ♻️ **Automatique** : Claude doit mettre à jour la documentation HTML au fur et à mesure du développement du moteur
-- 📝 Ajouter les nouvelles structures/fonctions dès qu'elles sont implémentées
-- 🔄 Mettre à jour les exemples si l'API change
+- 📝 **Sur demande** : Claude doit mettre à jour la documentation HTML UNIQUEMENT quand l'utilisateur le demande
+- 📝 Ajouter les nouvelles structures/fonctions quand demandé
+- 🔄 Mettre à jour les exemples si l'API change (sur demande)
 - 🔗 Maintenir les liens entre sections (Renderer ↔ Traits)
 
 ---
@@ -395,16 +394,10 @@ Claude doit **toujours consulter le dossier `doc/`** pour :
    - Coder la feature (code + commentaires en anglais)
    - Mettre à jour `galaxy_3d_engine_dev.md` avec l'avancement
 
-4. **Documentation** (via agents esclaves en parallèle)
-   - ⚠️ **OBLIGATOIRE** : La mise à jour de `galaxy_3d_engine_dev.md` et de tous les fichiers du dossier `doc/` doit être déléguée à des **agents esclaves** (sub-agents) lancés en parallèle via l'outil Task
-   - Chaque fichier de documentation est mis à jour par un agent dédié, en arrière-plan
-   - Les agents reçoivent le contexte des changements et travaillent de manière autonome
-   - Fichiers concernés :
-     - `galaxy_3d_engine_dev.md` - Design document
-     - `doc/galaxy_3d_engine.html` (EN) - Documentation API
-     - `doc/galaxy_3d_engine_fr.html` (FR) - Documentation API
-     - `doc/galaxy_3d_engine_tech_doc.md` (EN) - Documentation technique
-     - `doc/galaxy_3d_engine_tech_doc.fr.md` (FR) - Documentation technique
+4. **Documentation**
+   - ⚠️ **OBLIGATOIRE** : Mettre à jour `galaxy_3d_engine_dev.md` avec l'avancement
+   - 📝 **Sur demande uniquement** : Les fichiers du dossier `doc/` (HTML et tech docs) ne sont mis à jour que si l'utilisateur le demande explicitement
+   - Si demandé, la mise à jour peut être déléguée à des agents esclaves en parallèle via l'outil Task
 
 5. **Commit**
    - Exposer le message de commit
@@ -421,7 +414,8 @@ Claude doit **toujours consulter le dossier `doc/`** pour :
 | Avant commit | Exposer le message de commit | "commit" / "commit/push" |
 | Code source | Écrire en anglais (commentaires + logs) | - |
 | Conversation | Parler en français | - |
-| Mise à jour doc | Automatique après chaque feature | - |
+| Mise à jour `galaxy_3d_engine_dev.md` | Automatique après chaque feature | - |
+| Mise à jour `doc/` (HTML, tech docs) | Sur demande explicite uniquement | "mets à jour la doc" |
 | Référence technique | Consulter `doc/` (tech doc) et `galaxy_3d_engine_dev.md` | - |
 | Comprendre le moteur | Lire `doc/galaxy_3d_engine_tech_doc.md` | - |
 
@@ -441,10 +435,10 @@ Claude doit **toujours consulter le dossier `doc/`** pour :
 
 ### Après Développement
 - [ ] J'ai mis à jour `galaxy_3d_engine_dev.md`
-- [ ] J'ai mis à jour la documentation HTML API (EN + FR)
-- [ ] J'ai mis à jour la documentation technique (EN + FR) si nécessaire
 - [ ] Les logs sont en anglais
 - [ ] J'ai consulté `doc/` pour vérifier la cohérence
+- [ ] (Si demandé) J'ai mis à jour la documentation HTML API (EN + FR)
+- [ ] (Si demandé) J'ai mis à jour la documentation technique (EN + FR)
 
 ---
 

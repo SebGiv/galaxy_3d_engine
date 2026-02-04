@@ -1,7 +1,7 @@
 # Galaxy3DEngine - Documentation Technique
 
-> **Version** : 0.1.0 (Phase 9 - API Backend-Agnostic Complétée)
-> **Dernière mise à jour** : 2026-01-30
+> **Version** : 0.1.0 (Phase 12 - Système Resource Mesh)
+> **Dernière mise à jour** : 2026-02-04
 > **Statut** : Cœur Prêt pour la Production, Fonctionnalités Avancées Prévues
 
 ---
@@ -131,8 +131,9 @@ galaxy_3d_engine/src/
 │   └── descriptor_set.rs  # Trait galaxy_3d_engine::galaxy3d::render::DescriptorSet
 └── resource/
     ├── mod.rs             # Déclarations de modules et ré-exports
-    ├── resource_manager.rs # Struct ResourceManager (stockage textures + méthodes de création)
-    └── texture.rs          # Trait Texture + SimpleTexture, AtlasTexture, ArrayTexture
+    ├── resource_manager.rs # Struct ResourceManager (stockage textures/meshes + méthodes de création)
+    ├── texture.rs          # Trait Texture + SimpleTexture, AtlasTexture, ArrayTexture
+    └── mesh.rs             # Système Mesh : Mesh, MeshEntry, MeshLOD, SubMesh + descripteurs
 ```
 
 ### galaxy_3d_engine_renderer_vulkan (Backend Vulkan)
@@ -323,15 +324,97 @@ rm.create_array_texture("terrain".into(), desc, &[layer1, layer2])?;
 
 // Les régions/couches peuvent aussi être ajoutées après la création
 rm.add_atlas_region("tileset", "new_tile".into(), AtlasRegion { ... })?;
-rm.add_array_layer("terrain", "snow".into(), 3)?;
+rm.add_array_layer("terrain", "snow".into(), 3, None)?;
 
 // Accès
-let tex = rm.get_texture("tileset").unwrap();
+let tex = rm.texture("tileset").unwrap();
 let atlas = tex.as_atlas().unwrap();
 let region = atlas.get_region("grass").unwrap();
 ```
 
 La mutation des régions/couches post-création utilise `Arc::get_mut` + downcast via `as_atlas_mut()`/`as_array_mut()` pour un accès mutable sûr.
+
+### Système de Mesh Ressource (Architecture 4 niveaux)
+
+Le moteur utilise une architecture de mesh à 4 niveaux pour le stockage structuré des buffers GPU :
+
+```
+resource::Mesh (groupe)
+├── name: "characters"
+├── vertex_buffer: Arc<render::Buffer>       (partagé par tous)
+├── index_buffer: Option<Arc<render::Buffer>> (partagé par tous, optionnel)
+├── vertex_layout: VertexLayout              (partagé par tous)
+├── index_type: IndexType                    (U16 ou U32)
+├── total_vertex_count: u32
+├── total_index_count: u32
+│
+└── meshes: HashMap<String, MeshEntry>
+    ├── "hero"
+    │   └── lods: Vec<MeshLOD>
+    │       ├── [0] LOD 0 (haute définition)
+    │       │   └── submeshes: HashMap<String, SubMesh>
+    │       │       ├── "body"  → { vertex_offset, vertex_count, index_offset, index_count, topology }
+    │       │       └── "armor" → { ... }
+    │       └── [1] LOD 1 (basse définition)
+    │           └── submeshes: { "body_lod1" → { ... } }
+    └── "enemy"
+        └── ...
+```
+
+| Niveau | Type | Objectif |
+|--------|------|----------|
+| 1 | `Mesh` | Groupe de meshes apparentés partageant les buffers (ex: tous les personnages) |
+| 2 | `MeshEntry` | Mesh individuel dans le groupe (ex: "hero", "enemy") |
+| 3 | `MeshLOD` | Niveau de détail pour une entrée de mesh |
+| 4 | `SubMesh` | Unité de draw call avec offsets dans les buffers partagés |
+
+**Décisions de conception clés :**
+
+- **Paire de buffers unique** : Toutes les entrées de mesh partagent les buffers vertex/index (efficace GPU)
+- **Buffer d'index optionnel** : `None` pour les meshes non-indexés (rare, mais supporté)
+- **Entrée de données brutes** : `MeshDesc` prend des données `Vec<u8>`, ResourceManager crée les buffers GPU
+- **Validation automatique** : Offsets des submeshes validés par rapport aux tailles des buffers
+- **Calcul automatique des counts** : Counts vertex/index calculés depuis la longueur des données et le stride
+
+**Utilisation de l'API :**
+
+```rust
+// Création via ResourceManager (crée les buffers GPU depuis les données brutes)
+let mesh = resource_manager.create_mesh("characters".to_string(), MeshDesc {
+    vertex_data: vertex_bytes,      // Données vertex brutes entrelacées
+    index_data: Some(index_bytes),  // Données d'index brutes (optionnel)
+    vertex_layout: layout,          // Définit le stride pour le calcul du count de vertex
+    index_type: IndexType::U16,     // Définit le stride pour le calcul du count d'index
+    meshes: vec![
+        MeshEntryDesc {
+            name: "hero".to_string(),
+            lods: vec![
+                MeshLODDesc {
+                    lod_index: 0,
+                    submeshes: vec![
+                        SubMeshDesc {
+                            name: "body".to_string(),
+                            vertex_offset: 0,
+                            vertex_count: 5000,
+                            index_offset: 0,
+                            index_count: 15000,
+                            topology: PrimitiveTopology::TriangleList,
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+})?;
+
+// Accès
+let submesh = mesh.submesh("hero", 0, "body")?;
+
+// Modification (post-création)
+resource_manager.add_mesh_entry("characters", MeshEntryDesc { ... })?;
+resource_manager.add_mesh_lod("characters", "hero", MeshLODDesc { ... })?;
+resource_manager.add_submesh("characters", "hero", 1, SubMeshDesc { ... })?;
+```
 
 ---
 
@@ -1242,10 +1325,11 @@ pub fn print_validation_stats_report();
 
 **Phase 10 : ResourceManager** — Singleton vide pour le stockage centralisé des ressources
 **Phase 11 : Textures Ressource** — Trait `resource::Texture` avec SimpleTexture, AtlasTexture, ArrayTexture + API texture du ResourceManager
+**Phase 12 : Meshes Ressource** — Système `resource::Mesh` avec hiérarchie 4 niveaux (Mesh > MeshEntry > MeshLOD > SubMesh), MeshDesc avec entrée de données brutes, création automatique des buffers et validation
 
-### Caractéristiques prévues (Phase 12+)
+### Caractéristiques prévues (Phase 13+)
 
-**Phase 12+ : Fonctionnalités texture avancées**
+**Phase 13+ : Fonctionnalités texture avancées**
 
 - Textures sans liaison (indexation de descripteur)
 - Textures virtuelles
@@ -1336,7 +1420,8 @@ let renderer = create_renderer("d3d12", &window, config)?;
 | `TextureFormat` | `R8G8B8A8_SRGB`, `B8G8R8A8_SRGB`, `D32_FLOAT`, etc. |
 | `TextureUsage` | `Sampled`, `RenderTarget`, `SampledAndRenderTarget`, `DepthStencil` |
 | `ShaderStage` | `Vertex`, `Fragment`, `Compute` |
-| `PrimitiveTopology` | `TriangleList`, `LineList`, `PointList` |
+| `PrimitiveTopology` | `TriangleList`, `TriangleStrip`, `LineList`, `PointList` |
+| `IndexType` | `U16`, `U32` |
 | `LoadOp` | `Load`, `Clear`, `DontCare` |
 | `StoreOp` | `Store`, `DontCare` |
 | `ImageLayout` | `Undefined`, `ColorAttachment`, `ShaderReadOnly`, `PresentSrc`, etc. |

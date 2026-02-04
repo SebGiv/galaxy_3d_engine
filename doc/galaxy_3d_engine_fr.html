@@ -287,6 +287,14 @@
                         <li><a href="#resource-texture-manager">API Texture du ResourceManager</a></li>
                     </ul>
                 </li>
+                <li>
+                    <span class="toc-toggle" onclick="toggleSection('resource-mesh-section')">Meshes Ressource</span>
+                    <ul id="resource-mesh-section">
+                        <li><a href="#resource-mesh-hierarchy">Hiérarchie à 4 Niveaux</a></li>
+                        <li><a href="#resource-mesh-descriptors">Structures de Descripteurs</a></li>
+                        <li><a href="#resource-mesh-manager">API Mesh du ResourceManager</a></li>
+                    </ul>
+                </li>
             </ul>
         </nav>
 
@@ -1657,15 +1665,22 @@ rm_guard.add_atlas_region("sprites", "player".into(),
                     </h3>
                     <div id="resource-array-texture" class="accordion-content">
                         <p>Encapsule un tableau de textures GPU où chaque couche est identifiée par un nom et mappée à un index.</p>
-                        <pre><code>// Créer avec des couches
+                        <pre><code>// Structure ArrayLayerDesc
+pub struct ArrayLayerDesc {
+    pub name: String,
+    pub layer: u32,
+    pub data: Option&lt;Vec&lt;u8&gt;&gt;,  // Données pixels optionnelles
+}
+
+// Créer avec des couches
 rm_guard.create_array_texture("terrain".into(), desc, &amp;[
-    ArrayLayerDesc { name: "grass".into(), layer: 0 },
-    ArrayLayerDesc { name: "dirt".into(), layer: 1 },
+    ArrayLayerDesc { name: "grass".into(), layer: 0, data: Some(grass_pixels) },
+    ArrayLayerDesc { name: "dirt".into(), layer: 1, data: Some(dirt_pixels) },
 ])?;
 
 // Ou créer vide et ajouter plus tard
 rm_guard.create_array_texture("materials".into(), desc, &amp;[])?;
-rm_guard.add_array_layer("materials", "wood".into(), 0)?;</code></pre>
+rm_guard.add_array_layer("materials", "wood".into(), 0, Some(&amp;wood_pixels))?;</code></pre>
                     </div>
                 </div>
 
@@ -1678,7 +1693,7 @@ rm_guard.add_array_layer("materials", "wood".into(), 0)?;</code></pre>
                     </h3>
                     <div id="rm-create-simple" class="accordion-content">
                         <p><strong>Validation :</strong> <code>desc.array_layers</code> doit être 1.</p>
-                        <pre><code>pub fn create_simple_texture(&amp;mut self, name: String, desc: TextureDesc) -&gt; Result&lt;()&gt;</code></pre>
+                        <pre><code>pub fn create_simple_texture(&amp;mut self, name: String, desc: TextureDesc) -&gt; Result&lt;Arc&lt;dyn Texture&gt;&gt;</code></pre>
                     </div>
                 </div>
 
@@ -1689,7 +1704,7 @@ rm_guard.add_array_layer("materials", "wood".into(), 0)?;</code></pre>
                     </h3>
                     <div id="rm-create-atlas" class="accordion-content">
                         <p><strong>Validation :</strong> <code>desc.array_layers</code> doit être 1 (atlas utilise des régions UV, pas des couches array).</p>
-                        <pre><code>pub fn create_atlas_texture(&amp;mut self, name: String, desc: TextureDesc, regions: &amp;[AtlasRegionDesc]) -&gt; Result&lt;()&gt;</code></pre>
+                        <pre><code>pub fn create_atlas_texture(&amp;mut self, name: String, desc: TextureDesc, regions: &amp;[AtlasRegionDesc]) -&gt; Result&lt;Arc&lt;dyn Texture&gt;&gt;</code></pre>
                     </div>
                 </div>
 
@@ -1700,17 +1715,17 @@ rm_guard.add_array_layer("materials", "wood".into(), 0)?;</code></pre>
                     </h3>
                     <div id="rm-create-array" class="accordion-content">
                         <p><strong>Validation :</strong> <code>desc.array_layers</code> doit être &gt; 1. Les indices de couche dans <code>layers</code> doivent être &lt; <code>desc.array_layers</code>.</p>
-                        <pre><code>pub fn create_array_texture(&amp;mut self, name: String, desc: TextureDesc, layers: &amp;[ArrayLayerDesc]) -&gt; Result&lt;()&gt;</code></pre>
+                        <pre><code>pub fn create_array_texture(&amp;mut self, name: String, desc: TextureDesc, layers: &amp;[ArrayLayerDesc]) -&gt; Result&lt;Arc&lt;dyn Texture&gt;&gt;</code></pre>
                     </div>
                 </div>
 
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('rm-get-texture')">
-                        ResourceManager::get_texture() / remove_texture() / texture_count()
+                        ResourceManager::texture() / remove_texture() / texture_count()
                         <span class="summary">Accéder et gérer les textures enregistrées</span>
                     </h3>
                     <div id="rm-get-texture" class="accordion-content">
-                        <pre><code>pub fn get_texture(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;Arc&lt;dyn Texture&gt;&gt;
+                        <pre><code>pub fn texture(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;Arc&lt;dyn Texture&gt;&gt;
 pub fn remove_texture(&amp;mut self, name: &amp;str) -&gt; bool
 pub fn texture_count(&amp;self) -&gt; usize</code></pre>
                     </div>
@@ -1724,8 +1739,392 @@ pub fn texture_count(&amp;self) -&gt; usize</code></pre>
                     <div id="rm-add-region-layer" class="accordion-content">
                         <p>Utilise <code>Arc::get_mut</code> pour un accès mutable sûr. Échoue si d'autres références à l'Arc existent.</p>
                         <pre><code>pub fn add_atlas_region(&amp;mut self, texture_name: &amp;str, region_name: String, region: AtlasRegion) -&gt; Result&lt;()&gt;
-pub fn add_array_layer(&amp;mut self, texture_name: &amp;str, layer_name: String, layer: u32) -&gt; Result&lt;()&gt;</code></pre>
+pub fn add_array_layer(&amp;mut self, texture_name: &amp;str, layer_name: String, layer: u32, data: Option&lt;&amp;[u8]&gt;) -&gt; Result&lt;()&gt;</code></pre>
                     </div>
+                </div>
+            </section>
+
+            <!-- Meshes Ressource -->
+            <section id="resource-mesh">
+                <a href="#toc" class="back-to-toc">↑ Table des Matières</a>
+                <h2>Meshes Ressource</h2>
+                <p>Types de meshes au niveau ressource qui encapsulent les buffers GPU bas niveau avec une hiérarchie structurée à 4 niveaux. Partie du système de gestion des ressources :</p>
+                <ul>
+                    <li><strong>render::Buffer</strong> — Buffers GPU (bas niveau, spécifique au backend)</li>
+                    <li><strong>resource::Mesh</strong> — Ressource nommée avec entrées, LODs et submeshes (ce module)</li>
+                    <li><strong>scene::Mesh</strong> — Objet de scène (futur)</li>
+                </ul>
+
+                <h3 id="resource-mesh-hierarchy">Hiérarchie à 4 Niveaux</h3>
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-mesh-hierarchy-detail')">
+                        Vue d'Ensemble de la Hiérarchie
+                        <span class="summary">Mesh → MeshEntry → MeshLOD → SubMesh</span>
+                    </h3>
+                    <div id="resource-mesh-hierarchy-detail" class="accordion-content">
+                        <p>Le système de mesh utilise une hiérarchie à 4 niveaux conçue pour les modèles 3D complexes avec plusieurs parties, niveaux de LOD et matériaux :</p>
+                        <pre><code>Mesh (ressource groupe)
+├── name: "characters"
+├── vertex_buffer: Arc&lt;dyn Buffer&gt;       // Partagé par tous
+├── index_buffer: Option&lt;Arc&lt;dyn Buffer&gt;&gt; // Partagé par tous (optionnel)
+├── vertex_layout: VertexLayout           // Partagé par tous
+├── index_type: IndexType                 // U16 ou U32
+├── total_vertex_count: u32
+├── total_index_count: u32
+│
+└── meshes: HashMap&lt;String, MeshEntry&gt;
+    ├── "hero" → MeshEntry
+    │   └── lods: Vec&lt;MeshLOD&gt;
+    │       ├── [0] LOD 0 (haute définition)
+    │       │   └── submeshes: HashMap&lt;String, SubMesh&gt;
+    │       │       ├── "body"  → SubMesh { vertex_offset, vertex_count, index_offset, index_count, topology }
+    │       │       └── "armor" → SubMesh { ... }
+    │       └── [1] LOD 1 (basse définition)
+    │           └── submeshes: { "body_lod1" → ... }
+    └── "enemy" → MeshEntry
+        └── ...</code></pre>
+                        <p><strong>Principes de Conception :</strong></p>
+                        <ul>
+                            <li>Paire de buffers unique par Mesh : Toutes les entrées partagent les buffers vertex/index (efficace GPU)</li>
+                            <li>Accès nommé : Entrées et submeshes accessibles par noms de chaînes</li>
+                            <li>Entrée de données brutes : MeshDesc prend des <code>Vec&lt;u8&gt;</code>, ResourceManager crée les buffers GPU</li>
+                            <li>Validation automatique : Offsets des submeshes validés par rapport aux tailles des buffers</li>
+                            <li>Calcul automatique des counts : Counts vertex/index calculés depuis la longueur des données et le stride</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-mesh-struct')">
+                        Mesh
+                        <span class="summary">Ressource groupe mesh de niveau supérieur</span>
+                    </h3>
+                    <div id="resource-mesh-struct" class="accordion-content">
+                        <p>La ressource mesh de niveau supérieur contenant les buffers GPU partagés et les entrées nommées.</p>
+                        <pre><code>pub struct Mesh {
+    name: String,
+    vertex_buffer: Arc&lt;dyn render::Buffer&gt;,
+    index_buffer: Option&lt;Arc&lt;dyn render::Buffer&gt;&gt;,
+    vertex_layout: VertexLayout,
+    index_type: IndexType,
+    total_vertex_count: u32,
+    total_index_count: u32,
+    meshes: HashMap&lt;String, MeshEntry&gt;,
+}
+
+impl Mesh {
+    pub fn name(&amp;self) -&gt; &amp;str;
+    pub fn vertex_buffer(&amp;self) -&gt; &amp;Arc&lt;dyn render::Buffer&gt;;
+    pub fn index_buffer(&amp;self) -&gt; Option&lt;&amp;Arc&lt;dyn render::Buffer&gt;&gt;;
+    pub fn is_indexed(&amp;self) -&gt; bool;
+    pub fn vertex_layout(&amp;self) -&gt; &amp;VertexLayout;
+    pub fn index_type(&amp;self) -&gt; IndexType;
+    pub fn total_vertex_count(&amp;self) -&gt; u32;
+    pub fn total_index_count(&amp;self) -&gt; u32;
+
+    // Accès aux entrées
+    pub fn mesh_entry(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;MeshEntry&gt;;
+    pub fn mesh_entry_names(&amp;self) -&gt; Vec&lt;&amp;str&gt;;
+    pub fn mesh_entry_count(&amp;self) -&gt; usize;
+
+    // Accès direct au submesh (raccourci)
+    pub fn submesh(&amp;self, entry_name: &amp;str, lod: usize, submesh_name: &amp;str) -&gt; Option&lt;&amp;SubMesh&gt;;
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-mesh-entry')">
+                        MeshEntry
+                        <span class="summary">Mesh nommé dans un groupe (ex: "hero", "enemy")</span>
+                    </h3>
+                    <div id="resource-mesh-entry" class="accordion-content">
+                        <p>Un mesh nommé dans un groupe, contenant des niveaux de LOD. Le nom de l'entrée est la clé dans le HashMap du Mesh parent.</p>
+                        <pre><code>pub struct MeshEntry {
+    lods: Vec&lt;MeshLOD&gt;,  // Index 0 = plus détaillé
+}
+
+impl MeshEntry {
+    pub fn lod(&amp;self, index: usize) -&gt; Option&lt;&amp;MeshLOD&gt;;
+    pub fn lod_count(&amp;self) -&gt; usize;
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-mesh-lod')">
+                        MeshLOD
+                        <span class="summary">Niveau de détail contenant des submeshes nommés</span>
+                    </h3>
+                    <div id="resource-mesh-lod" class="accordion-content">
+                        <p>Un niveau de détail contenant des submeshes nommés (groupes de matériaux). LOD 0 est le plus détaillé.</p>
+                        <pre><code>pub struct MeshLOD {
+    submeshes: HashMap&lt;String, SubMesh&gt;,
+}
+
+impl MeshLOD {
+    pub fn submesh(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;SubMesh&gt;;
+    pub fn submesh_names(&amp;self) -&gt; Vec&lt;&amp;str&gt;;
+    pub fn submesh_count(&amp;self) -&gt; usize;
+    pub fn submeshes(&amp;self) -&gt; impl Iterator&lt;Item = (&amp;str, &amp;SubMesh)&gt;;
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-mesh-submesh')">
+                        SubMesh
+                        <span class="summary">Région dessinable avec offsets de buffer</span>
+                    </h3>
+                    <div id="resource-mesh-submesh" class="accordion-content">
+                        <p>Une région dessinable dans les buffers partagés. Contient tous les paramètres pour un draw call. Les champs index sont ignorés si le Mesh parent n'est pas indexé.</p>
+                        <pre><code>pub struct SubMesh {
+    vertex_offset: u32,
+    vertex_count: u32,
+    index_offset: u32,   // Ignoré si mesh non-indexé
+    index_count: u32,    // Ignoré si mesh non-indexé
+    topology: PrimitiveTopology,
+}
+
+impl SubMesh {
+    pub fn vertex_offset(&amp;self) -&gt; u32;
+    pub fn vertex_count(&amp;self) -&gt; u32;
+    pub fn index_offset(&amp;self) -&gt; u32;
+    pub fn index_count(&amp;self) -&gt; u32;
+    pub fn topology(&amp;self) -&gt; PrimitiveTopology;
+}</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-mesh-index-type')">
+                        IndexType
+                        <span class="summary">Type d'élément du buffer d'indices</span>
+                    </h3>
+                    <div id="resource-mesh-index-type" class="accordion-content">
+                        <p>Spécifie le type d'élément pour les buffers d'indices.</p>
+                        <pre><code>pub enum IndexType {
+    U16,  // Indices 16-bit (max 65535 vertices)
+    U32,  // Indices 32-bit (max ~4 milliards de vertices)
+}
+
+impl IndexType {
+    pub fn size_bytes(&amp;self) -&gt; u32;  // Retourne 2 pour U16, 4 pour U32
+}</code></pre>
+                    </div>
+                </div>
+
+                <h3 id="resource-mesh-descriptors">Structures de Descripteurs</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-mesh-desc')">
+                        MeshDesc
+                        <span class="summary">Descripteur de création de mesh avec données brutes</span>
+                    </h3>
+                    <div id="resource-mesh-desc" class="accordion-content">
+                        <p>Décrit un mesh pour sa création. Utilise des données d'octets bruts — le ResourceManager crée les buffers GPU en interne.</p>
+                        <pre><code>pub struct MeshDesc {
+    pub vertex_data: Vec&lt;u8&gt;,           // Données vertex brutes entrelacées
+    pub index_data: Option&lt;Vec&lt;u8&gt;&gt;,    // Données d'indices brutes (None si non-indexé)
+    pub vertex_layout: VertexLayout,     // Définit le stride pour le count de vertex
+    pub index_type: IndexType,           // U16 ou U32
+    pub meshes: Vec&lt;MeshEntryDesc&gt;,      // Entrées initiales (peut être vide)
+}</code></pre>
+                        <p><strong>Validation :</strong></p>
+                        <ul>
+                            <li><code>vertex_data.len()</code> doit être divisible par <code>vertex_layout.stride()</code></li>
+                            <li>Si <code>index_data</code> est fourni, sa longueur doit être divisible par <code>index_type.size_bytes()</code></li>
+                        </ul>
+                        <p><strong>Exemple :</strong></p>
+                        <pre><code>let desc = MeshDesc {
+    vertex_data: vertex_bytes,
+    index_data: Some(index_bytes),
+    vertex_layout: VertexLayout {
+        bindings: vec![VertexBinding { binding: 0, stride: 20, input_rate: VertexInputRate::Vertex }],
+        attributes: vec![
+            VertexAttribute { location: 0, binding: 0, format: VertexFormat::Float3, offset: 0 },
+            VertexAttribute { location: 1, binding: 0, format: VertexFormat::Float2, offset: 12 },
+        ],
+    },
+    index_type: IndexType::U16,
+    meshes: vec![
+        MeshEntryDesc {
+            name: "hero".into(),
+            lods: vec![
+                MeshLODDesc {
+                    lod_index: 0,
+                    submeshes: vec![
+                        SubMeshDesc {
+                            name: "body".into(),
+                            vertex_offset: 0,
+                            vertex_count: 5000,
+                            index_offset: 0,
+                            index_count: 15000,
+                            topology: PrimitiveTopology::TriangleList,
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+};</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('resource-mesh-entry-desc')">
+                        MeshEntryDesc / MeshLODDesc / SubMeshDesc
+                        <span class="summary">Descripteurs Entry, LOD et SubMesh</span>
+                    </h3>
+                    <div id="resource-mesh-entry-desc" class="accordion-content">
+                        <pre><code>pub struct MeshEntryDesc {
+    pub name: String,              // Nom de l'entrée (clé dans le HashMap meshes)
+    pub lods: Vec&lt;MeshLODDesc&gt;,
+}
+
+pub struct MeshLODDesc {
+    pub lod_index: usize,          // Niveau LOD (0 = plus détaillé)
+    pub submeshes: Vec&lt;SubMeshDesc&gt;,
+}
+
+pub struct SubMeshDesc {
+    pub name: String,              // Nom du SubMesh (clé dans le HashMap submeshes)
+    pub vertex_offset: u32,
+    pub vertex_count: u32,
+    pub index_offset: u32,         // Ignoré si mesh non-indexé
+    pub index_count: u32,          // Ignoré si mesh non-indexé
+    pub topology: PrimitiveTopology,
+}</code></pre>
+                    </div>
+                </div>
+
+                <h3 id="resource-mesh-manager">API Mesh du ResourceManager</h3>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('rm-create-mesh')">
+                        ResourceManager::create_mesh()
+                        <span class="summary">Créer et enregistrer une ressource mesh</span>
+                    </h3>
+                    <div id="rm-create-mesh" class="accordion-content">
+                        <p>Crée les buffers GPU à partir des données brutes et enregistre la ressource mesh. Retourne le mesh créé pour utilisation immédiate.</p>
+                        <pre><code>pub fn create_mesh(&amp;mut self, name: String, desc: MeshDesc) -&gt; Result&lt;Arc&lt;Mesh&gt;&gt;</code></pre>
+                        <p><strong>Validation :</strong></p>
+                        <ul>
+                            <li>La taille des données vertex doit être divisible par le stride</li>
+                            <li>La taille des données index (si présentes) doit être divisible par la taille de l'élément d'index</li>
+                            <li>Les plages SubMesh doivent être dans les limites des buffers</li>
+                        </ul>
+                        <p><strong>Exemple :</strong></p>
+                        <pre><code>let rm = Engine::resource_manager()?;
+let mut rm_guard = rm.lock().unwrap();
+
+let mesh = rm_guard.create_mesh("characters".into(), MeshDesc {
+    vertex_data: vertex_bytes,
+    index_data: Some(index_bytes),
+    vertex_layout,
+    index_type: IndexType::U16,
+    meshes: vec![
+        MeshEntryDesc {
+            name: "hero".into(),
+            lods: vec![
+                MeshLODDesc {
+                    lod_index: 0,
+                    submeshes: vec![
+                        SubMeshDesc {
+                            name: "body".into(),
+                            vertex_offset: 0,
+                            vertex_count: 5000,
+                            index_offset: 0,
+                            index_count: 15000,
+                            topology: PrimitiveTopology::TriangleList,
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+})?;</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('rm-mesh-access')">
+                        ResourceManager::mesh() / remove_mesh() / mesh_count()
+                        <span class="summary">Accéder et gérer les meshes enregistrés</span>
+                    </h3>
+                    <div id="rm-mesh-access" class="accordion-content">
+                        <pre><code>pub fn mesh(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;Arc&lt;Mesh&gt;&gt;
+pub fn remove_mesh(&amp;mut self, name: &amp;str) -&gt; bool
+pub fn mesh_count(&amp;self) -&gt; usize</code></pre>
+                        <p><strong>Exemple :</strong></p>
+                        <pre><code>// Accéder à un mesh
+if let Some(mesh) = rm_guard.mesh("characters") {
+    let vb = mesh.vertex_buffer();
+    let ib = mesh.index_buffer();
+
+    // Accès via mesh_entry() -&gt; lod() -&gt; submesh()
+    if let Some(hero) = mesh.mesh_entry("hero") {
+        if let Some(lod0) = hero.lod(0) {
+            for (name, submesh) in lod0.submeshes() {
+                println!("Dessin du submesh: {}", name);
+                // Dessiner le submesh...
+            }
+        }
+    }
+
+    // Ou utiliser la méthode raccourci
+    if let Some(submesh) = mesh.submesh("hero", 0, "body") {
+        // Accès direct au submesh
+    }
+}
+
+// Supprimer un mesh
+rm_guard.remove_mesh("old_model");</code></pre>
+                    </div>
+                </div>
+
+                <div class="api-item">
+                    <h3 onclick="toggleAccordion('rm-add-mesh-parts')">
+                        ResourceManager::add_mesh_entry() / add_mesh_lod() / add_submesh()
+                        <span class="summary">Ajouter des entries, LODs et submeshes après création</span>
+                    </h3>
+                    <div id="rm-add-mesh-parts" class="accordion-content">
+                        <p>Ajouter des éléments de hiérarchie à des meshes existants après leur création. Utilise <code>Arc::get_mut</code> pour un accès mutable sûr.</p>
+                        <pre><code>pub fn add_mesh_entry(&amp;mut self, mesh_name: &amp;str, desc: MeshEntryDesc) -&gt; Result&lt;()&gt;
+pub fn add_mesh_lod(&amp;mut self, mesh_name: &amp;str, entry_name: &amp;str, desc: MeshLODDesc) -&gt; Result&lt;()&gt;
+pub fn add_submesh(&amp;mut self, mesh_name: &amp;str, entry_name: &amp;str, lod_index: usize, desc: SubMeshDesc) -&gt; Result&lt;()&gt;</code></pre>
+                        <p><strong>Exemple :</strong></p>
+                        <pre><code>// Ajouter une nouvelle entrée à un mesh existant
+rm_guard.add_mesh_entry("characters", MeshEntryDesc {
+    name: "enemy".into(),
+    lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![...] }],
+})?;
+
+// Ajouter un nouveau niveau de LOD à une entrée existante
+rm_guard.add_mesh_lod("characters", "hero", MeshLODDesc {
+    lod_index: 1,  // LOD 1 (moins détaillé)
+    submeshes: vec![SubMeshDesc {
+        name: "body_lod1".into(),
+        vertex_offset: 5000, vertex_count: 2000,
+        index_offset: 15000, index_count: 6000,
+        topology: PrimitiveTopology::TriangleList,
+    }],
+})?;
+
+// Ajouter un submesh à un LOD existant
+rm_guard.add_submesh("characters", "hero", 0, SubMeshDesc {
+    name: "cape".into(),
+    vertex_offset: 7000,
+    vertex_count: 500,
+    index_offset: 21000,
+    index_count: 1500,
+    topology: PrimitiveTopology::TriangleList,
+})?;</code></pre>
+                    </div>
+                </div>
+
+                <div class="note">
+                    <strong>Rendu avec les Meshes :</strong> Utilisez <code>mesh.vertex_buffer()</code> et <code>mesh.index_buffer()</code> pour obtenir les buffers GPU à lier. SubMesh fournit les offsets et counts pour les draw calls. Utilisez <code>mesh.is_indexed()</code> pour choisir entre <code>draw()</code> et <code>draw_indexed()</code>.
                 </div>
             </section>
         </main>
