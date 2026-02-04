@@ -543,19 +543,18 @@ pub struct MeshEntryDesc {
 }
 
 /// Descriptor for creating a Mesh resource
+///
+/// The ResourceManager will create the GPU buffers from the provided data.
+/// Vertex and index counts are computed automatically from data length and layout.
 pub struct MeshDesc {
-    /// Vertex buffer (pre-created via Renderer)
-    pub vertex_buffer: Arc<dyn Buffer>,
-    /// Index buffer (optional, pre-created via Renderer)
-    pub index_buffer: Option<Arc<dyn Buffer>>,
-    /// Vertex layout description
+    /// Raw vertex data (bytes, interleaved according to vertex_layout)
+    pub vertex_data: Vec<u8>,
+    /// Raw index data (optional, None for non-indexed meshes)
+    pub index_data: Option<Vec<u8>>,
+    /// Vertex layout description (defines stride for vertex count calculation)
     pub vertex_layout: VertexLayout,
-    /// Index type (ignored if no index buffer)
+    /// Index type (U16 or U32, defines stride for index count calculation)
     pub index_type: IndexType,
-    /// Total vertex count for validation
-    pub total_vertex_count: u32,
-    /// Total index count for validation (0 if non-indexed)
-    pub total_index_count: u32,
     /// Initial mesh entries (can be empty, add later via add_mesh_entry)
     pub meshes: Vec<MeshEntryDesc>,
 }

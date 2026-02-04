@@ -3527,6 +3527,13 @@ fn main() {
 
 ## 🔷 resource::Mesh - Design Notes (2026-02-04)
 
+**Status**: Structure de base implémentée ✅
+- Hiérarchie 4 niveaux : Mesh > MeshEntry > MeshLOD > SubMesh
+- MeshDesc passe raw data (Vec<u8>), ResourceManager crée les buffers GPU
+- Validation automatique des offsets submesh vs buffer sizes
+- Calcul automatique vertex/index counts depuis data length et stride
+- Logging info à la création et suppression
+
 ### Vision Architecture
 
 ```
@@ -3711,14 +3718,20 @@ pub struct MeshEntryDesc {
 }
 
 pub struct MeshDesc {
-    pub vertex_buffer: Arc<dyn Buffer>,
-    pub index_buffer: Option<Arc<dyn Buffer>>,
+    /// Raw vertex data (bytes, interleaved according to vertex_layout)
+    pub vertex_data: Vec<u8>,
+    /// Raw index data (optional, None for non-indexed meshes)
+    pub index_data: Option<Vec<u8>>,
+    /// Vertex layout description (defines stride for vertex count calculation)
     pub vertex_layout: VertexLayout,
+    /// Index type (U16 or U32, defines stride for index count calculation)
     pub index_type: IndexType,
-    pub total_vertex_count: u32,
-    pub total_index_count: u32,
+    /// Initial mesh entries (can be empty, add later via add_mesh_entry)
     pub meshes: Vec<MeshEntryDesc>,
 }
+
+// Note: total_vertex_count and total_index_count are computed automatically
+// from data length and layout stride by ResourceManager::create_mesh()
 ```
 
 ### API ResourceManager

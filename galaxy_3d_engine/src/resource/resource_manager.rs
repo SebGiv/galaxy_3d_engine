@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::engine::Engine;
 use crate::error::{Error, Result};
-use crate::renderer::{TextureDesc, TextureData, TextureLayerData};
+use crate::renderer::{TextureDesc, TextureData, TextureLayerData, BufferDesc, BufferUsage};
 use crate::resource::texture::{
     Texture, SimpleTexture, AtlasTexture, ArrayTexture,
     AtlasRegion, AtlasRegionDesc, ArrayLayerDesc,
@@ -223,7 +223,12 @@ impl ResourceManager {
     ///
     /// Returns `true` if the texture was found and removed.
     pub fn remove_texture(&mut self, name: &str) -> bool {
-        self.textures.remove(name).is_some()
+        if self.textures.remove(name).is_some() {
+            crate::engine_info!("galaxy3d::ResourceManager", "Removed Texture resource '{}'", name);
+            true
+        } else {
+            false
+        }
     }
 
     /// Get the number of registered textures
@@ -302,13 +307,13 @@ impl ResourceManager {
 
     /// Create a mesh resource and register it
     ///
-    /// The vertex and index buffers must be pre-created via the Renderer.
-    /// All submesh offsets are validated against the total counts.
+    /// Internally creates the GPU vertex and index buffers from the provided data.
+    /// Vertex and index counts are computed automatically from data length and layout.
     ///
     /// # Arguments
     ///
     /// * `name` - Unique name for this mesh resource (group name)
-    /// * `desc` - Mesh description with buffers and entries
+    /// * `desc` - Mesh description with vertex/index data and entries
     ///
     /// # Example
     ///
@@ -316,12 +321,10 @@ impl ResourceManager {
     /// let mesh = resource_manager.create_mesh(
     ///     "characters".to_string(),
     ///     MeshDesc {
-    ///         vertex_buffer: vertex_buf,
-    ///         index_buffer: Some(index_buf),
+    ///         vertex_data: vertex_bytes,
+    ///         index_data: Some(index_bytes),
     ///         vertex_layout: layout,
     ///         index_type: IndexType::U16,
-    ///         total_vertex_count: 10000,
-    ///         total_index_count: 30000,
     ///         meshes: vec![
     ///             MeshEntryDesc {
     ///                 name: "hero".to_string(),
@@ -352,18 +355,83 @@ impl ResourceManager {
             )));
         }
 
+        // Calculate stride from vertex layout
+        let stride = desc.vertex_layout.bindings.first()
+            .map(|b| b.stride as usize)
+            .unwrap_or(0);
+
+        if stride == 0 {
+            return Err(Error::BackendError(
+                "Vertex layout has no bindings or stride is 0".to_string()
+            ));
+        }
+
+        // Validate vertex data size
+        if desc.vertex_data.len() % stride != 0 {
+            return Err(Error::BackendError(format!(
+                "Vertex data size {} is not a multiple of stride {}",
+                desc.vertex_data.len(), stride
+            )));
+        }
+
+        let total_vertex_count = (desc.vertex_data.len() / stride) as u32;
+
+        // Validate index data size (if indexed)
+        let index_size = desc.index_type.size_bytes() as usize;
+        let total_index_count = if let Some(ref index_data) = desc.index_data {
+            if index_data.len() % index_size != 0 {
+                return Err(Error::BackendError(format!(
+                    "Index data size {} is not a multiple of index type size {}",
+                    index_data.len(), index_size
+                )));
+            }
+            (index_data.len() / index_size) as u32
+        } else {
+            0
+        };
+
         let renderer_arc = Engine::renderer()?;
+
+        // Create vertex buffer and upload data
+        let vertex_buffer;
+        {
+            let mut renderer = renderer_arc.lock()
+                .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+
+            vertex_buffer = renderer.create_buffer(BufferDesc {
+                size: desc.vertex_data.len() as u64,
+                usage: BufferUsage::Vertex,
+            })?;
+
+            vertex_buffer.update(0, &desc.vertex_data)?;
+        }
+
+        // Create index buffer (if indexed) and upload data
+        let index_buffer = if let Some(ref index_data) = desc.index_data {
+            let mut renderer = renderer_arc.lock()
+                .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
+
+            let buffer = renderer.create_buffer(BufferDesc {
+                size: index_data.len() as u64,
+                usage: BufferUsage::Index,
+            })?;
+
+            buffer.update(0, index_data)?;
+            Some(buffer)
+        } else {
+            None
+        };
 
         // Create internal Mesh struct
         let mut mesh = Mesh::new(
             name.clone(),
             renderer_arc,
-            desc.vertex_buffer,
-            desc.index_buffer,
+            vertex_buffer,
+            index_buffer,
             desc.vertex_layout,
             desc.index_type,
-            desc.total_vertex_count,
-            desc.total_index_count,
+            total_vertex_count,
+            total_index_count,
         );
 
         // Add initial mesh entries (validation happens in add_mesh_entry)
@@ -376,7 +444,8 @@ impl ResourceManager {
         self.meshes.insert(name.clone(), Arc::clone(&mesh_arc));
 
         crate::engine_info!("galaxy3d::ResourceManager",
-            "Created Mesh resource '{}' with {} entries", name, entry_count);
+            "Created Mesh resource '{}' ({} vertices, {} indices, {} entries)",
+            name, total_vertex_count, total_index_count, entry_count);
 
         Ok(mesh_arc)
     }
