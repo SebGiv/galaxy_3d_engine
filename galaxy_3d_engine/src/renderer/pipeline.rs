@@ -16,6 +16,25 @@ pub enum PrimitiveTopology {
     PointList,
 }
 
+/// Index buffer element type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexType {
+    /// 16-bit indices (max 65535 vertices)
+    U16,
+    /// 32-bit indices (max ~4 billion vertices)
+    U32,
+}
+
+impl IndexType {
+    /// Size in bytes of one index element
+    pub fn size_bytes(&self) -> u32 {
+        match self {
+            IndexType::U16 => 2,
+            IndexType::U32 => 4,
+        }
+    }
+}
+
 /// Vertex input rate
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VertexInputRate {

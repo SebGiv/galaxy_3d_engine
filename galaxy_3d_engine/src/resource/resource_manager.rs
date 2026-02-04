@@ -1,20 +1,24 @@
-/// Central resource manager for the engine.
-///
-/// Stores and provides access to all engine resources (textures, meshes, etc.).
-/// Resources will be added incrementally as the engine evolves.
+//! Central resource manager for the engine.
+//!
+//! Stores and provides access to all engine resources (textures, meshes, etc.).
+//! Resources will be added incrementally as the engine evolves.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::engine::Engine;
 use crate::error::{Error, Result};
-use crate::renderer::TextureDesc;
+use crate::renderer::{TextureDesc, TextureData, TextureLayerData};
 use crate::resource::texture::{
     Texture, SimpleTexture, AtlasTexture, ArrayTexture,
     AtlasRegion, AtlasRegionDesc, ArrayLayerDesc,
 };
+use crate::resource::mesh::{
+    Mesh, MeshDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc,
+};
 
 pub struct ResourceManager {
     textures: HashMap<String, Arc<dyn Texture>>,
+    meshes: HashMap<String, Arc<Mesh>>,
 }
 
 impl ResourceManager {
@@ -22,6 +26,7 @@ impl ResourceManager {
     pub fn new() -> Self {
         Self {
             textures: HashMap::new(),
+            meshes: HashMap::new(),
         }
     }
 
@@ -129,15 +134,18 @@ impl ResourceManager {
     /// later via `add_array_layer()`.
     /// Returns the created texture for immediate use.
     ///
+    /// If any `ArrayLayerDesc` has `data`, the pixel data will be uploaded
+    /// to the GPU at creation time.
+    ///
     /// # Arguments
     ///
     /// * `name` - Unique name for this texture resource
-    /// * `desc` - GPU texture description
-    /// * `layers` - Initial layer mappings (can be empty)
+    /// * `desc` - GPU texture description (note: `desc.data` will be overwritten if layers have data)
+    /// * `layers` - Initial layer mappings with optional pixel data (can be empty)
     pub fn create_array_texture(
         &mut self,
         name: String,
-        desc: TextureDesc,
+        mut desc: TextureDesc,
         layers: &[ArrayLayerDesc],
     ) -> Result<Arc<dyn Texture>> {
         if self.textures.contains_key(&name) {
@@ -163,6 +171,22 @@ impl ResourceManager {
                     layer_desc.name, layer_desc.layer, array_layers
                 )));
             }
+        }
+
+        // Build TextureData::Layers from ArrayLayerDesc entries that have data
+        let layer_data: Vec<TextureLayerData> = layers
+            .iter()
+            .filter_map(|ld| {
+                ld.data.as_ref().map(|d| TextureLayerData {
+                    layer: ld.layer,
+                    data: d.clone(),
+                })
+            })
+            .collect();
+
+        // If any layers have data, set desc.data to TextureData::Layers
+        if !layer_data.is_empty() {
+            desc.data = Some(TextureData::Layers(layer_data));
         }
 
         let renderer_arc = Engine::renderer()?;
@@ -245,6 +269,8 @@ impl ResourceManager {
     /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
     /// references to the texture Arc exist.
     ///
+    /// If `data` is provided, uploads pixel data to the specified layer.
+    ///
     /// # Errors
     ///
     /// Returns an error if:
@@ -256,6 +282,7 @@ impl ResourceManager {
         texture_name: &str,
         layer_name: String,
         layer: u32,
+        data: Option<&[u8]>,
     ) -> Result<()> {
         let arc = self.textures.get_mut(texture_name)
             .ok_or_else(|| Error::BackendError(format!(
@@ -268,6 +295,205 @@ impl ResourceManager {
             )))?;
 
         // Delegate to the trait method (will return error if not an ArrayTexture)
-        texture.add_array_layer(layer_name, layer)
+        texture.add_array_layer(layer_name, layer, data)
+    }
+
+    // ===== MESH CREATION =====
+
+    /// Create a mesh resource and register it
+    ///
+    /// The vertex and index buffers must be pre-created via the Renderer.
+    /// All submesh offsets are validated against the total counts.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for this mesh resource (group name)
+    /// * `desc` - Mesh description with buffers and entries
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mesh = resource_manager.create_mesh(
+    ///     "characters".to_string(),
+    ///     MeshDesc {
+    ///         vertex_buffer: vertex_buf,
+    ///         index_buffer: Some(index_buf),
+    ///         vertex_layout: layout,
+    ///         index_type: IndexType::U16,
+    ///         total_vertex_count: 10000,
+    ///         total_index_count: 30000,
+    ///         meshes: vec![
+    ///             MeshEntryDesc {
+    ///                 name: "hero".to_string(),
+    ///                 lods: vec![
+    ///                     MeshLODDesc {
+    ///                         lod_index: 0,
+    ///                         submeshes: vec![
+    ///                             SubMeshDesc {
+    ///                                 name: "body".to_string(),
+    ///                                 vertex_offset: 0,
+    ///                                 vertex_count: 5000,
+    ///                                 index_offset: 0,
+    ///                                 index_count: 15000,
+    ///                                 topology: PrimitiveTopology::TriangleList,
+    ///                             },
+    ///                         ],
+    ///                     },
+    ///                 ],
+    ///             },
+    ///         ],
+    ///     },
+    /// )?;
+    /// ```
+    pub fn create_mesh(&mut self, name: String, desc: MeshDesc) -> Result<Arc<Mesh>> {
+        if self.meshes.contains_key(&name) {
+            return Err(Error::BackendError(format!(
+                "Mesh '{}' already exists in ResourceManager", name
+            )));
+        }
+
+        let renderer_arc = Engine::renderer()?;
+
+        // Create internal Mesh struct
+        let mut mesh = Mesh::new(
+            name.clone(),
+            renderer_arc,
+            desc.vertex_buffer,
+            desc.index_buffer,
+            desc.vertex_layout,
+            desc.index_type,
+            desc.total_vertex_count,
+            desc.total_index_count,
+        );
+
+        // Add initial mesh entries (validation happens in add_mesh_entry)
+        for entry_desc in desc.meshes {
+            mesh.add_mesh_entry(entry_desc)?;
+        }
+
+        let entry_count = mesh.mesh_entry_count();
+        let mesh_arc = Arc::new(mesh);
+        self.meshes.insert(name.clone(), Arc::clone(&mesh_arc));
+
+        crate::engine_info!("galaxy3d::ResourceManager",
+            "Created Mesh resource '{}' with {} entries", name, entry_count);
+
+        Ok(mesh_arc)
+    }
+
+    // ===== MESH ACCESS =====
+
+    /// Get a mesh by name
+    pub fn mesh(&self, name: &str) -> Option<&Arc<Mesh>> {
+        self.meshes.get(name)
+    }
+
+    /// Remove a mesh by name
+    ///
+    /// Returns `true` if the mesh was found and removed.
+    pub fn remove_mesh(&mut self, name: &str) -> bool {
+        if self.meshes.remove(name).is_some() {
+            crate::engine_info!("galaxy3d::ResourceManager", "Removed Mesh resource '{}'", name);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the number of registered meshes
+    pub fn mesh_count(&self) -> usize {
+        self.meshes.len()
+    }
+
+    // ===== MESH MODIFICATION =====
+
+    /// Add a mesh entry to an existing mesh resource
+    ///
+    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
+    /// references to the mesh Arc exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The mesh does not exist
+    /// - Other Arc references prevent mutable access
+    /// - A mesh entry with the same name already exists
+    /// - Submesh validation fails (offsets exceed buffer sizes)
+    pub fn add_mesh_entry(&mut self, mesh_name: &str, desc: MeshEntryDesc) -> Result<()> {
+        let arc = self.meshes.get_mut(mesh_name)
+            .ok_or_else(|| Error::BackendError(format!(
+                "Mesh '{}' not found in ResourceManager", mesh_name
+            )))?;
+
+        let mesh = Arc::get_mut(arc)
+            .ok_or_else(|| Error::BackendError(format!(
+                "Cannot mutate Mesh '{}': other references exist", mesh_name
+            )))?;
+
+        mesh.add_mesh_entry(desc)
+    }
+
+    /// Add a LOD to an existing mesh entry
+    ///
+    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
+    /// references to the mesh Arc exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The mesh does not exist
+    /// - The mesh entry does not exist
+    /// - Other Arc references prevent mutable access
+    /// - Submesh validation fails
+    pub fn add_mesh_lod(
+        &mut self,
+        mesh_name: &str,
+        entry_name: &str,
+        desc: MeshLODDesc,
+    ) -> Result<()> {
+        let arc = self.meshes.get_mut(mesh_name)
+            .ok_or_else(|| Error::BackendError(format!(
+                "Mesh '{}' not found in ResourceManager", mesh_name
+            )))?;
+
+        let mesh = Arc::get_mut(arc)
+            .ok_or_else(|| Error::BackendError(format!(
+                "Cannot mutate Mesh '{}': other references exist", mesh_name
+            )))?;
+
+        mesh.add_mesh_lod(entry_name, desc)
+    }
+
+    /// Add a submesh to an existing LOD
+    ///
+    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
+    /// references to the mesh Arc exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The mesh does not exist
+    /// - The mesh entry does not exist
+    /// - Other Arc references prevent mutable access
+    /// - A submesh with the same name already exists in the LOD
+    /// - Submesh validation fails (offsets exceed buffer sizes)
+    pub fn add_submesh(
+        &mut self,
+        mesh_name: &str,
+        entry_name: &str,
+        lod_index: usize,
+        desc: SubMeshDesc,
+    ) -> Result<()> {
+        let arc = self.meshes.get_mut(mesh_name)
+            .ok_or_else(|| Error::BackendError(format!(
+                "Mesh '{}' not found in ResourceManager", mesh_name
+            )))?;
+
+        let mesh = Arc::get_mut(arc)
+            .ok_or_else(|| Error::BackendError(format!(
+                "Cannot mutate Mesh '{}': other references exist", mesh_name
+            )))?;
+
+        mesh.add_submesh(entry_name, lod_index, desc)
     }
 }

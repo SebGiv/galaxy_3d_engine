@@ -3,7 +3,7 @@
 > **Project**: Multi-API 3D Rendering Engine in Rust
 > **Author**: Claude & User collaboration
 > **Date**: 2026-01-26
-> **Status**: Phase 11c - Resource Texture Refactoring ✅
+> **Status**: Phase 11d - Array Texture Layer Upload ✅
 
 ---
 
@@ -361,7 +361,7 @@ swapchain.present(image_idx)?;
 
 ---
 
-### 6. Resource Texture Architecture (Implémenté Phase 11 + 11b + 11c)
+### 6. Resource Texture Architecture (Implémenté Phase 11 + 11b + 11c + 11d)
 
 **Decision**: Architecture à 3 niveaux de textures
 
@@ -406,20 +406,26 @@ swapchain.present(image_idx)?;
 - `descriptor_set: Arc<dyn render::DescriptorSet>` — pour le binding au rendu
 - Ses données spécifiques (régions, layers, etc.)
 
-**Trait `resource::Texture` méthodes** (Phase 11c):
+**Trait `resource::Texture` méthodes** (Phase 11c + 11d):
 - `render_texture()`, `descriptor_set()`, `region_names()` — accès aux données
 - `add_atlas_region(name, region) -> Result<()>` — implémentation par défaut (erreur)
-- `add_array_layer(name, layer) -> Result<()>` — implémentation par défaut (erreur)
+- `add_array_layer(name, layer, data: Option<&[u8]>) -> Result<()>` — implémentation par défaut (erreur)
 - Override dans `AtlasTexture` et `ArrayTexture` pour la vraie logique
+- `ArrayTexture::add_array_layer()` upload les pixels si data fourni (Phase 11d)
+
+**Trait `render::Renderer` nouvelles méthodes** (Phase 11d):
+- `update_texture_layer(texture, layer, data) -> Result<()>` — upload pixels vers un layer existant
 
 **Création des textures** :
 - Se fait via le `ResourceManager` qui appelle le `Renderer` en interne
 - L'utilisateur ne manipule pas le renderer directement pour les ressources
 - **Les fonctions retournent maintenant la texture créée** (`Arc<dyn Texture>`) pour usage immédiat
 - Régions/layers peuvent être passées à la création (`&[AtlasRegionDesc]` / `&[ArrayLayerDesc]`) ou ajoutées plus tard
+- `ArrayLayerDesc` supporte `data: Option<Vec<u8>>` pour upload pixels à la création (Phase 11d)
 - Ex: `let tex = rm.create_simple_texture("skybox".into(), TextureDesc { ... })?;`
 - Ex: `let atlas = rm.create_atlas_texture("tileset".into(), desc, &[region1, region2])?;`
 - Ex: `rm.create_atlas_texture("tileset".into(), desc, &[])?; rm.add_atlas_region(...)?`
+- Ex: `rm.add_array_layer("tileset", "grass".into(), 0, Some(&pixels))?;` — upload post-création
 - **`get_texture()` renommé en `texture()`** (convention Rust, Phase 11c)
 
 **Nom du 3ème niveau** : `scene` (retenu)
@@ -742,6 +748,22 @@ loop {
 
 ## ✅ Changelog
 
+### 2026-02-03 - Phase 11d: Array Texture Layer Upload
+- **`ArrayLayerDesc` étendu**:
+  - ✅ Nouveau champ `data: Option<Vec<u8>>` pour fournir les pixels à la création
+- **Trait `render::Renderer` étendu**:
+  - ✅ Nouvelle méthode `update_texture_layer(texture, layer, data) -> Result<()>`
+  - ✅ Permet l'upload de pixels vers un layer spécifique d'une texture existante
+- **Backend Vulkan**:
+  - ✅ `update_texture_layer()` implémenté avec staging buffer + transitions layout
+  - ✅ Transition: SHADER_READ_ONLY → TRANSFER_DST → SHADER_READ_ONLY
+- **Trait `resource::Texture` modifié**:
+  - ✅ Signature `add_array_layer(name, layer, data: Option<&[u8]>) -> Result<()>`
+  - ✅ `ArrayTexture::add_array_layer()` appelle `renderer.update_texture_layer()` si data fourni
+- **ResourceManager modifié**:
+  - ✅ `create_array_texture()` construit `TextureData::Layers` depuis les `ArrayLayerDesc` avec data
+  - ✅ `add_array_layer()` accepte `data: Option<&[u8]>` pour upload post-création
+
 ### 2026-02-03 - Phase 11c: Resource Texture Refactoring
 - **Trait `resource::Texture` étendu**:
   - ✅ Nouvelles méthodes avec implémentation par défaut :
@@ -996,6 +1018,17 @@ loop {
 - [x] Logs info ajoutés lors de la création de textures
 
 **Status**: API améliorée, textures accessibles directement après création, délégation aux traits ✅
+
+### ✅ Phase 11d: Array Texture Layer Upload (DONE)
+- [x] `ArrayLayerDesc` étendu avec `data: Option<Vec<u8>>`
+- [x] Trait `render::Renderer` étendu avec `update_texture_layer()`
+- [x] VulkanRenderer : implémentation avec staging buffer + transitions layout
+- [x] Trait `resource::Texture::add_array_layer()` signature modifiée pour accepter data
+- [x] `ArrayTexture` appelle le renderer pour upload si data fourni
+- [x] `ResourceManager::create_array_texture()` construit `TextureData::Layers` automatiquement
+- [x] `ResourceManager::add_array_layer()` accepte `data: Option<&[u8]>`
+
+**Status**: Upload pixels possible à la création ET après création des texture arrays ✅
 
 ### Phase 12: Index Buffers (TODO)
 - [ ] Index buffer creation
@@ -3489,6 +3522,291 @@ fn main() {
 - `galaxy_3d_engine/src/lib.rs` : Suppression ré-export macros dans `galaxy3d::log`
 - `Games/galaxy3d_demo/src/tracing_logger.rs` : Exemple TracingLogger
 - `Games/galaxy3d_demo/src/main.rs` : Utilisation TracingLogger
+
+---
+
+## 🔷 resource::Mesh - Design Notes (2026-02-04)
+
+### Vision Architecture
+
+```
+resource::Mesh  →  Stockage structuré de render::Buffer (niveau GPU/ressource)
+                   - Données GPU brutes
+                   - Hiérarchie : Mesh (groupe) > MeshEntry > LOD > SubMesh
+                   - PAS de concepts de scène (materials, AABB, LOD selection logic)
+                   - Lifetime étendu (ressource réutilisable)
+
+scene::Mesh     →  Instance dans la scène (futur)
+                   - Référence resource::Mesh
+                   - Matériaux, AABB, logique de sélection LOD, transforms, etc.
+                   - Lifetime = durée de la scène ou moins
+```
+
+### Hiérarchie à 4 niveaux
+
+```
+resource::Mesh (groupe)
+├── name: "characters"
+├── vertex_buffer: Arc<render::Buffer>       (partagé par tous)
+├── index_buffer: Option<Arc<render::Buffer>> (partagé par tous)
+├── vertex_layout: VertexLayout              (partagé par tous)
+├── index_type: IndexType                    (partagé par tous)
+│
+└── meshes: HashMap<String, MeshEntry>
+    │
+    ├── "hero" → MeshEntry
+    │   └── lods: Vec<MeshLOD>
+    │       ├── [0] → MeshLOD (LOD0 - plus détaillé)
+    │       │   └── submeshes: HashMap<String, SubMesh>
+    │       │       ├── "body"  → SubMesh { offsets, topology, renderer_ref }
+    │       │       ├── "armor" → SubMesh { ... }
+    │       │       └── "cape"  → SubMesh { ... }
+    │       │
+    │       ├── [1] → MeshLOD (LOD1)
+    │       │   └── submeshes: HashMap<String, SubMesh>
+    │       │       ├── "body"  → SubMesh { ... }
+    │       │       └── "armor" → SubMesh { ... }  // cape supprimée
+    │       │
+    │       └── [2] → MeshLOD (LOD2 - moins détaillé)
+    │           └── submeshes: HashMap<String, SubMesh>
+    │               └── "body"  → SubMesh { ... }  // tout fusionné
+    │
+    └── "enemy_grunt" → MeshEntry
+        └── lods: Vec<MeshLOD>
+            └── ...
+```
+
+**Accès** : `mesh.submesh("hero", 0, "body")` → Option<&SubMesh>
+
+### Décisions Finales
+
+| Aspect | Décision | Justification |
+|--------|----------|---------------|
+| **VertexLayout** | Par groupe (Mesh) | Tous les SubMesh partagent le même buffer → même stride |
+| **IndexType** | Par groupe (Mesh) | Un seul index buffer partagé |
+| **Validation offsets** | Oui | Erreurs détectées tôt, debug facilité |
+| **Total counts** | Stockés dans Mesh | Pour validation, pas de calcul à chaque accès |
+| **Nom SubMesh** | Obligatoire | Lookup par nom dans HashMap |
+| **Topology** | Par SubMesh | Flexibilité (triangles, lignes, points) |
+| **VertexFormat par SubMesh** | Non nécessaire | Le pipeline décide quels attributs lire |
+| **Renderer ref** | Dans chaque SubMesh | Comme pour les regions de Texture |
+| **Création** | Via ResourceManager uniquement | Cohérence avec resource::Texture |
+| **Modifications post-création** | Dans Mesh, appelées par ResourceManager | Évite duplication de code |
+
+### Pas de VertexFormat par SubMesh - Explication
+
+Le buffer contient toujours toutes les données (position + normal + UV + ...).
+
+```
+Buffer stride = 32 bytes : [position: 12B][normal: 12B][uv: 8B]
+```
+
+**Pipeline LOD0** (lit tout) :
+```rust
+vertex_input_attributes: [
+    { location: 0, offset: 0,  format: Vec3 },  // position
+    { location: 1, offset: 12, format: Vec3 },  // normal
+    { location: 2, offset: 24, format: Vec2 },  // uv
+]
+stride: 32
+```
+
+**Pipeline LOD2** (simplifié, lit seulement position) :
+```rust
+vertex_input_attributes: [
+    { location: 0, offset: 0, format: Vec3 },  // position seulement
+]
+stride: 32  // MÊME stride, bytes normal/UV ignorés
+```
+
+→ Le choix "utiliser UV ou pas" est une décision de **rendu** (scene), pas de **ressource**.
+
+### LODs dans le même buffer
+
+```
+Vertex Buffer:
+[---- LOD0 (1000 verts) ----][---- LOD1 (500 verts) ----][---- LOD2 (200 verts) ----]
+offset=0                     offset=1000                  offset=1500
+
+Index Buffer:
+[---- LOD0 indices ----][---- LOD1 indices ----][---- LOD2 indices ----]
+```
+
+La **sélection** du LOD (quelle distance, quel screen-size) est gérée par `scene::Mesh`.
+
+### Structures Rust
+
+```rust
+// ===== Dans renderer/pipeline.rs =====
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexType {
+    U16,
+    U32,
+}
+
+impl IndexType {
+    pub fn size_bytes(&self) -> u32 {
+        match self {
+            IndexType::U16 => 2,
+            IndexType::U32 => 4,
+        }
+    }
+}
+
+// ===== Dans resource/mesh.rs =====
+
+/// SubMesh - plus petit élément drawable
+pub struct SubMesh {
+    renderer: Arc<Mutex<dyn Renderer>>,
+    pub vertex_offset: u32,
+    pub vertex_count: u32,
+    pub index_offset: u32,
+    pub index_count: u32,
+    pub topology: PrimitiveTopology,
+}
+
+/// MeshLOD - niveau de détail contenant des submeshes
+pub struct MeshLOD {
+    submeshes: HashMap<String, SubMesh>,
+}
+
+/// MeshEntry - un mesh nommé avec ses LODs
+pub struct MeshEntry {
+    lods: Vec<MeshLOD>,
+}
+
+/// Mesh - groupe de meshes partageant les mêmes buffers
+pub struct Mesh {
+    name: String,
+    renderer: Arc<Mutex<dyn Renderer>>,
+    vertex_buffer: Arc<dyn Buffer>,
+    index_buffer: Option<Arc<dyn Buffer>>,
+    vertex_layout: VertexLayout,
+    index_type: IndexType,
+    total_vertex_count: u32,
+    total_index_count: u32,
+    meshes: HashMap<String, MeshEntry>,
+}
+
+// ===== Descriptors pour création =====
+
+pub struct SubMeshDesc {
+    pub name: String,
+    pub vertex_offset: u32,
+    pub vertex_count: u32,
+    pub index_offset: u32,
+    pub index_count: u32,
+    pub topology: PrimitiveTopology,
+}
+
+pub struct MeshLODDesc {
+    pub lod_index: usize,
+    pub submeshes: Vec<SubMeshDesc>,
+}
+
+pub struct MeshEntryDesc {
+    pub name: String,
+    pub lods: Vec<MeshLODDesc>,
+}
+
+pub struct MeshDesc {
+    pub vertex_buffer: Arc<dyn Buffer>,
+    pub index_buffer: Option<Arc<dyn Buffer>>,
+    pub vertex_layout: VertexLayout,
+    pub index_type: IndexType,
+    pub total_vertex_count: u32,
+    pub total_index_count: u32,
+    pub meshes: Vec<MeshEntryDesc>,
+}
+```
+
+### API ResourceManager
+
+```rust
+impl ResourceManager {
+    // Création
+    pub fn create_mesh(&mut self, name: String, desc: MeshDesc) -> Result<Arc<Mesh>>;
+
+    // Accès
+    pub fn mesh(&self, name: &str) -> Option<&Arc<Mesh>>;
+    pub fn remove_mesh(&mut self, name: &str) -> bool;
+    pub fn mesh_count(&self) -> usize;
+
+    // Modification (délègue à Mesh)
+    pub fn add_mesh_entry(&mut self, mesh_name: &str, entry: MeshEntryDesc) -> Result<()>;
+    pub fn add_mesh_lod(&mut self, mesh_name: &str, entry_name: &str, lod: MeshLODDesc) -> Result<()>;
+    pub fn add_submesh(&mut self, mesh_name: &str, entry_name: &str, lod: usize, submesh: SubMeshDesc) -> Result<()>;
+}
+```
+
+### API Mesh (méthodes de modification)
+
+```rust
+impl Mesh {
+    // Accès
+    pub fn submesh(&self, mesh: &str, lod: usize, submesh: &str) -> Option<&SubMesh>;
+    pub fn mesh(&self, name: &str) -> Option<&MeshEntry>;
+    pub fn mesh_names(&self) -> Vec<&str>;
+
+    // Modification (utilisées par ResourceManager et directement)
+    pub fn add_mesh_entry(&mut self, entry: MeshEntryDesc) -> Result<()>;
+    pub fn add_mesh_lod(&mut self, entry_name: &str, lod: MeshLODDesc) -> Result<()>;
+    pub fn add_submesh(&mut self, entry_name: &str, lod: usize, submesh: SubMeshDesc) -> Result<()>;
+}
+```
+
+### Comparaison avec Moteurs Modernes
+
+| Aspect | Unreal | Unity | Godot | Galaxy3D |
+|--------|--------|-------|-------|----------|
+| Vertex buffer | Multi-streams | Interleaved | Interleaved | Interleaved |
+| Index obligatoire | ~100% | ~100% | ~100% | Optionnel |
+| LOD storage | Par LOD | Séparé (LODGroup) | Séparé | Même buffer |
+| Hiérarchie | StaticMesh > LOD > Section | Mesh > SubMesh | Mesh > Surface | Mesh > Entry > LOD > SubMesh |
+
+### Limites Vulkan/D3D12 (référence)
+
+| Limite | Valeur typique |
+|--------|---------------|
+| Buffer max | 2 GB |
+| Max vertices (stride 32B) | ~67 millions |
+| Pratique par mesh | 1k - 150k vertices |
+| Index u16 | max 65 535 vertices |
+| Index u32 | max ~4 milliards |
+
+### Décision finale : Indexed vs Non-indexed
+
+**Choix** : Un seul type `Mesh` avec `index_buffer: Option<Arc<dyn Buffer>>`
+
+**Justification** :
+- 99% des meshes sont indexés
+- Simplicité : un seul type à gérer
+- Différence minime avec Texture (les textures ont des métadonnées fondamentalement différentes)
+- SubMesh unifié : `index_offset`/`index_count` ignorés si non-indexé
+
+### Implémentation (2026-02-04) ✅
+
+**Fichiers créés/modifiés** :
+- `galaxy_3d_engine/src/renderer/pipeline.rs` : Ajout `IndexType` enum
+- `galaxy_3d_engine/src/resource/mesh.rs` : Nouveau fichier avec `Mesh`, `MeshEntry`, `MeshLOD`, `SubMesh` + descriptors
+- `galaxy_3d_engine/src/resource/mod.rs` : Export du module mesh
+- `galaxy_3d_engine/src/resource/resource_manager.rs` : Gestion des Mesh
+
+**API publique** :
+```rust
+// Création via ResourceManager
+let mesh = resource_manager.create_mesh("characters".to_string(), MeshDesc { ... })?;
+
+// Accès
+let mesh = resource_manager.mesh("characters")?;
+let submesh = mesh.submesh("hero", 0, "body")?;
+
+// Modification
+resource_manager.add_mesh_entry("characters", MeshEntryDesc { ... })?;
+resource_manager.add_mesh_lod("characters", "hero", MeshLODDesc { ... })?;
+resource_manager.add_submesh("characters", "hero", 1, SubMeshDesc { ... })?;
+```
 
 ---
 
