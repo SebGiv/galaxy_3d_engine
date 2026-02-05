@@ -1762,7 +1762,7 @@ pub fn add_array_layer(&amp;mut self, texture_name: &amp;str, layer_name: String
                         <span class="summary">Mesh → MeshEntry → MeshLOD → SubMesh</span>
                     </h3>
                     <div id="resource-mesh-hierarchy-detail" class="accordion-content">
-                        <p>Le système de mesh utilise une hiérarchie à 4 niveaux conçue pour les modèles 3D complexes avec plusieurs parties, niveaux de LOD et matériaux :</p>
+                        <p>Le système de mesh utilise une hiérarchie à 4 niveaux conçue pour les modèles 3D complexes avec plusieurs parties, niveaux de LOD et matériaux. Utilise le <strong>pattern Vec+HashMap</strong> pour un accès O(1) par id (index) et par nom :</p>
                         <pre><code>Mesh (ressource groupe)
 ├── name: "characters"
 ├── vertex_buffer: Arc&lt;dyn Buffer&gt;       // Partagé par tous
@@ -1772,21 +1772,23 @@ pub fn add_array_layer(&amp;mut self, texture_name: &amp;str, layer_name: String
 ├── total_vertex_count: u32
 ├── total_index_count: u32
 │
-└── meshes: HashMap&lt;String, MeshEntry&gt;
-    ├── "hero" → MeshEntry
+├── mesh_entries: Vec&lt;MeshEntry&gt;          // Stockage par id (index)
+└── entry_names: HashMap&lt;String, usize&gt;   // Mapping nom → id
+    ├── "hero" → 0
     │   └── lods: Vec&lt;MeshLOD&gt;
     │       ├── [0] LOD 0 (haute définition)
-    │       │   └── submeshes: HashMap&lt;String, SubMesh&gt;
-    │       │       ├── "body"  → SubMesh { vertex_offset, vertex_count, index_offset, index_count, topology }
-    │       │       └── "armor" → SubMesh { ... }
+    │       │   ├── submeshes: Vec&lt;SubMesh&gt;
+    │       │   └── submesh_names: HashMap&lt;String, usize&gt;
+    │       │       ├── "body" → 0
+    │       │       └── "armor" → 1
     │       └── [1] LOD 1 (basse définition)
-    │           └── submeshes: { "body_lod1" → ... }
-    └── "enemy" → MeshEntry
+    └── "enemy" → 1
         └── ...</code></pre>
                         <p><strong>Principes de Conception :</strong></p>
                         <ul>
+                            <li><strong>Pattern Vec+HashMap :</strong> <code>Vec&lt;T&gt;</code> pour le stockage + <code>HashMap&lt;String, usize&gt;</code> pour la recherche par nom</li>
+                            <li><strong>Accès par ID :</strong> Les méthodes retournent des IDs (<code>usize</code>) pour un accès rapide ultérieur</li>
                             <li>Paire de buffers unique par Mesh : Toutes les entrées partagent les buffers vertex/index (efficace GPU)</li>
-                            <li>Accès nommé : Entrées et submeshes accessibles par noms de chaînes</li>
                             <li>Entrée de données brutes : MeshDesc prend des <code>Vec&lt;u8&gt;</code>, ResourceManager crée les buffers GPU</li>
                             <li>Validation automatique : Offsets des submeshes validés par rapport aux tailles des buffers</li>
                             <li>Calcul automatique des counts : Counts vertex/index calculés depuis la longueur des données et le stride</li>
@@ -1800,7 +1802,7 @@ pub fn add_array_layer(&amp;mut self, texture_name: &amp;str, layer_name: String
                         <span class="summary">Ressource groupe mesh de niveau supérieur</span>
                     </h3>
                     <div id="resource-mesh-struct" class="accordion-content">
-                        <p>La ressource mesh de niveau supérieur contenant les buffers GPU partagés et les entrées nommées.</p>
+                        <p>La ressource mesh de niveau supérieur contenant les buffers GPU partagés et les entrées nommées. Utilise le pattern Vec+HashMap pour un accès O(1) par id ou par nom.</p>
                         <pre><code>pub struct Mesh {
     name: String,
     vertex_buffer: Arc&lt;dyn render::Buffer&gt;,
@@ -1809,7 +1811,8 @@ pub fn add_array_layer(&amp;mut self, texture_name: &amp;str, layer_name: String
     index_type: IndexType,
     total_vertex_count: u32,
     total_index_count: u32,
-    meshes: HashMap&lt;String, MeshEntry&gt;,
+    mesh_entries: Vec&lt;MeshEntry&gt;,           // Stockage par id (index)
+    entry_names: HashMap&lt;String, usize&gt;,    // Mapping nom → id
 }
 
 impl Mesh {
@@ -1822,13 +1825,19 @@ impl Mesh {
     pub fn total_vertex_count(&amp;self) -&gt; u32;
     pub fn total_index_count(&amp;self) -&gt; u32;
 
-    // Accès aux entrées
-    pub fn mesh_entry(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;MeshEntry&gt;;
+    // Accès par id (le plus rapide - index direct)
+    pub fn mesh_entry(&amp;self, id: usize) -&gt; Option&lt;&amp;MeshEntry&gt;;
+    // Obtenir l'id depuis le nom (pour accès rapide ultérieur)
+    pub fn mesh_entry_id(&amp;self, name: &amp;str) -&gt; Option&lt;usize&gt;;
+    // Accès par nom (convenience - lookup HashMap puis index)
+    pub fn mesh_entry_by_name(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;MeshEntry&gt;;
     pub fn mesh_entry_names(&amp;self) -&gt; Vec&lt;&amp;str&gt;;
     pub fn mesh_entry_count(&amp;self) -&gt; usize;
 
-    // Accès direct au submesh (raccourci)
-    pub fn submesh(&amp;self, entry_name: &amp;str, lod: usize, submesh_name: &amp;str) -&gt; Option&lt;&amp;SubMesh&gt;;
+    // Accès direct au submesh par ids (le plus rapide)
+    pub fn submesh(&amp;self, entry_id: usize, lod: usize, submesh_id: usize) -&gt; Option&lt;&amp;SubMesh&gt;;
+    // Accès direct au submesh par noms (convenience)
+    pub fn submesh_by_name(&amp;self, entry_name: &amp;str, lod: usize, submesh_name: &amp;str) -&gt; Option&lt;&amp;SubMesh&gt;;
 }</code></pre>
                     </div>
                 </div>
@@ -1857,13 +1866,19 @@ impl MeshEntry {
                         <span class="summary">Niveau de détail contenant des submeshes nommés</span>
                     </h3>
                     <div id="resource-mesh-lod" class="accordion-content">
-                        <p>Un niveau de détail contenant des submeshes nommés (groupes de matériaux). LOD 0 est le plus détaillé.</p>
+                        <p>Un niveau de détail contenant des submeshes nommés (groupes de matériaux). LOD 0 est le plus détaillé. Utilise le pattern Vec+HashMap pour un accès O(1) par id ou par nom.</p>
                         <pre><code>pub struct MeshLOD {
-    submeshes: HashMap&lt;String, SubMesh&gt;,
+    submeshes: Vec&lt;SubMesh&gt;,                // Stockage par id (index)
+    submesh_names: HashMap&lt;String, usize&gt;,  // Mapping nom → id
 }
 
 impl MeshLOD {
-    pub fn submesh(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;SubMesh&gt;;
+    // Accès par id (le plus rapide - index direct)
+    pub fn submesh(&amp;self, id: usize) -&gt; Option&lt;&amp;SubMesh&gt;;
+    // Obtenir l'id depuis le nom (pour accès rapide ultérieur)
+    pub fn submesh_id(&amp;self, name: &amp;str) -&gt; Option&lt;usize&gt;;
+    // Accès par nom (convenience - lookup HashMap puis index)
+    pub fn submesh_by_name(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;SubMesh&gt;;
     pub fn submesh_names(&amp;self) -&gt; Vec&lt;&amp;str&gt;;
     pub fn submesh_count(&amp;self) -&gt; usize;
     pub fn submeshes(&amp;self) -&gt; impl Iterator&lt;Item = (&amp;str, &amp;SubMesh)&gt;;
@@ -1924,6 +1939,7 @@ impl IndexType {
                     <div id="resource-mesh-desc" class="accordion-content">
                         <p>Décrit un mesh pour sa création. Utilise des données d'octets bruts — le ResourceManager crée les buffers GPU en interne.</p>
                         <pre><code>pub struct MeshDesc {
+    pub renderer: Arc&lt;Mutex&lt;dyn Renderer&gt;&gt;, // Renderer pour la création des buffers GPU
     pub vertex_data: Vec&lt;u8&gt;,           // Données vertex brutes entrelacées
     pub index_data: Option&lt;Vec&lt;u8&gt;&gt;,    // Données d'indices brutes (None si non-indexé)
     pub vertex_layout: VertexLayout,     // Définit le stride pour le count de vertex
@@ -1937,6 +1953,7 @@ impl IndexType {
                         </ul>
                         <p><strong>Exemple :</strong></p>
                         <pre><code>let desc = MeshDesc {
+    renderer: renderer.clone(),
     vertex_data: vertex_bytes,
     index_data: Some(index_bytes),
     vertex_layout: VertexLayout {
@@ -2017,8 +2034,10 @@ pub struct SubMeshDesc {
                         <p><strong>Exemple :</strong></p>
                         <pre><code>let rm = Engine::resource_manager()?;
 let mut rm_guard = rm.lock().unwrap();
+let renderer = Engine::renderer()?;
 
 let mesh = rm_guard.create_mesh("characters".into(), MeshDesc {
+    renderer: renderer.clone(),
     vertex_data: vertex_bytes,
     index_data: Some(index_bytes),
     vertex_layout,
@@ -2062,19 +2081,33 @@ if let Some(mesh) = rm_guard.mesh("characters") {
     let vb = mesh.vertex_buffer();
     let ib = mesh.index_buffer();
 
-    // Accès via mesh_entry() -&gt; lod() -&gt; submesh()
-    if let Some(hero) = mesh.mesh_entry("hero") {
+    // Obtenir l'id de l'entrée pour un accès rapide (évite les lookups HashMap répétés)
+    let hero_id = mesh.mesh_entry_id("hero").unwrap();
+
+    // Accès par id (le plus rapide) via mesh_entry() -&gt; lod() -&gt; submesh()
+    if let Some(hero) = mesh.mesh_entry(hero_id) {
         if let Some(lod0) = hero.lod(0) {
+            // Obtenir l'id du submesh pour le rendu
+            let body_id = lod0.submesh_id("body").unwrap();
+            let body = lod0.submesh(body_id).unwrap();
+            // Dessiner le submesh...
+
+            // Ou itérer sur tous les submeshes
             for (name, submesh) in lod0.submeshes() {
                 println!("Dessin du submesh: {}", name);
-                // Dessiner le submesh...
             }
         }
     }
 
-    // Ou utiliser la méthode raccourci
-    if let Some(submesh) = mesh.submesh("hero", 0, "body") {
-        // Accès direct au submesh
+    // Accès direct par ids (le plus rapide)
+    let body_id = mesh.mesh_entry(hero_id).unwrap().lod(0).unwrap().submesh_id("body").unwrap();
+    if let Some(submesh) = mesh.submesh(hero_id, 0, body_id) {
+        // Accès direct par ids
+    }
+
+    // Ou par noms (convenience)
+    if let Some(submesh) = mesh.submesh_by_name("hero", 0, "body") {
+        // Accès direct par noms
     }
 }
 
@@ -2086,22 +2119,28 @@ rm_guard.remove_mesh("old_model");</code></pre>
                 <div class="api-item">
                     <h3 onclick="toggleAccordion('rm-add-mesh-parts')">
                         ResourceManager::add_mesh_entry() / add_mesh_lod() / add_submesh()
-                        <span class="summary">Ajouter des entries, LODs et submeshes après création</span>
+                        <span class="summary">Ajouter des entries, LODs et submeshes après création (retourne des ids)</span>
                     </h3>
                     <div id="rm-add-mesh-parts" class="accordion-content">
-                        <p>Ajouter des éléments de hiérarchie à des meshes existants après leur création. Utilise <code>Arc::get_mut</code> pour un accès mutable sûr.</p>
-                        <pre><code>pub fn add_mesh_entry(&amp;mut self, mesh_name: &amp;str, desc: MeshEntryDesc) -&gt; Result&lt;()&gt;
-pub fn add_mesh_lod(&amp;mut self, mesh_name: &amp;str, entry_name: &amp;str, desc: MeshLODDesc) -&gt; Result&lt;()&gt;
-pub fn add_submesh(&amp;mut self, mesh_name: &amp;str, entry_name: &amp;str, lod_index: usize, desc: SubMeshDesc) -&gt; Result&lt;()&gt;</code></pre>
+                        <p>Ajouter des éléments de hiérarchie à des meshes existants après leur création. Utilise <code>Arc::get_mut</code> pour un accès mutable sûr. <strong>Les méthodes retournent des ids</strong> pour un accès rapide ultérieur.</p>
+                        <pre><code>// Retourne l'id (index) de l'entrée nouvellement créée
+pub fn add_mesh_entry(&amp;mut self, mesh_name: &amp;str, desc: MeshEntryDesc) -&gt; Result&lt;usize&gt;
+
+// Prend entry_id (pas le nom) et retourne le lod_index
+pub fn add_mesh_lod(&amp;mut self, mesh_name: &amp;str, entry_id: usize, desc: MeshLODDesc) -&gt; Result&lt;usize&gt;
+
+// Prend entry_id (pas le nom) et retourne le submesh_id
+pub fn add_submesh(&amp;mut self, mesh_name: &amp;str, entry_id: usize, lod_index: usize, desc: SubMeshDesc) -&gt; Result&lt;usize&gt;</code></pre>
                         <p><strong>Exemple :</strong></p>
-                        <pre><code>// Ajouter une nouvelle entrée à un mesh existant
-rm_guard.add_mesh_entry("characters", MeshEntryDesc {
+                        <pre><code>// Ajouter une nouvelle entrée - retourne son id pour accès rapide
+let enemy_id: usize = rm_guard.add_mesh_entry("characters", MeshEntryDesc {
     name: "enemy".into(),
     lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![...] }],
 })?;
 
-// Ajouter un nouveau niveau de LOD à une entrée existante
-rm_guard.add_mesh_lod("characters", "hero", MeshLODDesc {
+// Ajouter un nouveau niveau de LOD à une entrée existante (utiliser entry_id, pas le nom)
+let hero_id = mesh.mesh_entry_id("hero").unwrap();
+let lod1_idx: usize = rm_guard.add_mesh_lod("characters", hero_id, MeshLODDesc {
     lod_index: 1,  // LOD 1 (moins détaillé)
     submeshes: vec![SubMeshDesc {
         name: "body_lod1".into(),
@@ -2111,15 +2150,18 @@ rm_guard.add_mesh_lod("characters", "hero", MeshLODDesc {
     }],
 })?;
 
-// Ajouter un submesh à un LOD existant
-rm_guard.add_submesh("characters", "hero", 0, SubMeshDesc {
+// Ajouter un submesh à un LOD existant (utiliser entry_id)
+let cape_id: usize = rm_guard.add_submesh("characters", hero_id, 0, SubMeshDesc {
     name: "cape".into(),
     vertex_offset: 7000,
     vertex_count: 500,
     index_offset: 21000,
     index_count: 1500,
     topology: PrimitiveTopology::TriangleList,
-})?;</code></pre>
+})?;
+
+// Accès rapide avec les ids stockés
+let cape = mesh.submesh(hero_id, 0, cape_id).unwrap();</code></pre>
                     </div>
                 </div>
 

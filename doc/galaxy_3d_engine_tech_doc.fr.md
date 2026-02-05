@@ -1,8 +1,23 @@
 # Galaxy3DEngine - Documentation Technique
 
-> **Version** : 0.1.0 (Phase 12 - Système Resource Mesh)
-> **Dernière mise à jour** : 2026-02-04
+> **Version** : 0.1.0 (Phase 13 - Pattern Vec+HashMap pour Accès par ID)
+> **Dernière mise à jour** : 2026-02-05
 > **Statut** : Cœur Prêt pour la Production, Fonctionnalités Avancées Prévues
+
+---
+
+## Préambule
+
+Ce document est rédigé en **français** et constitue la **référence technique** du moteur Galaxy3D Engine. Il fournit :
+
+- **Architecture** : Conception de haut niveau et organisation des composants
+- **Référence API** : Traits, structs et leurs méthodes
+- **Détails d'implémentation** : Comment les composants fonctionnent en interne
+- **Exemples d'utilisation** : Extraits de code démontrant l'usage de l'API
+
+Pour les notes de développement, les décisions de conception et la philosophie du projet, voir `galaxy_3d_engine_dev.md`.
+
+Cette documentation privilégie le **référencement plutôt que le code** - l'implémentation détaillée doit être lue directement depuis les fichiers source.
 
 ---
 
@@ -336,7 +351,7 @@ La mutation des régions/couches post-création utilise `Arc::get_mut` + downcas
 
 ### Système de Mesh Ressource (Architecture 4 niveaux)
 
-Le moteur utilise une architecture de mesh à 4 niveaux pour le stockage structuré des buffers GPU :
+Le moteur utilise une architecture de mesh à 4 niveaux pour le stockage structuré des buffers GPU, avec un **pattern Vec+HashMap** pour un accès O(1) par id (index) et par nom.
 
 ```
 resource::Mesh (groupe)
@@ -348,16 +363,17 @@ resource::Mesh (groupe)
 ├── total_vertex_count: u32
 ├── total_index_count: u32
 │
-└── meshes: HashMap<String, MeshEntry>
-    ├── "hero"
+├── mesh_entries: Vec<MeshEntry>             (stockage par id/index)
+└── entry_names: HashMap<String, usize>      (mapping nom → id)
+    ├── "hero" → 0
     │   └── lods: Vec<MeshLOD>
     │       ├── [0] LOD 0 (haute définition)
-    │       │   └── submeshes: HashMap<String, SubMesh>
-    │       │       ├── "body"  → { vertex_offset, vertex_count, index_offset, index_count, topology }
-    │       │       └── "armor" → { ... }
+    │       │   ├── submeshes: Vec<SubMesh>
+    │       │   └── submesh_names: HashMap<String, usize>
+    │       │       ├── "body" → 0
+    │       │       └── "armor" → 1
     │       └── [1] LOD 1 (basse définition)
-    │           └── submeshes: { "body_lod1" → { ... } }
-    └── "enemy"
+    └── "enemy" → 1
         └── ...
 ```
 
@@ -365,55 +381,54 @@ resource::Mesh (groupe)
 |--------|------|----------|
 | 1 | `Mesh` | Groupe de meshes apparentés partageant les buffers (ex: tous les personnages) |
 | 2 | `MeshEntry` | Mesh individuel dans le groupe (ex: "hero", "enemy") |
-| 3 | `MeshLOD` | Niveau de détail pour une entrée de mesh |
+| 3 | `MeshLOD` | Niveau de détail pour une entrée de mesh (indexé numériquement) |
 | 4 | `SubMesh` | Unité de draw call avec offsets dans les buffers partagés |
 
 **Décisions de conception clés :**
 
+- **Pattern Vec+HashMap** : `Vec<T>` pour le stockage + `HashMap<String, usize>` pour le lookup par nom
+- **Accès par ID** : Les méthodes retournent des IDs (`usize`) pour un accès rapide ultérieur
 - **Paire de buffers unique** : Toutes les entrées de mesh partagent les buffers vertex/index (efficace GPU)
 - **Buffer d'index optionnel** : `None` pour les meshes non-indexés (rare, mais supporté)
 - **Entrée de données brutes** : `MeshDesc` prend des données `Vec<u8>`, ResourceManager crée les buffers GPU
 - **Validation automatique** : Offsets des submeshes validés par rapport aux tailles des buffers
-- **Calcul automatique des counts** : Counts vertex/index calculés depuis la longueur des données et le stride
+
+**Patterns d'accès :**
+
+```rust
+// Par id (le plus rapide - accès direct par index)
+let entry = mesh.mesh_entry(entry_id)?;
+let submesh = lod.submesh(submesh_id)?;
+
+// Par nom (convenience - lookup HashMap puis index)
+let entry = mesh.mesh_entry_by_name("hero")?;
+let submesh = lod.submesh_by_name("body")?;
+
+// Récupérer l'id pour usage ultérieur (évite les lookups répétés par nom)
+let entry_id = mesh.mesh_entry_id("hero")?;
+let submesh_id = lod.submesh_id("body")?;
+```
 
 **Utilisation de l'API :**
 
 ```rust
-// Création via ResourceManager (crée les buffers GPU depuis les données brutes)
+// Création via ResourceManager (retourne Arc<Mesh>)
 let mesh = resource_manager.create_mesh("characters".to_string(), MeshDesc {
-    vertex_data: vertex_bytes,      // Données vertex brutes entrelacées
-    index_data: Some(index_bytes),  // Données d'index brutes (optionnel)
-    vertex_layout: layout,          // Définit le stride pour le calcul du count de vertex
-    index_type: IndexType::U16,     // Définit le stride pour le calcul du count d'index
-    meshes: vec![
-        MeshEntryDesc {
-            name: "hero".to_string(),
-            lods: vec![
-                MeshLODDesc {
-                    lod_index: 0,
-                    submeshes: vec![
-                        SubMeshDesc {
-                            name: "body".to_string(),
-                            vertex_offset: 0,
-                            vertex_count: 5000,
-                            index_offset: 0,
-                            index_count: 15000,
-                            topology: PrimitiveTopology::TriangleList,
-                        },
-                    ],
-                },
-            ],
-        },
-    ],
+    renderer: renderer.clone(),
+    vertex_data: vertex_bytes,
+    index_data: Some(index_bytes),
+    vertex_layout: layout,
+    index_type: IndexType::U16,
+    meshes: vec![MeshEntryDesc { ... }],
 })?;
 
-// Accès
-let submesh = mesh.submesh("hero", 0, "body")?;
+// La modification retourne des ids pour un accès rapide ultérieur
+let entry_id: usize = resource_manager.add_mesh_entry("characters", MeshEntryDesc { ... })?;
+let lod_index: usize = resource_manager.add_mesh_lod("characters", entry_id, MeshLODDesc { ... })?;
+let submesh_id: usize = resource_manager.add_submesh("characters", entry_id, lod_index, SubMeshDesc { ... })?;
 
-// Modification (post-création)
-resource_manager.add_mesh_entry("characters", MeshEntryDesc { ... })?;
-resource_manager.add_mesh_lod("characters", "hero", MeshLODDesc { ... })?;
-resource_manager.add_submesh("characters", "hero", 1, SubMeshDesc { ... })?;
+// Accès rapide utilisant les ids stockés
+let submesh = mesh.submesh(entry_id, lod_index, submesh_id)?;
 ```
 
 ---
@@ -1326,10 +1341,11 @@ pub fn print_validation_stats_report();
 **Phase 10 : ResourceManager** — Singleton vide pour le stockage centralisé des ressources
 **Phase 11 : Textures Ressource** — Trait `resource::Texture` avec SimpleTexture, AtlasTexture, ArrayTexture + API texture du ResourceManager
 **Phase 12 : Meshes Ressource** — Système `resource::Mesh` avec hiérarchie 4 niveaux (Mesh > MeshEntry > MeshLOD > SubMesh), MeshDesc avec entrée de données brutes, création automatique des buffers et validation
+**Phase 13 : Pattern Vec+HashMap** — Accès par ID pour la hiérarchie Mesh (les méthodes retournent des ids `usize`), accès O(1) par id ou par nom
 
-### Caractéristiques prévues (Phase 13+)
+### Caractéristiques prévues (Phase 14+)
 
-**Phase 13+ : Fonctionnalités texture avancées**
+**Phase 14+ : Fonctionnalités texture avancées**
 
 - Textures sans liaison (indexation de descripteur)
 - Textures virtuelles
@@ -1337,7 +1353,7 @@ pub fn print_validation_stats_report();
 - Support de conteneur DDS/KTX2
 - Compression BC7 (côté CPU)
 
-**Phase 13-15 : Système de maillage avancé**
+**Phase 14-16 : Système de maillage avancé**
 
 - Batching de maillage (buffers vertex/index globaux)
 - Dessin indirect (vkCmdDrawIndexedIndirect)
@@ -1345,7 +1361,7 @@ pub fn print_validation_stats_report();
 - LODs (Niveaux de détail)
 - Skinning GPU (animation squelettique)
 
-**Phase 16+ : Caractéristiques avancées**
+**Phase 17+ : Caractéristiques avancées**
 
 - Compute shaders
 - Ray tracing (VK_KHR_ray_tracing)

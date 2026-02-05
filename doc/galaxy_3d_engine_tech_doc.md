@@ -1,8 +1,23 @@
 # Galaxy3DEngine - Technical Documentation
 
-> **Version**: 0.1.0 (Phase 12 - Resource Mesh System)
-> **Last Updated**: 2026-02-04
+> **Version**: 0.1.0 (Phase 13 - Vec+HashMap Access Pattern)
+> **Last Updated**: 2026-02-05
 > **Status**: Production-Ready Core, Advanced Features Planned
+
+---
+
+## Preamble
+
+This document is written in **English** and serves as the **technical reference** for the Galaxy3D Engine. It provides:
+
+- **Architecture**: High-level design and component organization
+- **API Reference**: Traits, structs, and their methods
+- **Implementation Details**: How components work internally
+- **Usage Examples**: Code snippets demonstrating API usage
+
+For development notes, design decisions, and project philosophy, see `galaxy_3d_engine_dev.md` (in French).
+
+This documentation favors **referencing over code** - detailed implementation should be read from source files directly.
 
 ---
 
@@ -336,7 +351,7 @@ Mutation of regions/layers post-creation uses `Arc::get_mut` + downcast via `as_
 
 ### Resource Mesh System (4-Level Architecture)
 
-The engine uses a 4-level mesh architecture for structured GPU buffer storage:
+The engine uses a 4-level mesh architecture for structured GPU buffer storage, with a **Vec+HashMap pattern** for O(1) access by both id (index) and name.
 
 ```
 resource::Mesh (group)
@@ -348,16 +363,17 @@ resource::Mesh (group)
 ├── total_vertex_count: u32
 ├── total_index_count: u32
 │
-└── meshes: HashMap<String, MeshEntry>
-    ├── "hero"
+├── mesh_entries: Vec<MeshEntry>             (storage by id/index)
+└── entry_names: HashMap<String, usize>      (name → id mapping)
+    ├── "hero" → 0
     │   └── lods: Vec<MeshLOD>
     │       ├── [0] LOD 0 (high detail)
-    │       │   └── submeshes: HashMap<String, SubMesh>
-    │       │       ├── "body"  → { vertex_offset, vertex_count, index_offset, index_count, topology }
-    │       │       └── "armor" → { ... }
+    │       │   ├── submeshes: Vec<SubMesh>
+    │       │   └── submesh_names: HashMap<String, usize>
+    │       │       ├── "body" → 0
+    │       │       └── "armor" → 1
     │       └── [1] LOD 1 (low detail)
-    │           └── submeshes: { "body_lod1" → { ... } }
-    └── "enemy"
+    └── "enemy" → 1
         └── ...
 ```
 
@@ -365,55 +381,54 @@ resource::Mesh (group)
 |-------|------|---------|
 | 1 | `Mesh` | Group of related meshes sharing buffers (e.g., all characters) |
 | 2 | `MeshEntry` | Individual mesh within the group (e.g., "hero", "enemy") |
-| 3 | `MeshLOD` | Level of detail for a mesh entry |
+| 3 | `MeshLOD` | Level of detail for a mesh entry (indexed numerically) |
 | 4 | `SubMesh` | Draw call unit with offsets into shared buffers |
 
 **Key Design Decisions:**
 
+- **Vec+HashMap pattern**: `Vec<T>` for storage + `HashMap<String, usize>` for name lookup
+- **ID-based access**: Methods return IDs (`usize`) for fast subsequent access
 - **Single buffer pair**: All mesh entries share vertex/index buffers (GPU efficient)
 - **Optional index buffer**: `None` for non-indexed meshes (rare, but supported)
 - **Raw data input**: `MeshDesc` takes `Vec<u8>` data, ResourceManager creates GPU buffers
 - **Automatic validation**: Submesh offsets validated against buffer sizes
-- **Automatic count calculation**: Vertex/index counts computed from data length and stride
+
+**Access Patterns:**
+
+```rust
+// By id (fastest - direct index access)
+let entry = mesh.mesh_entry(entry_id)?;
+let submesh = lod.submesh(submesh_id)?;
+
+// By name (convenience - HashMap lookup then index)
+let entry = mesh.mesh_entry_by_name("hero")?;
+let submesh = lod.submesh_by_name("body")?;
+
+// Get id for later use (avoids repeated name lookups)
+let entry_id = mesh.mesh_entry_id("hero")?;
+let submesh_id = lod.submesh_id("body")?;
+```
 
 **API Usage:**
 
 ```rust
-// Creation via ResourceManager (creates GPU buffers from raw data)
+// Creation via ResourceManager (returns Arc<Mesh>)
 let mesh = resource_manager.create_mesh("characters".to_string(), MeshDesc {
-    vertex_data: vertex_bytes,      // Raw interleaved vertex data
-    index_data: Some(index_bytes),  // Raw index data (optional)
-    vertex_layout: layout,          // Defines stride for vertex count calculation
-    index_type: IndexType::U16,     // Defines stride for index count calculation
-    meshes: vec![
-        MeshEntryDesc {
-            name: "hero".to_string(),
-            lods: vec![
-                MeshLODDesc {
-                    lod_index: 0,
-                    submeshes: vec![
-                        SubMeshDesc {
-                            name: "body".to_string(),
-                            vertex_offset: 0,
-                            vertex_count: 5000,
-                            index_offset: 0,
-                            index_count: 15000,
-                            topology: PrimitiveTopology::TriangleList,
-                        },
-                    ],
-                },
-            ],
-        },
-    ],
+    renderer: renderer.clone(),
+    vertex_data: vertex_bytes,
+    index_data: Some(index_bytes),
+    vertex_layout: layout,
+    index_type: IndexType::U16,
+    meshes: vec![MeshEntryDesc { ... }],
 })?;
 
-// Access
-let submesh = mesh.submesh("hero", 0, "body")?;
+// Modification returns ids for subsequent fast access
+let entry_id: usize = resource_manager.add_mesh_entry("characters", MeshEntryDesc { ... })?;
+let lod_index: usize = resource_manager.add_mesh_lod("characters", entry_id, MeshLODDesc { ... })?;
+let submesh_id: usize = resource_manager.add_submesh("characters", entry_id, lod_index, SubMeshDesc { ... })?;
 
-// Modification (post-creation)
-resource_manager.add_mesh_entry("characters", MeshEntryDesc { ... })?;
-resource_manager.add_mesh_lod("characters", "hero", MeshLODDesc { ... })?;
-resource_manager.add_submesh("characters", "hero", 1, SubMeshDesc { ... })?;
+// Fast access using stored ids
+let submesh = mesh.submesh(entry_id, lod_index, submesh_id)?;
 ```
 
 ---
@@ -1325,10 +1340,11 @@ pub fn print_validation_stats_report();
 **Phase 10: ResourceManager** — Empty singleton for centralized resource storage
 **Phase 11: Resource Textures** — `resource::Texture` trait with SimpleTexture, AtlasTexture, ArrayTexture + ResourceManager texture API
 **Phase 12: Resource Meshes** — `resource::Mesh` system with 4-level hierarchy (Mesh > MeshEntry > MeshLOD > SubMesh), MeshDesc with raw data input, automatic buffer creation and validation
+**Phase 13: Vec+HashMap Pattern** — ID-based access for Mesh hierarchy (methods return `usize` ids), O(1) access by id or name
 
-### Planned Features (Phase 13+)
+### Planned Features (Phase 14+)
 
-**Phase 13+: Advanced Texture Features**
+**Phase 14+: Advanced Texture Features**
 
 - Bindless textures (descriptor indexing)
 - Virtual texturing
@@ -1336,7 +1352,7 @@ pub fn print_validation_stats_report();
 - DDS/KTX2 container support
 - BC7 compression (CPU-side)
 
-**Phase 13-15: Advanced Mesh System**
+**Phase 14-16: Advanced Mesh System**
 
 - Mesh batching (global vertex/index buffers)
 - Indirect drawing (vkCmdDrawIndexedIndirect)
@@ -1344,7 +1360,7 @@ pub fn print_validation_stats_report();
 - LODs (Level of Detail)
 - GPU skinning (skeletal animation)
 
-**Phase 16+: Advanced Features**
+**Phase 17+: Advanced Features**
 
 - Compute shaders
 - Ray tracing (VK_KHR_ray_tracing)

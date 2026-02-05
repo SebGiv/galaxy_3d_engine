@@ -52,22 +52,36 @@ pub trait Texture: Send + Sync {
 
     /// Add a region to this texture (atlas textures only)
     ///
+    /// Returns the region id (index) on success.
     /// Default implementation returns an error. Override in AtlasTexture.
-    fn add_atlas_region(&mut self, _name: String, _region: AtlasRegion) -> Result<()> {
+    fn add_atlas_region(&mut self, _name: String, _region: AtlasRegion) -> Result<usize> {
         Err(Error::BackendError(
             "This texture type does not support atlas regions".to_string()
         ))
     }
 
+    /// Get atlas region id by name (atlas textures only)
+    fn get_atlas_region_id(&self, _name: &str) -> Option<usize> { None }
+
+    /// Get atlas region by id (atlas textures only)
+    fn get_atlas_region(&self, _id: usize) -> Option<&AtlasRegion> { None }
+
     /// Add a layer mapping to this texture (array textures only)
     ///
+    /// Returns the region id (index) on success.
     /// If `data` is provided, uploads pixel data to the specified layer.
     /// Default implementation returns an error. Override in ArrayTexture.
-    fn add_array_layer(&mut self, _name: String, _layer: u32, _data: Option<&[u8]>) -> Result<()> {
+    fn add_array_layer(&mut self, _name: String, _layer: u32, _data: Option<&[u8]>) -> Result<usize> {
         Err(Error::BackendError(
             "This texture type does not support array layers".to_string()
         ))
     }
+
+    /// Get array layer region id by name (array textures only)
+    fn get_array_layer_id(&self, _name: &str) -> Option<usize> { None }
+
+    /// Get array layer region by id (array textures only)
+    fn get_array_layer(&self, _id: usize) -> Option<&LayerRegion> { None }
 }
 
 // ===== DATA TYPES =====
@@ -92,6 +106,13 @@ pub struct AtlasRegionDesc {
     pub name: String,
     /// UV region data
     pub region: AtlasRegion,
+}
+
+/// Layer region within a texture array
+#[derive(Debug, Clone)]
+pub struct LayerRegion {
+    /// Layer index in the GPU texture array
+    pub layer: u32,
 }
 
 /// Descriptor for batch-creating array layers
@@ -157,7 +178,7 @@ impl Texture for SimpleTexture {
 ///
 /// Wraps a single GPU texture that contains multiple sub-images arranged
 /// spatially. Each sub-image is identified by name and described by UV
-/// coordinates.
+/// coordinates. Regions are stored in a Vec and accessible by id (index).
 ///
 /// Regions can be provided at creation time and/or added later.
 pub struct AtlasTexture {
@@ -165,7 +186,10 @@ pub struct AtlasTexture {
     renderer: Arc<Mutex<dyn Renderer>>,
     render_texture: Arc<dyn RenderTexture>,
     descriptor_set: Arc<dyn DescriptorSet>,
-    regions: HashMap<String, AtlasRegion>,
+    /// Regions stored by index (id)
+    regions: Vec<AtlasRegion>,
+    /// Name to id (index) mapping
+    region_names: HashMap<String, usize>,
 }
 
 impl AtlasTexture {
@@ -178,26 +202,43 @@ impl AtlasTexture {
         descriptor_set: Arc<dyn DescriptorSet>,
         regions: &[AtlasRegionDesc],
     ) -> Self {
-        let mut map = HashMap::with_capacity(regions.len());
+        let mut region_vec = Vec::with_capacity(regions.len());
+        let mut name_map = HashMap::with_capacity(regions.len());
         for desc in regions {
-            map.insert(desc.name.clone(), desc.region.clone());
+            let id = region_vec.len();
+            region_vec.push(desc.region.clone());
+            name_map.insert(desc.name.clone(), id);
         }
         Self {
             renderer,
             render_texture,
             descriptor_set,
-            regions: map,
+            regions: region_vec,
+            region_names: name_map,
         }
     }
 
-    /// Add or update a region in the atlas (internal method)
-    fn add_region_internal(&mut self, name: String, region: AtlasRegion) {
-        self.regions.insert(name, region);
+    /// Add a region, returns its id (index)
+    fn add_region_internal(&mut self, name: String, region: AtlasRegion) -> usize {
+        let id = self.regions.len();
+        self.regions.push(region);
+        self.region_names.insert(name, id);
+        id
     }
 
-    /// Get a region by name
-    pub fn get_region(&self, name: &str) -> Option<&AtlasRegion> {
-        self.regions.get(name)
+    /// Get a region by id (index)
+    pub fn get_region(&self, id: usize) -> Option<&AtlasRegion> {
+        self.regions.get(id)
+    }
+
+    /// Get region id by name
+    pub fn get_region_id(&self, name: &str) -> Option<usize> {
+        self.region_names.get(name).copied()
+    }
+
+    /// Get a region by name (convenience: name -> id -> region)
+    pub fn get_region_by_name(&self, name: &str) -> Option<&AtlasRegion> {
+        self.region_names.get(name).and_then(|&id| self.regions.get(id))
     }
 
     /// Get the number of regions
@@ -216,7 +257,7 @@ impl Texture for AtlasTexture {
     }
 
     fn region_names(&self) -> Vec<&str> {
-        self.regions.keys().map(|k| k.as_str()).collect()
+        self.region_names.keys().map(|k| k.as_str()).collect()
     }
 
     fn as_atlas(&self) -> Option<&AtlasTexture> {
@@ -227,9 +268,17 @@ impl Texture for AtlasTexture {
         Some(self)
     }
 
-    fn add_atlas_region(&mut self, name: String, region: AtlasRegion) -> Result<()> {
-        self.add_region_internal(name, region);
-        Ok(())
+    fn add_atlas_region(&mut self, name: String, region: AtlasRegion) -> Result<usize> {
+        let id = self.add_region_internal(name, region);
+        Ok(id)
+    }
+
+    fn get_atlas_region_id(&self, name: &str) -> Option<usize> {
+        self.get_region_id(name)
+    }
+
+    fn get_atlas_region(&self, id: usize) -> Option<&AtlasRegion> {
+        self.get_region(id)
     }
 }
 
@@ -238,7 +287,7 @@ impl Texture for AtlasTexture {
 /// A texture array with named layers.
 ///
 /// Wraps a GPU texture array where each layer is identified by name
-/// and mapped to a layer index.
+/// and mapped to a layer index. Regions are stored in a Vec and accessible by id (index).
 ///
 /// Layers can be provided at creation time and/or added later.
 pub struct ArrayTexture {
@@ -246,7 +295,10 @@ pub struct ArrayTexture {
     renderer: Arc<Mutex<dyn Renderer>>,
     render_texture: Arc<dyn RenderTexture>,
     descriptor_set: Arc<dyn DescriptorSet>,
-    layers: HashMap<String, u32>,
+    /// Regions stored by index (id)
+    regions: Vec<LayerRegion>,
+    /// Name to id (index) mapping
+    region_names: HashMap<String, usize>,
 }
 
 impl ArrayTexture {
@@ -259,31 +311,48 @@ impl ArrayTexture {
         descriptor_set: Arc<dyn DescriptorSet>,
         layers: &[ArrayLayerDesc],
     ) -> Self {
-        let mut map = HashMap::with_capacity(layers.len());
+        let mut region_vec = Vec::with_capacity(layers.len());
+        let mut name_map = HashMap::with_capacity(layers.len());
         for desc in layers {
-            map.insert(desc.name.clone(), desc.layer);
+            let id = region_vec.len();
+            region_vec.push(LayerRegion { layer: desc.layer });
+            name_map.insert(desc.name.clone(), id);
         }
         Self {
             renderer,
             render_texture,
             descriptor_set,
-            layers: map,
+            regions: region_vec,
+            region_names: name_map,
         }
     }
 
-    /// Add or update a layer mapping (internal method)
-    fn add_layer_internal(&mut self, name: String, layer: u32) {
-        self.layers.insert(name, layer);
+    /// Add a region, returns its id (index)
+    fn add_region_internal(&mut self, name: String, region: LayerRegion) -> usize {
+        let id = self.regions.len();
+        self.regions.push(region);
+        self.region_names.insert(name, id);
+        id
     }
 
-    /// Get a layer index by name
-    pub fn get_layer(&self, name: &str) -> Option<u32> {
-        self.layers.get(name).copied()
+    /// Get a region by id (index)
+    pub fn get_region(&self, id: usize) -> Option<&LayerRegion> {
+        self.regions.get(id)
     }
 
-    /// Get the number of named layers
-    pub fn layer_count(&self) -> usize {
-        self.layers.len()
+    /// Get region id by name
+    pub fn get_region_id(&self, name: &str) -> Option<usize> {
+        self.region_names.get(name).copied()
+    }
+
+    /// Get a region by name (convenience: name -> id -> region)
+    pub fn get_region_by_name(&self, name: &str) -> Option<&LayerRegion> {
+        self.region_names.get(name).and_then(|&id| self.regions.get(id))
+    }
+
+    /// Get the number of regions
+    pub fn region_count(&self) -> usize {
+        self.regions.len()
     }
 }
 
@@ -297,7 +366,7 @@ impl Texture for ArrayTexture {
     }
 
     fn region_names(&self) -> Vec<&str> {
-        self.layers.keys().map(|k| k.as_str()).collect()
+        self.region_names.keys().map(|k| k.as_str()).collect()
     }
 
     fn as_array(&self) -> Option<&ArrayTexture> {
@@ -308,13 +377,53 @@ impl Texture for ArrayTexture {
         Some(self)
     }
 
-    fn add_array_layer(&mut self, name: String, layer: u32, data: Option<&[u8]>) -> Result<()> {
+    fn add_array_layer(&mut self, name: String, layer: u32, data: Option<&[u8]>) -> Result<usize> {
         // If pixel data is provided, upload it to the GPU via the render texture
         if let Some(pixel_data) = data {
             self.render_texture.update_layer(layer, pixel_data)?;
         }
 
-        self.add_layer_internal(name, layer);
-        Ok(())
+        let id = self.add_region_internal(name, LayerRegion { layer });
+        Ok(id)
     }
+
+    fn get_array_layer_id(&self, name: &str) -> Option<usize> {
+        self.get_region_id(name)
+    }
+
+    fn get_array_layer(&self, id: usize) -> Option<&LayerRegion> {
+        self.get_region(id)
+    }
+}
+
+// ===== RESOURCE DESCRIPTORS =====
+
+use crate::renderer::TextureDesc;
+
+/// Descriptor for creating a SimpleTexture resource
+pub struct SimpleTextureDesc {
+    /// Renderer to use for GPU texture creation
+    pub renderer: Arc<Mutex<dyn Renderer>>,
+    /// GPU texture description (format, size, data, etc.)
+    pub texture: TextureDesc,
+}
+
+/// Descriptor for creating an AtlasTexture resource
+pub struct AtlasTextureDesc {
+    /// Renderer to use for GPU texture creation
+    pub renderer: Arc<Mutex<dyn Renderer>>,
+    /// GPU texture description (format, size, data, etc.)
+    pub texture: TextureDesc,
+    /// Initial atlas regions (can be empty, add later via add_atlas_region)
+    pub regions: Vec<AtlasRegionDesc>,
+}
+
+/// Descriptor for creating an ArrayTexture resource
+pub struct ArrayTextureDesc {
+    /// Renderer to use for GPU texture creation
+    pub renderer: Arc<Mutex<dyn Renderer>>,
+    /// GPU texture description (format, size, array_layers, etc.)
+    pub texture: TextureDesc,
+    /// Initial layer mappings with optional pixel data (can be empty)
+    pub layers: Vec<ArrayLayerDesc>,
 }

@@ -4,6 +4,7 @@
 /// engine subsystems. It uses thread-safe static storage with RwLock for safe
 /// concurrent access.
 
+use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock, Arc, Mutex};
 use std::time::SystemTime;
 use crate::renderer::Renderer;
@@ -21,8 +22,8 @@ static LOGGER: OnceLock<RwLock<Box<dyn Logger>>> = OnceLock::new();
 
 /// Internal state structure holding all engine singletons
 struct EngineState {
-    /// Renderer singleton (wrapped in Mutex for thread-safe mutable access)
-    renderer: RwLock<Option<Arc<Mutex<dyn Renderer>>>>,
+    /// Named renderers (multiple renderers supported, keyed by name)
+    renderers: RwLock<HashMap<String, Arc<Mutex<dyn Renderer>>>>,
     /// Resource manager singleton
     resource_manager: RwLock<Option<Arc<Mutex<ResourceManager>>>>,
 }
@@ -31,7 +32,7 @@ impl EngineState {
     /// Create a new empty engine state
     fn new() -> Self {
         Self {
-            renderer: RwLock::new(None),
+            renderers: RwLock::new(HashMap::new()),
             resource_manager: RwLock::new(None),
         }
     }
@@ -103,32 +104,37 @@ impl Engine {
     /// After calling this, you must call `initialize()` again before creating new subsystems.
     pub fn shutdown() {
         if let Some(state) = ENGINE_STATE.get() {
-            // Clear resource manager BEFORE renderer (resources reference GPU objects)
+            // Clear resource manager BEFORE renderers (resources reference GPU objects)
             if let Ok(mut rm) = state.resource_manager.write() {
                 *rm = None;
             }
-            // Clear renderer
-            if let Ok(mut renderer) = state.renderer.write() {
-                *renderer = None;
+            // Clear all renderers
+            if let Ok(mut renderers) = state.renderers.write() {
+                renderers.clear();
             }
         }
     }
 
-    /// Create and register the renderer singleton
+    /// Create and register a named renderer
     ///
-    /// This is a simplified API that automatically wraps the renderer in Arc
-    /// and registers it as a global singleton.
+    /// Wraps the renderer in Arc and registers it in the global renderer map.
+    /// Returns the created renderer for immediate use.
     ///
     /// # Arguments
     ///
+    /// * `name` - Unique name for this renderer
     /// * `renderer` - Any type implementing the Renderer trait
+    ///
+    /// # Returns
+    ///
+    /// The created renderer wrapped in `Arc<Mutex<dyn Renderer>>`
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The engine is not initialized
-    /// - A renderer already exists
-    /// - The renderer lock is poisoned
+    /// - A renderer with the same name already exists
+    /// - The renderers lock is poisoned
     ///
     /// # Example
     ///
@@ -137,50 +143,47 @@ impl Engine {
     /// use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
     ///
     /// Engine::initialize()?;
-    /// Engine::create_renderer(VulkanRenderer::new(&window, config)?)?;
+    /// let renderer = Engine::create_renderer("main", VulkanRenderer::new(&window, config)?)?;
+    /// // Use renderer directly...
     /// # Ok::<(), galaxy_3d_engine::Error>(())
     /// ```
-    pub fn create_renderer<R: Renderer + 'static>(renderer: R) -> Result<()> {
-        // Wrap in Arc<Mutex<dyn Renderer>>
+    pub fn create_renderer<R: Renderer + 'static>(name: &str, renderer: R) -> Result<Arc<Mutex<dyn Renderer>>> {
         let arc_renderer: Arc<Mutex<dyn Renderer>> = Arc::new(Mutex::new(renderer));
 
-        // Register as singleton
-        Self::register_renderer(arc_renderer)?;
+        Self::register_renderer(name, Arc::clone(&arc_renderer))?;
 
-        // Log successful creation
-        crate::engine_info!("galaxy3d::Engine", "Renderer singleton created successfully");
+        crate::engine_info!("galaxy3d::Engine", "Renderer '{}' created successfully", name);
 
-        Ok(())
+        Ok(arc_renderer)
     }
 
-    /// Register a renderer singleton (internal use)
-    ///
-    /// This is called internally by create_renderer(). Marked pub(crate) to allow
-    /// access from other modules if needed.
-    pub(crate) fn register_renderer(renderer: Arc<Mutex<dyn Renderer>>) -> Result<()> {
+    /// Register a renderer by name (internal use)
+    pub(crate) fn register_renderer(name: &str, renderer: Arc<Mutex<dyn Renderer>>) -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
             ))?;
 
-        let mut lock = state.renderer.write()
+        let mut lock = state.renderers.write()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("Renderer lock poisoned".to_string())
+                Error::BackendError("Renderers lock poisoned".to_string())
             ))?;
 
-        if lock.is_some() {
+        if lock.contains_key(name) {
             return Err(Self::log_and_return_error(
-                Error::InitializationFailed("Renderer already exists. Call Renderer::destroy_singleton() first.".to_string())
+                Error::InitializationFailed(format!("Renderer '{}' already exists. Call Engine::destroy_renderer() first.", name))
             ));
         }
 
-        *lock = Some(renderer);
+        lock.insert(name.to_string(), renderer);
         Ok(())
     }
 
-    /// Get the renderer singleton
+    /// Get a renderer by name
     ///
-    /// This provides global access to the renderer after it has been created.
+    /// # Arguments
+    ///
+    /// * `name` - Name of the renderer to retrieve
     ///
     /// # Returns
     ///
@@ -190,39 +193,43 @@ impl Engine {
     ///
     /// Returns an error if:
     /// - The engine is not initialized
-    /// - The renderer has not been created
+    /// - No renderer with the given name exists
     ///
     /// # Example
     ///
     /// ```no_run
     /// use galaxy_3d_engine::Engine;
     ///
-    /// let renderer = Engine::renderer()?;
+    /// let renderer = Engine::renderer("main")?;
     /// let renderer_guard = renderer.lock().unwrap();
     /// // Use renderer_guard...
     /// # Ok::<(), galaxy_3d_engine::Error>(())
     /// ```
-    pub fn renderer() -> Result<Arc<Mutex<dyn Renderer>>> {
+    pub fn renderer(name: &str) -> Result<Arc<Mutex<dyn Renderer>>> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
             ))?;
 
-        let lock = state.renderer.read()
+        let lock = state.renderers.read()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("Renderer lock poisoned".to_string())
+                Error::BackendError("Renderers lock poisoned".to_string())
             ))?;
 
-        lock.clone()
+        lock.get(name)
+            .cloned()
             .ok_or_else(|| Self::log_and_return_error(
-                Error::InitializationFailed("Renderer not created. Call Engine::create_renderer() first.".to_string())
+                Error::InitializationFailed(format!("Renderer '{}' not found. Call Engine::create_renderer() first.", name))
             ))
     }
 
-    /// Destroy the renderer singleton
+    /// Destroy a renderer by name
     ///
-    /// Removes the renderer singleton, allowing a new one to be created.
-    /// All existing renderer references will remain valid until dropped.
+    /// Removes the renderer from the map. Existing references remain valid until dropped.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Name of the renderer to destroy
     ///
     /// # Errors
     ///
@@ -233,26 +240,41 @@ impl Engine {
     /// ```no_run
     /// use galaxy_3d_engine::Engine;
     ///
-    /// Engine::destroy_renderer()?;
+    /// Engine::destroy_renderer("main")?;
     /// # Ok::<(), galaxy_3d_engine::Error>(())
     /// ```
-    pub fn destroy_renderer() -> Result<()> {
+    pub fn destroy_renderer(name: &str) -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized".to_string())
             ))?;
 
-        let mut lock = state.renderer.write()
+        let mut lock = state.renderers.write()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("Renderer lock poisoned".to_string())
+                Error::BackendError("Renderers lock poisoned".to_string())
             ))?;
 
-        *lock = None;
+        lock.remove(name);
 
-        // Log successful destruction
-        crate::engine_info!("galaxy3d::Engine", "Renderer singleton destroyed");
+        crate::engine_info!("galaxy3d::Engine", "Renderer '{}' destroyed", name);
 
         Ok(())
+    }
+
+    /// Get the names of all registered renderers
+    pub fn renderer_names() -> Vec<String> {
+        ENGINE_STATE.get()
+            .and_then(|state| state.renderers.read().ok())
+            .map(|lock| lock.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get the number of registered renderers
+    pub fn renderer_count() -> usize {
+        ENGINE_STATE.get()
+            .and_then(|state| state.renderers.read().ok())
+            .map(|lock| lock.len())
+            .unwrap_or(0)
     }
 
     // ===== RESOURCE MANAGER API =====
@@ -382,8 +404,8 @@ impl Engine {
             if let Ok(mut rm) = state.resource_manager.write() {
                 *rm = None;
             }
-            if let Ok(mut renderer) = state.renderer.write() {
-                *renderer = None;
+            if let Ok(mut renderers) = state.renderers.write() {
+                renderers.clear();
             }
         }
     }

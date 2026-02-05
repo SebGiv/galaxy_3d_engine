@@ -1,445 +1,182 @@
-# Galaxy3DEngine - Règles de Développement
+# Galaxy3D Engine - Règles Impératives
 
-> **Project**: Multi-API 3D Rendering Engine in Rust
-> **Date**: 2026-01-30
-
----
-
-## 📋 Règles de Communication
-
-### Langue de Communication
-
-**TOUJOURS parler en français** avec l'utilisateur dans toutes les conversations.
-
-**Exception** : Le code source, les commentaires dans le code, et les logs doivent être **en anglais**.
+> **Projet**: Galaxy3D Engine - Moteur de rendu 3D
+> **Date**: 2026-02-05
 
 ---
 
-## ⚠️ En Cas de Doute ou d'Erreur
+## Règles Impératives
 
-Si l'utilisateur te signale une violation de règle ou une erreur :
-
-1. **STOP** - Ne pas deviner ou justifier
-2. **RELIRE CLAUDE.md** immédiatement pour identifier l'erreur
-3. **CORRIGER** en suivant la règle correcte
-
-**Exemple** :
-```
-User: "Tu as violé une règle de CLAUDE.md"
-
-Claude: [RELIRE IMMÉDIATEMENT CLAUDE.md avec l'outil Read]
-Claude: "J'ai identifié l'erreur : [explication]. Je corrige maintenant en suivant la règle..."
-```
-
-**Règle importante** : En cas de doute sur n'importe quelle règle ou processus, toujours consulter CLAUDE.md en premier avant de répondre ou d'agir.
+Ces règles sont **impératives** et doivent être suivies **à la lettre**, sans exception.
 
 ---
 
-## 📁 Organisation des Fichiers
+### Règle 1 - Langue de Communication
 
-### Fichiers de Documentation
+**TOUJOURS parler en français** avec l'utilisateur.
 
-- **`CLAUDE.md`** (ce fichier) : Contient UNIQUEMENT les règles de développement du projet
-- **`galaxy_3d_engine_dev.md`** : Contient TOUTES les analyses techniques, la planification des phases, et l'avancement du développement
-  - **Référence principale** : Claude doit se référer à ce fichier pour continuer le développement même si la conversation précédente est perdue
-  - **Mise à jour automatique** : Claude doit mettre à jour ce fichier automatiquement à chaque avancement ou analyse
-  - **Langue** : Français
-
-- **`doc/`** : Dossier contenant toute la documentation
-  - **Documentation API HTML** :
-    - `galaxy_3d_engine.html` : Documentation API en anglais
-    - `galaxy_3d_engine_fr.html` : Documentation API en français
-  - **Documentation Technique** :
-    - `galaxy_3d_engine_tech_doc.md` : Documentation technique complète en anglais
-    - `galaxy_3d_engine_tech_doc.fr.md` : Documentation technique complète en français
-  - **Mise à jour sur demande** : Claude doit mettre à jour ces documentations UNIQUEMENT quand l'utilisateur le demande explicitement
-  - **Référence principale** : Claude doit se référer au dossier `doc/` pour comprendre comment fonctionne le moteur
+**Justification** : Le français est la langue maternelle et naturelle de l'utilisateur.
 
 ---
 
-## 🔧 Règles de Développement
+### Règle 2 - Avant de Coder
 
-### 1. Avant Tout Développement (Codage, Résolution de Bug, etc.)
+**Justification** : Permet de valider la conformité du code prévu avec la volonté de l'utilisateur et d'ajuster si nécessaire.
 
-**RÈGLE IMPÉRATIVE** :
+**AVANT** toute modification de code :
 
-1. 📋 **CRÉER UNE TODO LIST avec l'outil TodoWrite** contenant OBLIGATOIREMENT :
-   - Toutes les étapes de développement (création fichiers, modifications, tests, etc.)
-   - ⚠️ **OBLIGATOIRE** : "Mettre à jour galaxy_3d_engine_dev.md"
-   - Étape finale de commit
+1. **Exposer** clairement ce qui va être modifié
+2. **Présenter** le code qui sera produit
+3. **Attendre** le feu vert de l'utilisateur
 
-   📝 **Note sur la documentation** : Les mises à jour de `doc/` (HTML et tech docs) ne sont PAS automatiques.
-   Ajouter ces étapes UNIQUEMENT si l'utilisateur le demande explicitement.
+**Mot-clé d'approbation** : `dev`
 
-2. ✋ **Exposer clairement** ce qui va être fait (changements prévus, fichiers impactés, approche technique)
-
-3. ⏸️ **STOP - ATTENDRE LE FEU VERT DE L'UTILISATEUR**
-   - ⚠️ **CRITIQUE** : NE JAMAIS commencer le développement sans un "dev" ou "vas-y" explicite
-   - ⚠️ Ceci s'applique MÊME si la TODO list a déjà été créée
-   - ⚠️ Ceci s'applique MÊME si l'approche a été exposée
-   - ⚠️ TOUJOURS attendre que l'utilisateur dise "dev" ou "vas-y"
-
-4. ✅ Si l'utilisateur répond **"dev"** ou **"vas-y"** → Commencer le développement
-
-5. ❌ Si l'utilisateur demande des modifications → Ajuster l'approche et re-exposer
-
-**IMPORTANT** : L'utilisateur peut vérifier la TODO list et demander d'ajouter des étapes manquantes AVANT de dire "dev".
-
-**Exemple** :
 ```
-Claude: [Crée TODO list avec TodoWrite]
-📋 TODO créée :
-1. ⏳ Créer mesh_registry.rs
-2. ⏳ Modifier renderer.rs : Ajouter create_global_buffers()
-3. ⏳ Modifier vulkan_renderer.rs : Implémenter backend
-4. ⏳ Mettre à jour galaxy_3d_engine_dev.md
-5. ⏳ Mettre à jour doc/galaxy_3d_engine.html
-6. ⏳ Mettre à jour doc/galaxy_3d_engine_fr.html
-7. ⏳ Commit
+Claude: "Je vais modifier X en ajoutant Y..."
+[présentation du code prévu]
+"Est-ce que je peux procéder ?"
 
-Claude: "Je vais implémenter le mesh batching en modifiant les fichiers suivants :
-- renderer.rs : Ajouter create_global_buffers()
-- mesh_registry.rs : Créer nouvelle structure MeshRegistry
-- vulkan_renderer.rs : Implémenter le backend Vulkan
-Approche : [description technique]
-Est-ce que je peux commencer le développement ?"
+User: "dev"  ← Feu vert pour coder
 
-User: "dev"  ← Feu vert
-
-Claude: [commence le développement en suivant la TODO]
-1. 🔄 Créer mesh_registry.rs...
+Claude: [commence à coder]
 ```
+
+**IMPORTANT** : Ne JAMAIS commencer à coder sans avoir reçu le mot-clé `dev`.
 
 ---
 
-### 2. Avant Tout Commit/Push
+### Règle 3 - Code en Anglais
 
-**RÈGLE IMPÉRATIVE** :
+**Justification** : Bonne pratique universelle - toujours coder en anglais.
 
-1. ✋ **Exposer le message de commit** complet (titre + description) en **ANGLAIS**
+**TOUT** le code doit être écrit en **anglais** :
 
-2. ⏸️ **STOP - ATTENDRE LE FEU VERT DE L'UTILISATEUR POUR COMMIT/PUSH**
-   - ⚠️ **CRITIQUE** : NE JAMAIS faire `git commit` sans feu vert explicite
-   - ⚠️ **CRITIQUE** : NE JAMAIS faire `git push` sans feu vert explicite
-   - ⚠️ Ceci s'applique MÊME si le développement est terminé
-   - ⚠️ Ceci s'applique MÊME si les tests passent
-   - ⚠️ TOUJOURS attendre que l'utilisateur dise "commit" ou "commit/push"
+- Noms de fonctions
+- Noms de variables
+- Noms de structures/enums/traits
+- Commentaires (pertinents uniquement)
+- Messages de log
+- Documentation (doc comments)
 
-3. ✅ Si l'utilisateur répond **"commit"** → Faire `git commit` SEULEMENT (PAS de push)
-
-4. ✅ Si l'utilisateur répond **"commit/push"** ou **"push"** → Faire `git commit` ET `git push`
-
-5. ❌ Si l'utilisateur demande des modifications → Ajuster le message et re-exposer
-
-**Langue des Messages de Commit** : **ANGLAIS** UNIQUEMENT
-
-- ⚠️ **OBLIGATOIRE** : Titre en anglais
-- ⚠️ **OBLIGATOIRE** : Description en anglais
-- ⚠️ **OBLIGATOIRE** : Suivre les conventions Git standard (feat:, fix:, docs:, refactor:, etc.)
-- ❌ **INTERDIT** : Aucun mot en français dans le message de commit
-
-**Exemple** :
-```
-Claude: "Développement terminé. Je propose le message de commit suivant :
-
-Titre: feat: Add mesh batching with global buffers
-
-Description:
-- Implement MeshRegistry for global vertex/index buffers
-- Add create_global_buffers() to Renderer trait
-- Update Vulkan backend to support batching
-- Add example in galaxy3d_demo
-
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
-
-⏸️ STOP - J'attends ton feu vert pour commit/push."
-
-User: "commit/push"  ← Feu vert pour commit ET push
-
-Claude: [fait git commit ET git push]
-```
-
----
-
-### 3. Code Source et Logs
-
-**Langue** : **Anglais** uniquement
-
-**Commentaires dans le code** :
 ```rust
-// ✅ CORRECT (English)
-/// Creates a new mesh registry with global vertex and index buffers
-pub fn create_mesh_registry(&self) -> Result<MeshRegistry> {
-    // Allocate global buffers
-    let vertex_buffer = self.create_buffer(...)?;
-    // ...
+// CORRECT
+/// Resource-level texture types for the rendering system
+pub struct AtlasTexture {
+    regions: Vec<AtlasRegion>,
+    region_names: HashMap<String, usize>,
 }
 
-// ❌ INCORRECT (Français)
-/// Crée un nouveau registre de mesh avec des buffers globaux
-pub fn create_mesh_registry(&self) -> Result<MeshRegistry> {
-    // Allouer les buffers globaux
-    let vertex_buffer = self.create_buffer(...)?;
-    // ...
+// INCORRECT
+/// Types de textures au niveau ressource pour le système de rendu
+pub struct TextureAtlas {
+    regions: Vec<RegionAtlas>,
+    noms_regions: HashMap<String, usize>,
 }
 ```
 
-**Logs** :
-```rust
-// ✅ CORRECT (English)
-log::info!("Mesh registry created with {} meshes", count);
-log::error!("Failed to allocate global vertex buffer: {}", err);
+---
 
-// ❌ INCORRECT (Français)
-log::info!("Registre de mesh créé avec {} meshes", count);
-log::error!("Échec d'allocation du buffer vertex global: {}", err);
+### Règle 4 - En Cas de Doute
+
+**Justification** : Éviter les actions non sollicitées (ex: coder sans demande). Garde cette règle en tête pour éviter toute erreur.
+
+**Si tu as un doute** (ou que tu y es incité même indirectement) :
+
+→ **Relire les règles de ce fichier CLAUDE.md**
+
+Cette règle s'applique à toute situation ambiguë ou incertaine.
+
+---
+
+### Règle 5 - Commits et Push
+
+**Justification** : Garantir des messages de commit de qualité - en anglais, ni trop succincts, ni trop verbeux. Éviter les commits bâclés.
+
+**JAMAIS** de commit sans accord direct de l'utilisateur.
+
+#### Mots-clés Git
+
+| Mot-clé | Action |
+|---------|--------|
+| `commentaire commit` | Présenter les commentaires de commit (basés sur `git diff`) **SANS** commit |
+| `commit` | Commit avec les commentaires **préalablement approuvés** |
+| `commit/push` | Commit + Push (commentaires doivent être approuvés) |
+| `push` | Push **uniquement si** un commit a été fait auparavant |
+
+#### Workflow
+
+```
+User: "commentaire commit"
+
+Claude: "Voici le message de commit proposé :
+
+feat: Add id-based access pattern to Mesh hierarchy
+
+- Refactor MeshLOD to use Vec<SubMesh> + HashMap for id-based access
+- Refactor Mesh to use Vec<MeshEntry> + HashMap for id-based access
+- Update add_mesh_entry/add_mesh_lod/add_submesh to return ids
+- Update ResourceManager signatures accordingly
+
+Est-ce que ce message convient ?"
+
+User: "commit"  ← Approuve et demande le commit
+
+Claude: [fait git commit avec le message approuvé]
 ```
 
----
-
-## 📚 Documentation HTML
-
-### Structure de la Documentation
-
-La documentation se trouve dans le dossier **`doc/`** :
-- **`doc/galaxy_3d_engine.html`** : Version anglaise
-- **`doc/galaxy_3d_engine_fr.html`** : Version française
-
-### Format de la Documentation
-
-**Organisation** :
-- 📑 **Table des matières cliquable** avec sous-rubriques logiques
-- 📦 **Une rubrique par structure** + ensemble de fonctions publiques liées
-- 🔗 **Lien vers table des matières** au début de chaque rubrique
-- 📂 **Regroupement logique** (ex: tout le Renderer ensemble, tous les objets liés au Renderer groupés)
-
-**Contenu de chaque élément public** :
-- **Nom** de la structure/fonction/méthode
-- **Description succincte** (1-2 lignes)
-- **Clic** → Ouvre un **accordéon** contenant :
-  - Description complète de l'utilisation
-  - Exemple de code complet
-
-**Exemple de structure** :
-```html
-<!-- Table des matières -->
-<nav id="toc">
-  <h2>Table des Matières</h2>
-  <ul>
-    <li><a href="#renderer">Renderer</a>
-      <ul>
-        <li><a href="#renderer-creation">Creation & Initialization</a></li>
-        <li><a href="#renderer-resources">Resource Management</a></li>
-        <li><a href="#renderer-rendering">Rendering</a></li>
-      </ul>
-    </li>
-    <li><a href="#command-list">Command List</a></li>
-    <!-- ... -->
-  </ul>
-</nav>
-
-<!-- Rubrique Renderer -->
-<section id="renderer">
-  <a href="#toc">↑ Table des Matières</a>
-  <h2>Renderer</h2>
-
-  <div class="api-item">
-    <h3 onclick="toggleAccordion('renderer-new')">
-      Renderer::new()
-      <span class="summary">Creates a new renderer instance</span>
-    </h3>
-    <div id="renderer-new" class="accordion-content">
-      <p>Detailed description...</p>
-      <pre><code class="language-rust">
-// Example code
-let renderer = VulkanRenderer::new(&window, config)?;
-      </code></pre>
-    </div>
-  </div>
-
-  <!-- ... autres éléments ... -->
-</section>
-```
-
-**Organisation du Contenu** :
-
-La documentation HTML suit cette structure :
-
-1. **Section Renderer** (Factory/Device)
-   - Contient TOUTES les méthodes de création avec descriptions complètes
-   - `create_buffer()`, `create_texture()`, `create_shader()`, etc.
-   - Chaque méthode a : description, paramètres, retour, exemple de code
-
-2. **Sections par Type de Ressource** (Buffer, Texture, Shader, etc.)
-   - **Lien vers Renderer** : Référence vers la méthode `create_xxx()` dans Renderer
-   - **Trait Public** : Documentation du trait avec toutes ses méthodes publiques
-   - **Exemples d'utilisation** : Code montrant comment utiliser le trait
-
-**Exemple de structure** :
-```
-Buffer
-├── "See Renderer::create_buffer() for creation" (lien)
-└── RendererBuffer Trait
-    └── update() - Description + exemple
-
-Texture
-├── "See Renderer::create_texture() for creation" (lien)
-└── RendererTexture Trait
-    └── (No public methods - Marker trait)
-```
-
-**Avantages** :
-- ✅ Deux chemins d'accès (création dans Renderer, utilisation dans section dédiée)
-- ✅ Pas de duplication du contenu
-- ✅ Facile à trouver ce qu'on cherche
-
-**Mise à jour** :
-- 📝 **Sur demande** : Claude doit mettre à jour la documentation HTML UNIQUEMENT quand l'utilisateur le demande
-- 📝 Ajouter les nouvelles structures/fonctions quand demandé
-- 🔄 Mettre à jour les exemples si l'API change (sur demande)
-- 🔗 Maintenir les liens entre sections (Renderer ↔ Traits)
+**IMPORTANT** :
+- Les messages de commit doivent être en **anglais**
+- Si aucun commentaire n'a été approuvé, **demander** d'abord l'approbation
+- Les commentaires doivent refléter les modifications (`git diff`)
 
 ---
 
-## 📖 Documentation Technique
+### Règle 6 - Documentation Technique
 
-### Structure de la Documentation Technique
+**Justification** : Éviter les erreurs dues à une connaissance superficielle du projet. Ne pas perdre de temps avec des approximations.
 
-La documentation technique se trouve dans le dossier **`doc/`** :
-- **`doc/galaxy_3d_engine_tech_doc.md`** : Version anglaise
-- **`doc/galaxy_3d_engine_tech_doc.fr.md`** : Version française
+Pour développer/coder, **s'inspirer et s'aider** des documents dans le dossier `doc/`, en particulier les documents techniques.
 
-### Contenu de la Documentation Technique
-
-La documentation technique est une référence complète et détaillée de l'architecture du moteur :
-
-**Architecture & Design** :
-- Vue d'ensemble de l'architecture multi-crates
-- Principes de conception fondamentaux
-- Hiérarchie des traits
-- Patterns de design utilisés
-
-**Implémentation** :
-- Gestion des ressources (buffers, textures, shaders, pipelines)
-- Pipeline de rendu complet
-- Détails d'implémentation du backend Vulkan
-- Synchronisation CPU-GPU
-- Gestion mémoire GPU (gpu-allocator)
-
-**Références Techniques** :
-- Descripteurs de ressources (BufferDesc, TextureDesc, etc.)
-- API complète de tous les traits
-- Exemples de code d'utilisation
-- Flux d'exécution détaillés
-
-**Extensibilité** :
-- Features plannifiées (Phases 10+)
-- Support multi-backend (D3D12, Metal)
-- Points d'extension
-
-### Utilisation par Claude
-
-**RÈGLE IMPORTANTE** :
-
-Claude doit **toujours consulter le dossier `doc/`** pour :
-- ✅ Comprendre comment fonctionne le moteur
-- ✅ Vérifier l'architecture existante avant de proposer des changements
-- ✅ S'assurer de la cohérence avec les design patterns utilisés
-- ✅ Référencer les structures et traits déjà implémentés
-
-**Avant toute modification** :
-1. Lire la documentation technique pertinente dans `doc/`
-2. Comprendre l'architecture actuelle
-3. Proposer des changements cohérents avec le design existant
-4. Mettre à jour la documentation après implémentation
-
-### Mise à Jour de la Documentation Technique
-
-**Quand mettre à jour** :
-- ✨ Après l'ajout d'une nouvelle feature majeure
-- 🔄 Après modification d'une API existante
-- 📦 Après ajout de nouveaux traits/structures
-- 🏗️ Après changement architectural
-
-**Comment mettre à jour** :
-1. **Identifier les sections impactées** dans les deux versions (EN + FR)
-2. **Mettre à jour la version anglaise** (`galaxy_3d_engine_tech_doc.md`)
-3. **Mettre à jour la version française** (`galaxy_3d_engine_tech_doc.fr.md`)
-4. **Vérifier la cohérence** entre les deux versions
-5. **Ajouter des exemples de code** si nécessaire
-
-**Sections à maintenir** :
-- Table des matières (à jour avec nouvelles sections)
-- Architecture Overview (si changements structurels)
-- Trait Hierarchy (si nouveaux traits)
-- Resource Management (si nouveaux types de ressources)
-- Rendering Pipeline (si nouveau flux)
-- API Reference Summary (toujours à jour)
+**Ordre de priorité** :
+1. Documents techniques (`doc/tech/`, `doc/architecture/`, etc.)
+2. README et documentation générale
+3. Code existant comme référence
 
 ---
 
-## 🎯 Workflow de Développement
+## Référence Rapide
 
-### Workflow Type pour une Nouvelle Feature
-
-1. **Analyse et Planification**
-   - Discuter de la feature avec l'utilisateur
-   - Mettre à jour `galaxy_3d_engine_dev.md` avec l'analyse technique
-
-2. **Proposition de Développement**
-   - Exposer les changements prévus
-   - Attendre le feu vert ("dev")
-
-3. **Développement**
-   - Coder la feature (code + commentaires en anglais)
-   - Mettre à jour `galaxy_3d_engine_dev.md` avec l'avancement
-
-4. **Documentation**
-   - ⚠️ **OBLIGATOIRE** : Mettre à jour `galaxy_3d_engine_dev.md` avec l'avancement
-   - 📝 **Sur demande uniquement** : Les fichiers du dossier `doc/` (HTML et tech docs) ne sont mis à jour que si l'utilisateur le demande explicitement
-   - Si demandé, la mise à jour peut être déléguée à des agents esclaves en parallèle via l'outil Task
-
-5. **Commit**
-   - Exposer le message de commit
-   - Attendre le feu vert ("commit" ou "commit/push")
-   - Commit/push selon l'instruction
+| Situation | Action | Attente |
+|-----------|--------|---------|
+| Avant de coder | Exposer les changements + code prévu | `dev` |
+| Présenter commit | Montrer le message de commit | Approbation |
+| Faire un commit | Commit avec message approuvé | `commit` |
+| Commit et push | Commit + Push | `commit/push` |
+| Push seul | Push (si commits faits) | `push` |
+| Doute quelconque | Relire CLAUDE.md | - |
+| Écrire du code | Tout en anglais | - |
+| Communiquer | Toujours en français | - |
 
 ---
 
-## 📖 Référence Rapide
-
-| Situation | Action Claude | Attente User |
-|-----------|---------------|--------------|
-| Avant dev | Exposer les changements prévus | "dev" / "vas-y" |
-| Avant commit | Exposer le message de commit | "commit" / "commit/push" |
-| Code source | Écrire en anglais (commentaires + logs) | - |
-| Conversation | Parler en français | - |
-| Mise à jour `galaxy_3d_engine_dev.md` | Automatique après chaque feature | - |
-| Mise à jour `doc/` (HTML, tech docs) | Sur demande explicite uniquement | "mets à jour la doc" |
-| Référence technique | Consulter `doc/` (tech doc) et `galaxy_3d_engine_dev.md` | - |
-| Comprendre le moteur | Lire `doc/galaxy_3d_engine_tech_doc.md` | - |
-
----
-
-## ✅ Checklist Avant Chaque Action
+## Checklist
 
 ### Avant de Coder
-- [ ] J'ai exposé clairement ce que je vais faire
-- [ ] J'ai attendu le feu vert de l'utilisateur
-- [ ] Je vais écrire le code et les commentaires en anglais
+- [ ] J'ai exposé ce que je vais modifier
+- [ ] J'ai présenté le code que je vais produire
+- [ ] J'ai reçu le mot-clé `dev`
 
 ### Avant de Commit
-- [ ] J'ai exposé le message de commit complet
-- [ ] J'ai attendu l'instruction ("commit" ou "commit/push")
-- [ ] Je vais suivre l'instruction exactement
+- [ ] J'ai présenté le message de commit
+- [ ] Le message est en anglais
+- [ ] L'utilisateur a approuvé le message
+- [ ] J'ai reçu `commit` ou `commit/push`
 
-### Après Développement
-- [ ] J'ai mis à jour `galaxy_3d_engine_dev.md`
-- [ ] Les logs sont en anglais
-- [ ] J'ai consulté `doc/` pour vérifier la cohérence
-- [ ] (Si demandé) J'ai mis à jour la documentation HTML API (EN + FR)
-- [ ] (Si demandé) J'ai mis à jour la documentation technique (EN + FR)
+### Code
+- [ ] Fonctions/variables/structs en anglais
+- [ ] Commentaires pertinents en anglais
+- [ ] Documentation (///  //!) en anglais
 
 ---
 
-**Note** : Ces règles sont **impératives** et doivent être suivies à chaque fois, sans exception.
+**Ces règles sont IMPÉRATIVES. Aucune exception.**

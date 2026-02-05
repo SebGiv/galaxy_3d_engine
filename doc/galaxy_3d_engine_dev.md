@@ -1,24 +1,80 @@
-# Galaxy3DEngine - Design Document
+# Galaxy3DEngine - Document de Développement
 
-> **Project**: Multi-API 3D Rendering Engine in Rust
-> **Author**: Claude & User collaboration
-> **Date**: 2026-01-26
-> **Status**: Phase 11d - Array Texture Layer Upload ✅
-
----
-
-## 🎯 Project Goals
-
-Create a modern 3D rendering engine in Rust with:
-- **Multi-API abstraction**: Support for Vulkan (and future Direct3D 12)
-- **Modern architecture**: Séparation render/présentation pour render-to-texture
-- **High performance**: Zero-cost abstractions with trait-based polymorphism
-- **Safety**: Leverage Rust's memory safety guarantees
-- **Advanced features**: Push constants, render targets, multi-pass rendering
+> **Projet** : Moteur de rendu 3D multi-API en Rust
+> **Auteur** : Collaboration Claude & Utilisateur
+> **Date** : 2026-02-05
+> **Statut** : Phase 13 - Pattern Vec+HashMap pour accès par ID ✅
 
 ---
 
-## 📋 Core Design Decisions
+## 📖 Préambule
+
+Ce document est rédigé en **français** et constitue le journal de développement du projet Galaxy3D Engine. Il contient :
+
+- **Réflexions** : Les discussions et décisions prises durant le développement
+- **Philosophie** : Les principes directeurs et choix architecturaux
+- **Buts** : Les objectifs à court et long terme du projet
+- **Progression** : L'historique des phases de développement
+
+Ce n'est pas une documentation technique (voir `galaxy_3d_engine_tech_doc.md` pour cela), mais plutôt un document de travail qui capture l'évolution du projet et les raisonnements derrière les décisions.
+
+---
+
+## 🎯 Objectifs du Projet
+
+Créer un moteur de rendu 3D moderne en Rust avec :
+- **Abstraction multi-API** : Support Vulkan (et futur Direct3D 12)
+- **Architecture moderne** : Séparation rendu/présentation pour render-to-texture
+- **Haute performance** : Abstractions à coût zéro avec polymorphisme basé sur les traits
+- **Sécurité** : Exploitation des garanties de sécurité mémoire de Rust
+- **Fonctionnalités avancées** : Push constants, cibles de rendu, rendu multi-passe
+
+---
+
+## 📋 Décisions de Conception Fondamentales
+
+### 0. Pattern Vec+HashMap pour Collections Nommées (Phase 13)
+
+**Problématique** : Comment stocker des éléments accessibles à la fois par nom (String) et par index numérique rapide ?
+
+**Solution retenue** : Combiner `Vec<T>` et `HashMap<String, usize>`
+
+```rust
+pub struct MeshLOD {
+    submeshes: Vec<SubMesh>,              // Stockage par id (index)
+    submesh_names: HashMap<String, usize>, // Nom → id
+}
+```
+
+**Avantages** :
+- ✅ Accès O(1) par id (index direct dans Vec)
+- ✅ Accès O(1) par nom (lookup HashMap puis index)
+- ✅ Les méthodes `add_*()` retournent l'id pour stockage par l'utilisateur
+- ✅ Évite les lookups répétés par nom si l'id est conservé
+- ✅ Pattern consistant entre textures et meshes
+
+**API résultante** :
+```rust
+// Par id (le plus rapide)
+let submesh = lod.submesh(id)?;
+
+// Par nom (convenience)
+let submesh = lod.submesh_by_name("body")?;
+
+// Récupérer l'id pour usage ultérieur
+let id = lod.submesh_id("body")?;
+```
+
+**Pourquoi pas HashMap<String, T> seul ?**
+- ❌ Pas d'accès par index numérique stable
+- ❌ L'itération n'a pas d'ordre garanti
+- ❌ Impossible de stocker un "handle" numérique léger
+
+**Pourquoi pas Vec<(String, T)> ?**
+- ❌ Lookup par nom en O(n)
+- ❌ Nécessite un scan linéaire pour trouver par nom
+
+---
 
 ### 1. Architecture Moderne (Proposition 2)
 
@@ -748,6 +804,45 @@ loop {
 
 ## ✅ Changelog
 
+### 2026-02-05 - Phase 13: Pattern Vec+HashMap pour Accès par ID
+- **Refactoring `MeshLOD`** :
+  - ✅ `submeshes: HashMap<String, SubMesh>` → `submeshes: Vec<SubMesh>` + `submesh_names: HashMap<String, usize>`
+  - ✅ `add_submesh_internal()` retourne maintenant `usize` (l'id du submesh)
+  - ✅ Nouvelles méthodes : `submesh(id)`, `submesh_id(name)`, `submesh_by_name(name)`
+- **Refactoring `Mesh`** :
+  - ✅ `meshes: HashMap<String, MeshEntry>` → `mesh_entries: Vec<MeshEntry>` + `entry_names: HashMap<String, usize>`
+  - ✅ `add_mesh_entry()` retourne maintenant `Result<usize>` (l'id de l'entry)
+  - ✅ Nouvelles méthodes : `mesh_entry(id)`, `mesh_entry_id(name)`, `mesh_entry_by_name(name)`
+- **API ResourceManager mise à jour** :
+  - ✅ `add_mesh_entry()` retourne `Result<usize>`
+  - ✅ `add_mesh_lod()` prend `entry_id: usize` au lieu de `entry_name: &str`
+  - ✅ `add_submesh()` prend `entry_id: usize` au lieu de `entry_name: &str`
+- **Philosophie** :
+  - Accès O(1) par id (index) ou par nom via HashMap
+  - Pattern similaire aux textures resource (consistance)
+  - Les LODs restent indexés par index numérique (pas de noms)
+
+**Justification** : Permet un accès rapide par id numérique tout en conservant la possibilité d'accès par nom. L'utilisateur peut stocker l'id retourné pour éviter les lookups répétés par nom.
+
+### 2026-02-05 - Phase 12: Resource Mesh System
+- **Nouveau module `resource::mesh`**:
+  - ✅ Hiérarchie 4 niveaux : `Mesh` → `MeshEntry` → `MeshLOD` → `SubMesh`
+  - ✅ `Mesh` : Groupe avec buffers GPU partagés (vertex + index optionnel)
+  - ✅ `MeshEntry` : Mesh nommé dans le groupe (ex: "hero", "enemy")
+  - ✅ `MeshLOD` : Niveau de détail (index 0 = plus détaillé)
+  - ✅ `SubMesh` : Unité de draw call (offsets, counts, topology)
+- **Descripteurs**:
+  - ✅ `MeshDesc` : Données brutes vertex/index + layout + entries
+  - ✅ `MeshEntryDesc`, `MeshLODDesc`, `SubMeshDesc` : Descripteurs hiérarchiques
+- **ResourceManager étendu**:
+  - ✅ `create_mesh(name, MeshDesc) -> Result<Arc<Mesh>>` — crée buffers GPU + valide offsets
+  - ✅ `mesh(name)`, `remove_mesh(name)`, `mesh_count()` — accès/suppression
+  - ✅ `add_mesh_entry()`, `add_mesh_lod()`, `add_submesh()` — modification post-création
+- **Design optimisé**:
+  - ✅ `renderer` stocké uniquement dans `Mesh` (pas dans chaque SubMesh)
+  - ✅ HashMap pour entries et submeshes (accès O(1) par nom)
+  - ✅ Validation automatique des offsets contre les tailles de buffer
+
 ### 2026-02-03 - Phase 11d: Array Texture Layer Upload
 - **`ArrayLayerDesc` étendu**:
   - ✅ Nouveau champ `data: Option<Vec<u8>>` pour fournir les pixels à la création
@@ -1030,16 +1125,31 @@ loop {
 
 **Status**: Upload pixels possible à la création ET après création des texture arrays ✅
 
-### Phase 12: Index Buffers (TODO)
-- [ ] Index buffer creation
-- [ ] `draw_indexed()` support
-- [ ] Complex geometry (quads, pentagones, etc.)
+### ✅ Phase 12: Resource Mesh System (DONE)
+- [x] Hiérarchie 4 niveaux : `Mesh` → `MeshEntry` → `MeshLOD` → `SubMesh`
+- [x] `Mesh` : Groupe avec buffers GPU partagés (vertex + index optionnel)
+- [x] Descripteurs : `MeshDesc`, `MeshEntryDesc`, `MeshLODDesc`, `SubMeshDesc`
+- [x] ResourceManager : `create_mesh()`, `mesh()`, `remove_mesh()`, `mesh_count()`
+- [x] Modification post-création : `add_mesh_entry()`, `add_mesh_lod()`, `add_submesh()`
+- [x] Renderer stocké uniquement dans `Mesh` (pas dans chaque SubMesh)
+- [x] Validation automatique des offsets contre les tailles de buffer
 
-### Phase 13: Advanced Features (TODO)
+**Status**: Système de mesh resource complet avec hiérarchie 4 niveaux ✅
+
+### ✅ Phase 13: Pattern Vec+HashMap pour Accès par ID (DONE)
+- [x] Refactoring `MeshLOD` : `Vec<SubMesh>` + `HashMap<String, usize>` pour submeshes
+- [x] Refactoring `Mesh` : `Vec<MeshEntry>` + `HashMap<String, usize>` pour entries
+- [x] `add_mesh_entry()`, `add_mesh_lod()`, `add_submesh()` retournent des ids (usize)
+- [x] Nouvelles méthodes d'accès : par id (direct) ou par nom (via HashMap)
+- [x] ResourceManager API mise à jour pour utiliser `entry_id: usize`
+
+**Status**: Accès O(1) par id ou par nom, pattern consistant avec textures ✅
+
+### Phase 14: Advanced Features (TODO)
 - [ ] Uniform buffers
-- [ ] Texture arrays
 - [ ] Compute shaders
 - [ ] Multi-pass deferred rendering
+- [ ] Scene graph basique
 
 ---
 

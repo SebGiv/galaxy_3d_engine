@@ -5,12 +5,12 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::engine::Engine;
 use crate::error::{Error, Result};
-use crate::renderer::{TextureDesc, TextureData, TextureLayerData, BufferDesc, BufferUsage};
+use crate::renderer::{TextureData, TextureLayerData, BufferDesc, BufferUsage};
 use crate::resource::texture::{
     Texture, SimpleTexture, AtlasTexture, ArrayTexture,
-    AtlasRegion, AtlasRegionDesc, ArrayLayerDesc,
+    AtlasRegion,
+    SimpleTextureDesc, AtlasTextureDesc, ArrayTextureDesc,
 };
 use crate::resource::mesh::{
     Mesh, MeshDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc,
@@ -40,8 +40,8 @@ impl ResourceManager {
     /// # Arguments
     ///
     /// * `name` - Unique name for this texture resource
-    /// * `desc` - GPU texture description (format, size, data, etc.)
-    pub fn create_simple_texture(&mut self, name: String, desc: TextureDesc) -> Result<Arc<dyn Texture>> {
+    /// * `desc` - SimpleTexture descriptor with renderer and texture settings
+    pub fn create_simple_texture(&mut self, name: String, desc: SimpleTextureDesc) -> Result<Arc<dyn Texture>> {
         if self.textures.contains_key(&name) {
             return Err(Error::BackendError(format!(
                 "Texture '{}' already exists in ResourceManager", name
@@ -49,20 +49,20 @@ impl ResourceManager {
         }
 
         // Simple textures must have array_layers == 1
-        if desc.array_layers != 1 {
+        if desc.texture.array_layers != 1 {
             return Err(Error::BackendError(format!(
-                "SimpleTexture requires array_layers = 1, got {}", desc.array_layers
+                "SimpleTexture requires array_layers = 1, got {}", desc.texture.array_layers
             )));
         }
 
-        let renderer_arc = Engine::renderer()?;
+        let renderer_arc = desc.renderer;
         let render_texture;
         let descriptor_set;
         {
             let mut renderer = renderer_arc.lock()
                 .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
 
-            render_texture = renderer.create_texture(desc)?;
+            render_texture = renderer.create_texture(desc.texture)?;
             descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
         }
 
@@ -78,20 +78,18 @@ impl ResourceManager {
 
     /// Create an atlas texture and register it
     ///
-    /// Pass `&[]` for `regions` to create an empty atlas and add regions later
+    /// Pass empty `regions` to create an empty atlas and add regions later
     /// via `add_atlas_region()`.
     /// Returns the created texture for immediate use.
     ///
     /// # Arguments
     ///
     /// * `name` - Unique name for this texture resource
-    /// * `desc` - GPU texture description
-    /// * `regions` - Initial atlas regions (can be empty)
+    /// * `desc` - AtlasTexture descriptor with renderer, texture settings, and regions
     pub fn create_atlas_texture(
         &mut self,
         name: String,
-        desc: TextureDesc,
-        regions: &[AtlasRegionDesc],
+        desc: AtlasTextureDesc,
     ) -> Result<Arc<dyn Texture>> {
         if self.textures.contains_key(&name) {
             return Err(Error::BackendError(format!(
@@ -100,37 +98,38 @@ impl ResourceManager {
         }
 
         // Atlas textures must have array_layers == 1 (single image with UV sub-regions)
-        if desc.array_layers != 1 {
+        if desc.texture.array_layers != 1 {
             return Err(Error::BackendError(format!(
-                "AtlasTexture requires array_layers = 1, got {}", desc.array_layers
+                "AtlasTexture requires array_layers = 1, got {}", desc.texture.array_layers
             )));
         }
 
-        let renderer_arc = Engine::renderer()?;
+        let renderer_arc = desc.renderer;
         let render_texture;
         let descriptor_set;
         {
             let mut renderer = renderer_arc.lock()
                 .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
 
-            render_texture = renderer.create_texture(desc)?;
+            render_texture = renderer.create_texture(desc.texture)?;
             descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
         }
 
+        let regions_len = desc.regions.len();
         let texture: Arc<dyn Texture> = Arc::new(AtlasTexture::new(
             renderer_arc,
             render_texture,
             descriptor_set,
-            regions,
+            &desc.regions,
         ));
         self.textures.insert(name.clone(), Arc::clone(&texture));
-        crate::engine_info!("galaxy3d::ResourceManager", "Created AtlasTexture resource '{}' with {} initial regions", name, regions.len());
+        crate::engine_info!("galaxy3d::ResourceManager", "Created AtlasTexture resource '{}' with {} initial regions", name, regions_len);
         Ok(texture)
     }
 
     /// Create an array texture and register it
     ///
-    /// Pass `&[]` for `layers` to create an empty array texture and add layers
+    /// Pass empty `layers` to create an empty array texture and add layers
     /// later via `add_array_layer()`.
     /// Returns the created texture for immediate use.
     ///
@@ -140,13 +139,11 @@ impl ResourceManager {
     /// # Arguments
     ///
     /// * `name` - Unique name for this texture resource
-    /// * `desc` - GPU texture description (note: `desc.data` will be overwritten if layers have data)
-    /// * `layers` - Initial layer mappings with optional pixel data (can be empty)
+    /// * `desc` - ArrayTexture descriptor with renderer, texture settings, and layers
     pub fn create_array_texture(
         &mut self,
         name: String,
-        mut desc: TextureDesc,
-        layers: &[ArrayLayerDesc],
+        desc: ArrayTextureDesc,
     ) -> Result<Arc<dyn Texture>> {
         if self.textures.contains_key(&name) {
             return Err(Error::BackendError(format!(
@@ -154,7 +151,7 @@ impl ResourceManager {
             )));
         }
 
-        let array_layers = desc.array_layers;
+        let array_layers = desc.texture.array_layers;
 
         // Array textures must have array_layers > 1
         if array_layers <= 1 {
@@ -164,7 +161,7 @@ impl ResourceManager {
         }
 
         // Validate that layer name mappings don't exceed array_layers
-        for layer_desc in layers {
+        for layer_desc in &desc.layers {
             if layer_desc.layer >= array_layers {
                 return Err(Error::BackendError(format!(
                     "ArrayLayerDesc '{}' references layer {} but array_layers = {}",
@@ -174,7 +171,7 @@ impl ResourceManager {
         }
 
         // Build TextureData::Layers from ArrayLayerDesc entries that have data
-        let layer_data: Vec<TextureLayerData> = layers
+        let layer_data: Vec<TextureLayerData> = desc.layers
             .iter()
             .filter_map(|ld| {
                 ld.data.as_ref().map(|d| TextureLayerData {
@@ -184,31 +181,33 @@ impl ResourceManager {
             })
             .collect();
 
-        // If any layers have data, set desc.data to TextureData::Layers
+        // If any layers have data, set texture_desc.data to TextureData::Layers
+        let mut texture_desc = desc.texture;
         if !layer_data.is_empty() {
-            desc.data = Some(TextureData::Layers(layer_data));
+            texture_desc.data = Some(TextureData::Layers(layer_data));
         }
 
-        let renderer_arc = Engine::renderer()?;
+        let renderer_arc = desc.renderer;
         let render_texture;
         let descriptor_set;
         {
             let mut renderer = renderer_arc.lock()
                 .map_err(|_| Error::BackendError("Renderer lock poisoned".to_string()))?;
 
-            render_texture = renderer.create_texture(desc)?;
+            render_texture = renderer.create_texture(texture_desc)?;
             descriptor_set = renderer.create_descriptor_set_for_texture(&render_texture)?;
         }
 
+        let layers_len = desc.layers.len();
         let texture: Arc<dyn Texture> = Arc::new(ArrayTexture::new(
             renderer_arc,
             render_texture,
             descriptor_set,
-            layers,
+            &desc.layers,
         ));
         self.textures.insert(name.clone(), Arc::clone(&texture));
         crate::engine_info!("galaxy3d::ResourceManager", "Created ArrayTexture resource '{}' with {} array layers and {} named layers",
-            name, array_layers, layers.len());
+            name, array_layers, layers_len);
         Ok(texture)
     }
 
@@ -254,7 +253,7 @@ impl ResourceManager {
         texture_name: &str,
         region_name: String,
         region: AtlasRegion,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let arc = self.textures.get_mut(texture_name)
             .ok_or_else(|| Error::BackendError(format!(
                 "Texture '{}' not found in ResourceManager", texture_name
@@ -288,7 +287,7 @@ impl ResourceManager {
         layer_name: String,
         layer: u32,
         data: Option<&[u8]>,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let arc = self.textures.get_mut(texture_name)
             .ok_or_else(|| Error::BackendError(format!(
                 "Texture '{}' not found in ResourceManager", texture_name
@@ -313,7 +312,7 @@ impl ResourceManager {
     /// # Arguments
     ///
     /// * `name` - Unique name for this mesh resource (group name)
-    /// * `desc` - Mesh description with vertex/index data and entries
+    /// * `desc` - Mesh description with renderer, vertex/index data and entries
     ///
     /// # Example
     ///
@@ -321,6 +320,7 @@ impl ResourceManager {
     /// let mesh = resource_manager.create_mesh(
     ///     "characters".to_string(),
     ///     MeshDesc {
+    ///         renderer: renderer.clone(),
     ///         vertex_data: vertex_bytes,
     ///         index_data: Some(index_bytes),
     ///         vertex_layout: layout,
@@ -390,7 +390,7 @@ impl ResourceManager {
             0
         };
 
-        let renderer_arc = Engine::renderer()?;
+        let renderer_arc = desc.renderer;
 
         // Create vertex buffer and upload data
         let vertex_buffer;
@@ -481,6 +481,10 @@ impl ResourceManager {
     /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
     /// references to the mesh Arc exist.
     ///
+    /// # Returns
+    ///
+    /// The id (index) of the newly created mesh entry.
+    ///
     /// # Errors
     ///
     /// Returns an error if:
@@ -488,7 +492,7 @@ impl ResourceManager {
     /// - Other Arc references prevent mutable access
     /// - A mesh entry with the same name already exists
     /// - Submesh validation fails (offsets exceed buffer sizes)
-    pub fn add_mesh_entry(&mut self, mesh_name: &str, desc: MeshEntryDesc) -> Result<()> {
+    pub fn add_mesh_entry(&mut self, mesh_name: &str, desc: MeshEntryDesc) -> Result<usize> {
         let arc = self.meshes.get_mut(mesh_name)
             .ok_or_else(|| Error::BackendError(format!(
                 "Mesh '{}' not found in ResourceManager", mesh_name
@@ -507,6 +511,10 @@ impl ResourceManager {
     /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
     /// references to the mesh Arc exist.
     ///
+    /// # Returns
+    ///
+    /// The lod index of the newly created LOD.
+    ///
     /// # Errors
     ///
     /// Returns an error if:
@@ -517,9 +525,9 @@ impl ResourceManager {
     pub fn add_mesh_lod(
         &mut self,
         mesh_name: &str,
-        entry_name: &str,
+        entry_id: usize,
         desc: MeshLODDesc,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let arc = self.meshes.get_mut(mesh_name)
             .ok_or_else(|| Error::BackendError(format!(
                 "Mesh '{}' not found in ResourceManager", mesh_name
@@ -530,13 +538,17 @@ impl ResourceManager {
                 "Cannot mutate Mesh '{}': other references exist", mesh_name
             )))?;
 
-        mesh.add_mesh_lod(entry_name, desc)
+        mesh.add_mesh_lod(entry_id, desc)
     }
 
     /// Add a submesh to an existing LOD
     ///
     /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
     /// references to the mesh Arc exist.
+    ///
+    /// # Returns
+    ///
+    /// The id (index) of the newly created submesh.
     ///
     /// # Errors
     ///
@@ -549,10 +561,10 @@ impl ResourceManager {
     pub fn add_submesh(
         &mut self,
         mesh_name: &str,
-        entry_name: &str,
+        entry_id: usize,
         lod_index: usize,
         desc: SubMeshDesc,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let arc = self.meshes.get_mut(mesh_name)
             .ok_or_else(|| Error::BackendError(format!(
                 "Mesh '{}' not found in ResourceManager", mesh_name
@@ -563,6 +575,6 @@ impl ResourceManager {
                 "Cannot mutate Mesh '{}': other references exist", mesh_name
             )))?;
 
-        mesh.add_submesh(entry_name, lod_index, desc)
+        mesh.add_submesh(entry_id, lod_index, desc)
     }
 }
