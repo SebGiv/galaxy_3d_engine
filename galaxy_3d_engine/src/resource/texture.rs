@@ -1,429 +1,524 @@
-/// Resource-level texture types.
+/// Unified resource-level texture type.
 ///
-/// These types wrap low-level `render::Texture` (GPU) objects with additional
-/// metadata for the resource system. Three concrete types are provided:
+/// Replaces the old SimpleTexture, AtlasTexture, and ArrayTexture with a single
+/// unified type that supports layers and atlas regions.
 ///
-/// - **SimpleTexture**: A single texture with no sub-regions
-/// - **AtlasTexture**: A texture atlas with named UV regions
-/// - **ArrayTexture**: A texture array with named layers
+/// Architecture:
+/// - Simple texture: 1 layer (array_layers=1), optional atlas regions
+/// - Indexed texture: N layers (array_layers>1), each with optional atlas regions
 ///
-/// All types implement the `Texture` trait for uniform access via trait objects.
+/// A layer can be an atlas texture if it has regions defined.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::{Error, Result};
 use crate::renderer::{
-    Texture as RenderTexture,
+    Texture as RendererTexture,
     DescriptorSet,
     Renderer,
+    TextureData,
+    TextureLayerData,
+    TextureDesc as RenderTextureDesc,
+    TextureInfo,
+    TextureFormat,
+    MipmapMode,
+    ManualMipmapData,
 };
 
-// ===== TRAIT =====
+// ===== TEXTURE =====
 
-/// Resource-level texture trait.
+/// Unified texture resource
 ///
-/// Provides uniform access to any texture resource regardless of its concrete
-/// type (simple, atlas, or array). Downcast methods allow safe access to
-/// type-specific functionality without using `Any`.
-pub trait Texture: Send + Sync {
-    /// Get the underlying GPU texture
-    fn render_texture(&self) -> &Arc<dyn RenderTexture>;
-
-    /// Get the descriptor set for shader binding
-    fn descriptor_set(&self) -> &Arc<dyn DescriptorSet>;
-
-    /// Get all region/layer names (empty for SimpleTexture)
-    fn region_names(&self) -> Vec<&str>;
-
-    /// Downcast to SimpleTexture (returns None for other types)
-    fn as_simple(&self) -> Option<&SimpleTexture> { None }
-
-    /// Downcast to AtlasTexture (returns None for other types)
-    fn as_atlas(&self) -> Option<&AtlasTexture> { None }
-
-    /// Downcast to mutable AtlasTexture (returns None for other types)
-    fn as_atlas_mut(&mut self) -> Option<&mut AtlasTexture> { None }
-
-    /// Downcast to ArrayTexture (returns None for other types)
-    fn as_array(&self) -> Option<&ArrayTexture> { None }
-
-    /// Downcast to mutable ArrayTexture (returns None for other types)
-    fn as_array_mut(&mut self) -> Option<&mut ArrayTexture> { None }
-
-    /// Add a region to this texture (atlas textures only)
-    ///
-    /// Returns the region id (index) on success.
-    /// Default implementation returns an error. Override in AtlasTexture.
-    fn add_atlas_region(&mut self, _name: String, _region: AtlasRegion) -> Result<usize> {
-        Err(Error::BackendError(
-            "This texture type does not support atlas regions".to_string()
-        ))
-    }
-
-    /// Get atlas region id by name (atlas textures only)
-    fn get_atlas_region_id(&self, _name: &str) -> Option<usize> { None }
-
-    /// Get atlas region by id (atlas textures only)
-    fn get_atlas_region(&self, _id: usize) -> Option<&AtlasRegion> { None }
-
-    /// Add a layer mapping to this texture (array textures only)
-    ///
-    /// Returns the region id (index) on success.
-    /// If `data` is provided, uploads pixel data to the specified layer.
-    /// Default implementation returns an error. Override in ArrayTexture.
-    fn add_array_layer(&mut self, _name: String, _layer: u32, _data: Option<&[u8]>) -> Result<usize> {
-        Err(Error::BackendError(
-            "This texture type does not support array layers".to_string()
-        ))
-    }
-
-    /// Get array layer region id by name (array textures only)
-    fn get_array_layer_id(&self, _name: &str) -> Option<usize> { None }
-
-    /// Get array layer region by id (array textures only)
-    fn get_array_layer(&self, _id: usize) -> Option<&LayerRegion> { None }
+/// Supports both simple and indexed textures, with optional atlas regions per layer.
+pub struct Texture {
+    renderer_texture: Arc<dyn RendererTexture>,
+    descriptor_set: Arc<dyn DescriptorSet>,
+    layers: Vec<TextureLayer>,
+    layer_names: HashMap<String, usize>,
 }
 
-// ===== DATA TYPES =====
+/// A single layer in a texture
+///
+/// Can optionally contain atlas regions for sprite/tile mapping.
+pub struct TextureLayer {
+    name: String,
+    layer_index: u32,
+    regions: Vec<AtlasRegion>,
+    region_names: HashMap<String, usize>,
+}
 
-/// UV region within a texture atlas
+/// Atlas region definition
+///
+/// Defines a rectangular sub-region within a texture layer.
 #[derive(Debug, Clone)]
 pub struct AtlasRegion {
-    /// U coordinate (left edge, 0.0..1.0)
-    pub u: f32,
-    /// V coordinate (top edge, 0.0..1.0)
-    pub v: f32,
-    /// Width in UV space (0.0..1.0)
-    pub width: f32,
-    /// Height in UV space (0.0..1.0)
-    pub height: f32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
-/// Descriptor for batch-creating atlas regions
-#[derive(Debug, Clone)]
-pub struct AtlasRegionDesc {
-    /// Region name (used as key in the atlas)
+// ===== DESCRIPTORS =====
+
+/// Texture creation descriptor
+pub struct TextureDesc {
+    pub renderer: Arc<Mutex<dyn Renderer>>,
+    pub texture: RenderTextureDesc,
+    pub layers: Vec<LayerDesc>,
+}
+
+/// Layer descriptor
+pub struct LayerDesc {
     pub name: String,
-    /// UV region data
-    pub region: AtlasRegion,
-}
-
-/// Layer region within a texture array
-#[derive(Debug, Clone)]
-pub struct LayerRegion {
-    /// Layer index in the GPU texture array
-    pub layer: u32,
-}
-
-/// Descriptor for batch-creating array layers
-#[derive(Debug, Clone)]
-pub struct ArrayLayerDesc {
-    /// Layer name (used as key in the array)
-    pub name: String,
-    /// Layer index in the texture array
-    pub layer: u32,
-    /// Optional pixel data to upload for this layer
+    pub layer_index: u32,
     pub data: Option<Vec<u8>>,
-}
-
-// ===== SIMPLE TEXTURE =====
-
-/// A single texture with no sub-regions.
-///
-/// The simplest resource texture type — wraps a GPU texture and its
-/// descriptor set with no additional metadata.
-pub struct SimpleTexture {
-    #[allow(dead_code)]
-    renderer: Arc<Mutex<dyn Renderer>>,
-    render_texture: Arc<dyn RenderTexture>,
-    descriptor_set: Arc<dyn DescriptorSet>,
-}
-
-impl SimpleTexture {
-    /// Create a new simple texture resource
-    pub fn new(
-        renderer: Arc<Mutex<dyn Renderer>>,
-        render_texture: Arc<dyn RenderTexture>,
-        descriptor_set: Arc<dyn DescriptorSet>,
-    ) -> Self {
-        Self {
-            renderer,
-            render_texture,
-            descriptor_set,
-        }
-    }
-}
-
-impl Texture for SimpleTexture {
-    fn render_texture(&self) -> &Arc<dyn RenderTexture> {
-        &self.render_texture
-    }
-
-    fn descriptor_set(&self) -> &Arc<dyn DescriptorSet> {
-        &self.descriptor_set
-    }
-
-    fn region_names(&self) -> Vec<&str> {
-        Vec::new()
-    }
-
-    fn as_simple(&self) -> Option<&SimpleTexture> {
-        Some(self)
-    }
-}
-
-// ===== ATLAS TEXTURE =====
-
-/// A texture atlas with named UV regions.
-///
-/// Wraps a single GPU texture that contains multiple sub-images arranged
-/// spatially. Each sub-image is identified by name and described by UV
-/// coordinates. Regions are stored in a Vec and accessible by id (index).
-///
-/// Regions can be provided at creation time and/or added later.
-pub struct AtlasTexture {
-    #[allow(dead_code)]
-    renderer: Arc<Mutex<dyn Renderer>>,
-    render_texture: Arc<dyn RenderTexture>,
-    descriptor_set: Arc<dyn DescriptorSet>,
-    /// Regions stored by index (id)
-    regions: Vec<AtlasRegion>,
-    /// Name to id (index) mapping
-    region_names: HashMap<String, usize>,
-}
-
-impl AtlasTexture {
-    /// Create a new atlas texture resource
-    ///
-    /// Pass `&[]` for `regions` to create an empty atlas and add regions later.
-    pub fn new(
-        renderer: Arc<Mutex<dyn Renderer>>,
-        render_texture: Arc<dyn RenderTexture>,
-        descriptor_set: Arc<dyn DescriptorSet>,
-        regions: &[AtlasRegionDesc],
-    ) -> Self {
-        let mut region_vec = Vec::with_capacity(regions.len());
-        let mut name_map = HashMap::with_capacity(regions.len());
-        for desc in regions {
-            let id = region_vec.len();
-            region_vec.push(desc.region.clone());
-            name_map.insert(desc.name.clone(), id);
-        }
-        Self {
-            renderer,
-            render_texture,
-            descriptor_set,
-            regions: region_vec,
-            region_names: name_map,
-        }
-    }
-
-    /// Add a region, returns its id (index)
-    fn add_region_internal(&mut self, name: String, region: AtlasRegion) -> usize {
-        let id = self.regions.len();
-        self.regions.push(region);
-        self.region_names.insert(name, id);
-        id
-    }
-
-    /// Get a region by id (index)
-    pub fn get_region(&self, id: usize) -> Option<&AtlasRegion> {
-        self.regions.get(id)
-    }
-
-    /// Get region id by name
-    pub fn get_region_id(&self, name: &str) -> Option<usize> {
-        self.region_names.get(name).copied()
-    }
-
-    /// Get a region by name (convenience: name -> id -> region)
-    pub fn get_region_by_name(&self, name: &str) -> Option<&AtlasRegion> {
-        self.region_names.get(name).and_then(|&id| self.regions.get(id))
-    }
-
-    /// Get the number of regions
-    pub fn region_count(&self) -> usize {
-        self.regions.len()
-    }
-}
-
-impl Texture for AtlasTexture {
-    fn render_texture(&self) -> &Arc<dyn RenderTexture> {
-        &self.render_texture
-    }
-
-    fn descriptor_set(&self) -> &Arc<dyn DescriptorSet> {
-        &self.descriptor_set
-    }
-
-    fn region_names(&self) -> Vec<&str> {
-        self.region_names.keys().map(|k| k.as_str()).collect()
-    }
-
-    fn as_atlas(&self) -> Option<&AtlasTexture> {
-        Some(self)
-    }
-
-    fn as_atlas_mut(&mut self) -> Option<&mut AtlasTexture> {
-        Some(self)
-    }
-
-    fn add_atlas_region(&mut self, name: String, region: AtlasRegion) -> Result<usize> {
-        let id = self.add_region_internal(name, region);
-        Ok(id)
-    }
-
-    fn get_atlas_region_id(&self, name: &str) -> Option<usize> {
-        self.get_region_id(name)
-    }
-
-    fn get_atlas_region(&self, id: usize) -> Option<&AtlasRegion> {
-        self.get_region(id)
-    }
-}
-
-// ===== ARRAY TEXTURE =====
-
-/// A texture array with named layers.
-///
-/// Wraps a GPU texture array where each layer is identified by name
-/// and mapped to a layer index. Regions are stored in a Vec and accessible by id (index).
-///
-/// Layers can be provided at creation time and/or added later.
-pub struct ArrayTexture {
-    #[allow(dead_code)]
-    renderer: Arc<Mutex<dyn Renderer>>,
-    render_texture: Arc<dyn RenderTexture>,
-    descriptor_set: Arc<dyn DescriptorSet>,
-    /// Regions stored by index (id)
-    regions: Vec<LayerRegion>,
-    /// Name to id (index) mapping
-    region_names: HashMap<String, usize>,
-}
-
-impl ArrayTexture {
-    /// Create a new array texture resource
-    ///
-    /// Pass `&[]` for `layers` to create an empty array texture and add layers later.
-    pub fn new(
-        renderer: Arc<Mutex<dyn Renderer>>,
-        render_texture: Arc<dyn RenderTexture>,
-        descriptor_set: Arc<dyn DescriptorSet>,
-        layers: &[ArrayLayerDesc],
-    ) -> Self {
-        let mut region_vec = Vec::with_capacity(layers.len());
-        let mut name_map = HashMap::with_capacity(layers.len());
-        for desc in layers {
-            let id = region_vec.len();
-            region_vec.push(LayerRegion { layer: desc.layer });
-            name_map.insert(desc.name.clone(), id);
-        }
-        Self {
-            renderer,
-            render_texture,
-            descriptor_set,
-            regions: region_vec,
-            region_names: name_map,
-        }
-    }
-
-    /// Add a region, returns its id (index)
-    fn add_region_internal(&mut self, name: String, region: LayerRegion) -> usize {
-        let id = self.regions.len();
-        self.regions.push(region);
-        self.region_names.insert(name, id);
-        id
-    }
-
-    /// Get a region by id (index)
-    pub fn get_region(&self, id: usize) -> Option<&LayerRegion> {
-        self.regions.get(id)
-    }
-
-    /// Get region id by name
-    pub fn get_region_id(&self, name: &str) -> Option<usize> {
-        self.region_names.get(name).copied()
-    }
-
-    /// Get a region by name (convenience: name -> id -> region)
-    pub fn get_region_by_name(&self, name: &str) -> Option<&LayerRegion> {
-        self.region_names.get(name).and_then(|&id| self.regions.get(id))
-    }
-
-    /// Get the number of regions
-    pub fn region_count(&self) -> usize {
-        self.regions.len()
-    }
-}
-
-impl Texture for ArrayTexture {
-    fn render_texture(&self) -> &Arc<dyn RenderTexture> {
-        &self.render_texture
-    }
-
-    fn descriptor_set(&self) -> &Arc<dyn DescriptorSet> {
-        &self.descriptor_set
-    }
-
-    fn region_names(&self) -> Vec<&str> {
-        self.region_names.keys().map(|k| k.as_str()).collect()
-    }
-
-    fn as_array(&self) -> Option<&ArrayTexture> {
-        Some(self)
-    }
-
-    fn as_array_mut(&mut self) -> Option<&mut ArrayTexture> {
-        Some(self)
-    }
-
-    fn add_array_layer(&mut self, name: String, layer: u32, data: Option<&[u8]>) -> Result<usize> {
-        // If pixel data is provided, upload it to the GPU via the render texture
-        if let Some(pixel_data) = data {
-            self.render_texture.update_layer(layer, pixel_data)?;
-        }
-
-        let id = self.add_region_internal(name, LayerRegion { layer });
-        Ok(id)
-    }
-
-    fn get_array_layer_id(&self, name: &str) -> Option<usize> {
-        self.get_region_id(name)
-    }
-
-    fn get_array_layer(&self, id: usize) -> Option<&LayerRegion> {
-        self.get_region(id)
-    }
-}
-
-// ===== RESOURCE DESCRIPTORS =====
-
-use crate::renderer::TextureDesc;
-
-/// Descriptor for creating a SimpleTexture resource
-pub struct SimpleTextureDesc {
-    /// Renderer to use for GPU texture creation
-    pub renderer: Arc<Mutex<dyn Renderer>>,
-    /// GPU texture description (format, size, data, etc.)
-    pub texture: TextureDesc,
-}
-
-/// Descriptor for creating an AtlasTexture resource
-pub struct AtlasTextureDesc {
-    /// Renderer to use for GPU texture creation
-    pub renderer: Arc<Mutex<dyn Renderer>>,
-    /// GPU texture description (format, size, data, etc.)
-    pub texture: TextureDesc,
-    /// Initial atlas regions (can be empty, add later via add_atlas_region)
     pub regions: Vec<AtlasRegionDesc>,
 }
 
-/// Descriptor for creating an ArrayTexture resource
-pub struct ArrayTextureDesc {
-    /// Renderer to use for GPU texture creation
-    pub renderer: Arc<Mutex<dyn Renderer>>,
-    /// GPU texture description (format, size, array_layers, etc.)
-    pub texture: TextureDesc,
-    /// Initial layer mappings with optional pixel data (can be empty)
-    pub layers: Vec<ArrayLayerDesc>,
+/// Atlas region descriptor
+pub struct AtlasRegionDesc {
+    pub name: String,
+    pub region: AtlasRegion,
+}
+
+// ===== TEXTURE IMPLEMENTATION =====
+
+impl Texture {
+    /// Create texture from descriptor (internal use by ResourceManager)
+    pub(crate) fn from_desc(desc: TextureDesc) -> Result<Self> {
+        let array_layers = desc.texture.array_layers;
+        let is_simple = array_layers == 1;
+        let is_indexed = array_layers > 1;
+
+        // ========== VALIDATION 1: Simple texture constraints ==========
+        if is_simple {
+            // Simple texture MUST have exactly 1 layer
+            if desc.layers.len() != 1 {
+                return Err(Error::BackendError(format!(
+                    "Simple texture (array_layers=1) must have exactly 1 layer, got {}",
+                    desc.layers.len()
+                )));
+            }
+
+            // Layer index must be 0
+            if desc.layers[0].layer_index != 0 {
+                return Err(Error::BackendError(format!(
+                    "Simple texture layer must have index 0, got {}",
+                    desc.layers[0].layer_index
+                )));
+            }
+        }
+
+        // ========== VALIDATION 2: Indexed texture constraints ==========
+        if is_indexed && desc.layers.is_empty() {
+            // OK: indexed texture can be created empty and layers added later
+        }
+
+        // ========== VALIDATION 3: Layer index bounds ==========
+        for layer_desc in &desc.layers {
+            if layer_desc.layer_index >= array_layers {
+                return Err(Error::BackendError(format!(
+                    "Layer '{}' has index {} but array_layers = {}",
+                    layer_desc.name, layer_desc.layer_index, array_layers
+                )));
+            }
+        }
+
+        // ========== VALIDATION 4: No duplicate layer names ==========
+        let mut seen_names = std::collections::HashSet::new();
+        for layer_desc in &desc.layers {
+            if !seen_names.insert(&layer_desc.name) {
+                return Err(Error::BackendError(format!(
+                    "Duplicate layer name '{}'", layer_desc.name
+                )));
+            }
+        }
+
+        // ========== VALIDATION 5: No duplicate layer indices ==========
+        let mut seen_indices = std::collections::HashSet::new();
+        for layer_desc in &desc.layers {
+            if !seen_indices.insert(layer_desc.layer_index) {
+                return Err(Error::BackendError(format!(
+                    "Duplicate layer index {}", layer_desc.layer_index
+                )));
+            }
+        }
+
+        // ========== VALIDATION 6: Atlas region bounds ==========
+        let texture_width = desc.texture.width;
+        let texture_height = desc.texture.height;
+
+        for layer_desc in &desc.layers {
+            for region_desc in &layer_desc.regions {
+                let region = &region_desc.region;
+
+                // Check if region is within texture bounds
+                if region.x + region.width > texture_width {
+                    return Err(Error::BackendError(format!(
+                        "Region '{}' in layer '{}' exceeds texture width: {}+{} > {}",
+                        region_desc.name, layer_desc.name,
+                        region.x, region.width, texture_width
+                    )));
+                }
+
+                if region.y + region.height > texture_height {
+                    return Err(Error::BackendError(format!(
+                        "Region '{}' in layer '{}' exceeds texture height: {}+{} > {}",
+                        region_desc.name, layer_desc.name,
+                        region.y, region.height, texture_height
+                    )));
+                }
+
+                // Check non-zero dimensions
+                if region.width == 0 || region.height == 0 {
+                    return Err(Error::BackendError(format!(
+                        "Region '{}' in layer '{}' has zero dimension: {}x{}",
+                        region_desc.name, layer_desc.name,
+                        region.width, region.height
+                    )));
+                }
+            }
+        }
+
+        // ========== VALIDATION 7: No duplicate region names within layer ==========
+        for layer_desc in &desc.layers {
+            let mut seen_region_names = std::collections::HashSet::new();
+            for region_desc in &layer_desc.regions {
+                if !seen_region_names.insert(&region_desc.name) {
+                    return Err(Error::BackendError(format!(
+                        "Duplicate region name '{}' in layer '{}'",
+                        region_desc.name, layer_desc.name
+                    )));
+                }
+            }
+        }
+
+        // ========== VALIDATION 8: Mipmap data consistency ==========
+        // If manual mipmaps with layers, validate layer indices
+        if let MipmapMode::Manual(ref manual_data) = desc.texture.mipmap {
+            if let ManualMipmapData::Layers(ref mipmap_layers) = manual_data {
+                for mipmap_layer in mipmap_layers {
+                    if mipmap_layer.layer >= array_layers {
+                        return Err(Error::BackendError(format!(
+                            "Manual mipmap references layer {} but array_layers = {}",
+                            mipmap_layer.layer, array_layers
+                        )));
+                    }
+                }
+            }
+        }
+
+        // ========== VALIDATION 9: Layer data validation ==========
+        for layer_desc in &desc.layers {
+            if let Some(ref data) = layer_desc.data {
+                // Validate data size matches texture dimensions
+                let expected_size = Self::calculate_layer_data_size(
+                    texture_width,
+                    texture_height,
+                    desc.texture.format
+                );
+
+                if data.len() != expected_size {
+                    return Err(Error::BackendError(format!(
+                        "Layer '{}' data size mismatch: expected {} bytes, got {}",
+                        layer_desc.name, expected_size, data.len()
+                    )));
+                }
+            }
+        }
+
+        // ========== CREATE RENDER TEXTURE ==========
+
+        // Prepare texture data for render::Texture
+        let mut render_texture_desc = desc.texture.clone();
+
+        // Collect layer data for upload
+        if !desc.layers.is_empty() {
+            let layer_data: Vec<TextureLayerData> = desc.layers
+                .iter()
+                .filter_map(|ld| {
+                    ld.data.as_ref().map(|d| TextureLayerData {
+                        layer: ld.layer_index,
+                        data: d.clone(),
+                    })
+                })
+                .collect();
+
+            if !layer_data.is_empty() {
+                render_texture_desc.data = Some(TextureData::Layers(layer_data));
+            }
+        }
+
+        // Create the GPU texture
+        let renderer_texture = desc.renderer.lock().unwrap().create_texture(render_texture_desc)?;
+
+        // Create descriptor set
+        let descriptor_set = desc.renderer.lock().unwrap().create_descriptor_set_for_texture(&renderer_texture)?;
+
+        // ========== BUILD LAYERS ==========
+
+        let mut layers = Vec::new();
+        let mut layer_names = HashMap::new();
+
+        for (vec_index, layer_desc) in desc.layers.into_iter().enumerate() {
+            // Build regions for this layer
+            let mut regions = Vec::new();
+            let mut region_names = HashMap::new();
+
+            for (region_index, region_desc) in layer_desc.regions.into_iter().enumerate() {
+                regions.push(region_desc.region);
+                region_names.insert(region_desc.name, region_index);
+            }
+
+            let layer = TextureLayer {
+                name: layer_desc.name.clone(),
+                layer_index: layer_desc.layer_index,
+                regions,
+                region_names,
+            };
+
+            layers.push(layer);
+            layer_names.insert(layer_desc.name, vec_index);
+        }
+
+        Ok(Self {
+            renderer_texture,
+            descriptor_set,
+            layers,
+            layer_names,
+        })
+    }
+
+    /// Calculate expected data size for a layer
+    fn calculate_layer_data_size(width: u32, height: u32, format: TextureFormat) -> usize {
+        let bytes_per_pixel = match format {
+            TextureFormat::R8G8B8A8_SRGB => 4,
+            TextureFormat::R8G8B8A8_UNORM => 4,
+            TextureFormat::B8G8R8A8_SRGB => 4,
+            TextureFormat::B8G8R8A8_UNORM => 4,
+            _ => {
+                // For unsupported formats (depth, vertex attributes), return 0 to skip validation
+                return 0;
+            }
+        };
+
+        (width * height) as usize * bytes_per_pixel
+    }
+
+    // ===== LAYER ACCESS =====
+
+    /// Get layer by index (primary access method)
+    pub fn layer(&self, index: u32) -> Option<&TextureLayer> {
+        self.layers.get(index as usize)
+    }
+
+    /// Get layer by name
+    pub fn layer_by_name(&self, name: &str) -> Option<&TextureLayer> {
+        let index = self.layer_names.get(name)?;
+        self.layers.get(*index)
+    }
+
+    /// Get layer index from name
+    pub fn layer_index_by_name(&self, name: &str) -> Option<u32> {
+        self.layer_names.get(name).map(|&idx| idx as u32)
+    }
+
+    /// Get total number of layers
+    pub fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+
+    // ===== REGION ACCESS (convenience) =====
+
+    /// Get region from a specific layer by names
+    pub fn region(&self, layer_name: &str, region_name: &str) -> Option<&AtlasRegion> {
+        self.layer_by_name(layer_name)?.region_by_name(region_name)
+    }
+
+    // ===== MODIFICATION =====
+
+    /// Add a new layer (indexed textures only)
+    pub fn add_layer(&mut self, desc: LayerDesc) -> Result<u32> {
+        if !self.is_indexed() {
+            return Err(Error::BackendError(
+                "Cannot add layer to simple texture (array_layers=1)".to_string()
+            ));
+        }
+
+        let array_layers = self.renderer_texture.info().array_layers;
+
+        // Validate layer index
+        if desc.layer_index >= array_layers {
+            return Err(Error::BackendError(format!(
+                "Layer index {} >= array_layers {}",
+                desc.layer_index, array_layers
+            )));
+        }
+
+        // Check for duplicate name
+        if self.layer_names.contains_key(&desc.name) {
+            return Err(Error::BackendError(format!(
+                "Layer '{}' already exists", desc.name
+            )));
+        }
+
+        // Check for duplicate index
+        for existing_layer in &self.layers {
+            if existing_layer.layer_index == desc.layer_index {
+                return Err(Error::BackendError(format!(
+                    "Layer index {} already used by layer '{}'",
+                    desc.layer_index, existing_layer.name
+                )));
+            }
+        }
+
+        // Upload layer data if provided
+        if let Some(ref data) = desc.data {
+            self.renderer_texture.update(desc.layer_index, 0, data)?;
+        }
+
+        // Build regions
+        let mut regions = Vec::new();
+        let mut region_names = HashMap::new();
+
+        for (region_index, region_desc) in desc.regions.into_iter().enumerate() {
+            // Validate region bounds
+            let info = self.renderer_texture.info();
+            if region_desc.region.x + region_desc.region.width > info.width ||
+               region_desc.region.y + region_desc.region.height > info.height {
+                return Err(Error::BackendError(format!(
+                    "Region '{}' exceeds texture bounds", region_desc.name
+                )));
+            }
+
+            regions.push(region_desc.region);
+            region_names.insert(region_desc.name, region_index);
+        }
+
+        let layer = TextureLayer {
+            name: desc.name.clone(),
+            layer_index: desc.layer_index,
+            regions,
+            region_names,
+        };
+
+        let vec_index = self.layers.len();
+        self.layers.push(layer);
+        self.layer_names.insert(desc.name, vec_index);
+
+        Ok(vec_index as u32)
+    }
+
+    /// Add region to an existing layer
+    pub fn add_region(&mut self, layer_name: &str, desc: AtlasRegionDesc) -> Result<u32> {
+        let layer_vec_index = *self.layer_names.get(layer_name)
+            .ok_or_else(|| Error::BackendError(format!("Layer '{}' not found", layer_name)))?;
+
+        let layer = &mut self.layers[layer_vec_index];
+        layer.add_region(desc, &self.renderer_texture.info())
+    }
+
+    // ===== INFO =====
+
+    /// Check if this is a simple texture (array_layers == 1)
+    pub fn is_simple(&self) -> bool {
+        self.renderer_texture.info().array_layers == 1
+    }
+
+    /// Check if this is an indexed texture (array_layers > 1)
+    pub fn is_indexed(&self) -> bool {
+        self.renderer_texture.info().array_layers > 1
+    }
+
+    /// Get the underlying renderer texture
+    pub fn renderer_texture(&self) -> &Arc<dyn RendererTexture> {
+        &self.renderer_texture
+    }
+
+    /// Get the descriptor set for shader binding
+    pub fn descriptor_set(&self) -> &Arc<dyn DescriptorSet> {
+        &self.descriptor_set
+    }
+}
+
+// ===== TEXTURE LAYER IMPLEMENTATION =====
+
+impl TextureLayer {
+    // ===== REGION ACCESS =====
+
+    /// Get region by index
+    pub fn region(&self, index: u32) -> Option<&AtlasRegion> {
+        self.regions.get(index as usize)
+    }
+
+    /// Get region by name
+    pub fn region_by_name(&self, name: &str) -> Option<&AtlasRegion> {
+        let index = self.region_names.get(name)?;
+        self.regions.get(*index)
+    }
+
+    /// Get region index from name
+    pub fn region_index_by_name(&self, name: &str) -> Option<u32> {
+        self.region_names.get(name).map(|&idx| idx as u32)
+    }
+
+    /// Get region count
+    pub fn region_count(&self) -> usize {
+        self.regions.len()
+    }
+
+    // ===== INFO =====
+
+    /// Check if this layer has atlas regions
+    pub fn is_atlas(&self) -> bool {
+        !self.regions.is_empty()
+    }
+
+    /// Get layer name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get layer index in render texture
+    pub fn layer_index(&self) -> u32 {
+        self.layer_index
+    }
+
+    // ===== MODIFICATION (internal) =====
+
+    pub(crate) fn add_region(&mut self, desc: AtlasRegionDesc, texture_info: &TextureInfo) -> Result<u32> {
+        // Check duplicate name
+        if self.region_names.contains_key(&desc.name) {
+            return Err(Error::BackendError(format!(
+                "Region '{}' already exists in layer '{}'", desc.name, self.name
+            )));
+        }
+
+        // Validate bounds
+        if desc.region.x + desc.region.width > texture_info.width {
+            return Err(Error::BackendError(format!(
+                "Region '{}' exceeds texture width: {}+{} > {}",
+                desc.name, desc.region.x, desc.region.width, texture_info.width
+            )));
+        }
+
+        if desc.region.y + desc.region.height > texture_info.height {
+            return Err(Error::BackendError(format!(
+                "Region '{}' exceeds texture height: {}+{} > {}",
+                desc.name, desc.region.y, desc.region.height, texture_info.height
+            )));
+        }
+
+        // Check non-zero dimensions
+        if desc.region.width == 0 || desc.region.height == 0 {
+            return Err(Error::BackendError(format!(
+                "Region '{}' has zero dimension", desc.name
+            )));
+        }
+
+        let index = self.regions.len();
+        self.regions.push(desc.region);
+        self.region_names.insert(desc.name, index);
+        Ok(index as u32)
+    }
 }

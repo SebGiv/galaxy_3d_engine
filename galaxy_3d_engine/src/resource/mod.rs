@@ -8,9 +8,9 @@ pub mod mesh;
 
 pub use resource_manager::ResourceManager;
 pub use texture::{
-    Texture, SimpleTexture, AtlasTexture, ArrayTexture,
-    AtlasRegion, AtlasRegionDesc, LayerRegion, ArrayLayerDesc,
-    SimpleTextureDesc, AtlasTextureDesc, ArrayTextureDesc,
+    Texture, TextureLayer,
+    AtlasRegion, AtlasRegionDesc,
+    TextureDesc, LayerDesc,
 };
 pub use mesh::{
     Mesh, MeshEntry, MeshLOD, SubMesh,

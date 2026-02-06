@@ -14,6 +14,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     LoadOp, StoreOp, ImageLayout,
     RendererStats, VertexInputRate,
     Config, DebugSeverity, DebugOutput, DebugMessageFilter, ValidationStats, TextureUsage,
+    MipmapMode, ManualMipmapData,
 };
 use ash::vk;
 use ash::vk::Handle;
@@ -832,12 +833,21 @@ impl Renderer for VulkanRenderer {
             let format = self.format_to_vk(desc.format);
             let array_layers = desc.array_layers.max(1);
 
+            // Calculate mip levels from MipmapMode
+            let mip_levels = desc.mipmap.mip_levels(desc.width, desc.height);
+
             // Determine image view type based on array layers
             let view_type = if array_layers > 1 {
                 vk::ImageViewType::TYPE_2D_ARRAY
             } else {
                 vk::ImageViewType::TYPE_2D
             };
+
+            // Image usage flags - add TRANSFER_SRC if generating mipmaps
+            let mut usage_flags = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+            if matches!(desc.mipmap, MipmapMode::Generate { .. }) && mip_levels > 1 {
+                usage_flags |= vk::ImageUsageFlags::TRANSFER_SRC;
+            }
 
             // Create image
             let image_create_info = vk::ImageCreateInfo::default()
@@ -848,11 +858,11 @@ impl Renderer for VulkanRenderer {
                     height: desc.height,
                     depth: 1,
                 })
-                .mip_levels(1)
+                .mip_levels(mip_levels)
                 .array_layers(array_layers)
                 .samples(vk::SampleCountFlags::TYPE_1)
                 .tiling(vk::ImageTiling::OPTIMAL)
-                .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+                .usage(usage_flags)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .initial_layout(vk::ImageLayout::UNDEFINED);
 
@@ -899,7 +909,7 @@ impl Renderer for VulkanRenderer {
                 .subresource_range(vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     base_mip_level: 0,
-                    level_count: 1,
+                    level_count: mip_levels,
                     base_array_layer: 0,
                     layer_count: array_layers,
                 });
@@ -977,7 +987,7 @@ impl Renderer for VulkanRenderer {
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
-                        level_count: 1,
+                        level_count: mip_levels,
                         base_array_layer: 0,
                         layer_count: array_layers,
                     })
@@ -1068,32 +1078,370 @@ impl Renderer for VulkanRenderer {
                     staging_buffers.push((staging_buffer, staging_allocation));
                 }
 
-                // Transition all layers: TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
-                let barrier_to_shader = vk::ImageMemoryBarrier::default()
-                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(image)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: array_layers,
-                    })
-                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .dst_access_mask(vk::AccessFlags::SHADER_READ);
+                // Generate or upload mipmaps (levels 1+)
+                match &desc.mipmap {
+                    MipmapMode::Generate { .. } if mip_levels > 1 => {
+                        // GPU mipmap generation using vkCmdBlitImage
+                        for mip in 1..mip_levels {
+                            let src_mip = mip - 1;
+                            let src_width = (desc.width >> src_mip).max(1);
+                            let src_height = (desc.height >> src_mip).max(1);
+                            let dst_width = (desc.width >> mip).max(1);
+                            let dst_height = (desc.height >> mip).max(1);
 
-                self.device.cmd_pipeline_barrier(
-                    command_buffer,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[barrier_to_shader],
-                );
+                            // Transition src mip to TRANSFER_SRC_OPTIMAL
+                            let barrier_src = vk::ImageMemoryBarrier::default()
+                                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .image(image)
+                                .subresource_range(vk::ImageSubresourceRange {
+                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    base_mip_level: src_mip,
+                                    level_count: 1,
+                                    base_array_layer: 0,
+                                    layer_count: array_layers,
+                                })
+                                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                                .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
+
+                            self.device.cmd_pipeline_barrier(
+                                command_buffer,
+                                vk::PipelineStageFlags::TRANSFER,
+                                vk::PipelineStageFlags::TRANSFER,
+                                vk::DependencyFlags::empty(),
+                                &[],
+                                &[],
+                                &[barrier_src],
+                            );
+
+                            // Blit from src_mip to dst_mip
+                            let blit = vk::ImageBlit::default()
+                                .src_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    mip_level: src_mip,
+                                    base_array_layer: 0,
+                                    layer_count: array_layers,
+                                })
+                                .src_offsets([
+                                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                                    vk::Offset3D {
+                                        x: src_width as i32,
+                                        y: src_height as i32,
+                                        z: 1,
+                                    },
+                                ])
+                                .dst_subresource(vk::ImageSubresourceLayers {
+                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    mip_level: mip,
+                                    base_array_layer: 0,
+                                    layer_count: array_layers,
+                                })
+                                .dst_offsets([
+                                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                                    vk::Offset3D {
+                                        x: dst_width as i32,
+                                        y: dst_height as i32,
+                                        z: 1,
+                                    },
+                                ]);
+
+                            self.device.cmd_blit_image(
+                                command_buffer,
+                                image,
+                                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                                image,
+                                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                                &[blit],
+                                vk::Filter::LINEAR,
+                            );
+
+                            // Transition src mip to SHADER_READ_ONLY (done with this level)
+                            let barrier_src_final = vk::ImageMemoryBarrier::default()
+                                .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                                .image(image)
+                                .subresource_range(vk::ImageSubresourceRange {
+                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    base_mip_level: src_mip,
+                                    level_count: 1,
+                                    base_array_layer: 0,
+                                    layer_count: array_layers,
+                                })
+                                .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+                                .dst_access_mask(vk::AccessFlags::SHADER_READ);
+
+                            self.device.cmd_pipeline_barrier(
+                                command_buffer,
+                                vk::PipelineStageFlags::TRANSFER,
+                                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                                vk::DependencyFlags::empty(),
+                                &[],
+                                &[],
+                                &[barrier_src_final],
+                            );
+                        }
+
+                        // Transition last mip level to SHADER_READ_ONLY
+                        let barrier_last_mip = vk::ImageMemoryBarrier::default()
+                            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .image(image)
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: mip_levels - 1,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: array_layers,
+                            })
+                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+
+                        self.device.cmd_pipeline_barrier(
+                            command_buffer,
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::PipelineStageFlags::FRAGMENT_SHADER,
+                            vk::DependencyFlags::empty(),
+                            &[],
+                            &[],
+                            &[barrier_last_mip],
+                        );
+                    }
+                    MipmapMode::Manual(manual_data) if mip_levels > 1 => {
+                        // Manual mipmap upload - user provides pixel data for each mip level
+                        match manual_data {
+                            ManualMipmapData::Single(mips) => {
+                                // Upload each mip level (1+) for all array layers
+                                for (mip_index, mip_data) in mips.iter().enumerate() {
+                                    let mip_level = (mip_index + 1) as u32; // Level 0 already uploaded
+                                    if mip_level >= mip_levels {
+                                        break; // Don't exceed computed mip_levels
+                                    }
+
+                                    let mip_width = (desc.width >> mip_level).max(1);
+                                    let mip_height = (desc.height >> mip_level).max(1);
+
+                                    // Create staging buffer for this mip level
+                                    let buffer_size = mip_data.len() as u64;
+                                    let staging_buffer_create_info = vk::BufferCreateInfo::default()
+                                        .size(buffer_size)
+                                        .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                                        .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+                                    let staging_buffer = self.device.create_buffer(&staging_buffer_create_info, None)
+                                        .map_err(|e| {
+                                            engine_error!("galaxy3d::vulkan", "Failed to create staging buffer for mip level {}: {:?}", mip_level, e);
+                                            Error::BackendError(format!("Failed to create staging buffer: {:?}", e))
+                                        })?;
+
+                                    let staging_requirements = self.device.get_buffer_memory_requirements(staging_buffer);
+
+                                    let staging_allocation = self.allocator.lock().unwrap().allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                                        name: "mipmap_staging_buffer",
+                                        requirements: staging_requirements,
+                                        location: gpu_allocator::MemoryLocation::CpuToGpu,
+                                        linear: true,
+                                        allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+                                    })
+                                    .map_err(|_e| {
+                                        let size_mb = staging_requirements.size as f64 / (1024.0 * 1024.0);
+                                        engine_error!("galaxy3d::vulkan", "Out of GPU memory for mipmap staging buffer level {} ({:.2} MB)", mip_level, size_mb);
+                                        Error::OutOfMemory
+                                    })?;
+
+                                    self.device.bind_buffer_memory(staging_buffer, staging_allocation.memory(), staging_allocation.offset())
+                                        .map_err(|e| {
+                                            engine_error!("galaxy3d::vulkan", "Failed to bind staging buffer memory for mip level {}: {:?}", mip_level, e);
+                                            Error::BackendError(format!("Failed to bind staging buffer memory: {:?}", e))
+                                        })?;
+
+                                    // Copy data to staging buffer
+                                    let mapped_ptr = staging_allocation.mapped_ptr()
+                                        .ok_or_else(|| Error::BackendError("Staging buffer is not mapped".to_string()))?
+                                        .as_ptr() as *mut u8;
+                                    std::ptr::copy_nonoverlapping(mip_data.as_ptr(), mapped_ptr, mip_data.len());
+
+                                    // Copy to all array layers at this mip level
+                                    let region = vk::BufferImageCopy::default()
+                                        .buffer_offset(0)
+                                        .buffer_row_length(0)
+                                        .buffer_image_height(0)
+                                        .image_subresource(vk::ImageSubresourceLayers {
+                                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                                            mip_level,
+                                            base_array_layer: 0,
+                                            layer_count: array_layers,
+                                        })
+                                        .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                                        .image_extent(vk::Extent3D {
+                                            width: mip_width,
+                                            height: mip_height,
+                                            depth: 1,
+                                        });
+
+                                    self.device.cmd_copy_buffer_to_image(
+                                        command_buffer,
+                                        staging_buffer,
+                                        image,
+                                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                                        &[region],
+                                    );
+
+                                    staging_buffers.push((staging_buffer, staging_allocation));
+                                }
+                            }
+                            ManualMipmapData::Layers(layers) => {
+                                // Upload per-layer mip data
+                                for layer_data in layers {
+                                    if layer_data.layer >= array_layers {
+                                        engine_error!("galaxy3d::vulkan",
+                                            "LayerMipmapData references layer {} but array_layers = {}",
+                                            layer_data.layer, array_layers);
+                                        continue;
+                                    }
+
+                                    for (mip_index, mip_data) in layer_data.mips.iter().enumerate() {
+                                        let mip_level = (mip_index + 1) as u32;
+                                        if mip_level >= mip_levels {
+                                            break;
+                                        }
+
+                                        let mip_width = (desc.width >> mip_level).max(1);
+                                        let mip_height = (desc.height >> mip_level).max(1);
+
+                                        // Create staging buffer for this layer's mip level
+                                        let buffer_size = mip_data.len() as u64;
+                                        let staging_buffer_create_info = vk::BufferCreateInfo::default()
+                                            .size(buffer_size)
+                                            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+                                            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+                                        let staging_buffer = self.device.create_buffer(&staging_buffer_create_info, None)
+                                            .map_err(|e| {
+                                                engine_error!("galaxy3d::vulkan", "Failed to create staging buffer for layer {} mip {}: {:?}", layer_data.layer, mip_level, e);
+                                                Error::BackendError(format!("Failed to create staging buffer: {:?}", e))
+                                            })?;
+
+                                        let staging_requirements = self.device.get_buffer_memory_requirements(staging_buffer);
+
+                                        let staging_allocation = self.allocator.lock().unwrap().allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
+                                            name: "layer_mipmap_staging_buffer",
+                                            requirements: staging_requirements,
+                                            location: gpu_allocator::MemoryLocation::CpuToGpu,
+                                            linear: true,
+                                            allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+                                        })
+                                        .map_err(|_e| {
+                                            let size_mb = staging_requirements.size as f64 / (1024.0 * 1024.0);
+                                            engine_error!("galaxy3d::vulkan", "Out of GPU memory for layer {} mip {} staging buffer ({:.2} MB)", layer_data.layer, mip_level, size_mb);
+                                            Error::OutOfMemory
+                                        })?;
+
+                                        self.device.bind_buffer_memory(staging_buffer, staging_allocation.memory(), staging_allocation.offset())
+                                            .map_err(|e| {
+                                                engine_error!("galaxy3d::vulkan", "Failed to bind staging buffer memory for layer {} mip {}: {:?}", layer_data.layer, mip_level, e);
+                                                Error::BackendError(format!("Failed to bind staging buffer memory: {:?}", e))
+                                            })?;
+
+                                        // Copy data to staging buffer
+                                        let mapped_ptr = staging_allocation.mapped_ptr()
+                                            .ok_or_else(|| Error::BackendError("Staging buffer is not mapped".to_string()))?
+                                            .as_ptr() as *mut u8;
+                                        std::ptr::copy_nonoverlapping(mip_data.as_ptr(), mapped_ptr, mip_data.len());
+
+                                        // Copy to specific layer at this mip level
+                                        let region = vk::BufferImageCopy::default()
+                                            .buffer_offset(0)
+                                            .buffer_row_length(0)
+                                            .buffer_image_height(0)
+                                            .image_subresource(vk::ImageSubresourceLayers {
+                                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                                mip_level,
+                                                base_array_layer: layer_data.layer,
+                                                layer_count: 1,
+                                            })
+                                            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                                            .image_extent(vk::Extent3D {
+                                                width: mip_width,
+                                                height: mip_height,
+                                                depth: 1,
+                                            });
+
+                                        self.device.cmd_copy_buffer_to_image(
+                                            command_buffer,
+                                            staging_buffer,
+                                            image,
+                                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                                            &[region],
+                                        );
+
+                                        staging_buffers.push((staging_buffer, staging_allocation));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Transition all mip levels to SHADER_READ_ONLY
+                        let barrier_all_mips = vk::ImageMemoryBarrier::default()
+                            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .image(image)
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: mip_levels,
+                                base_array_layer: 0,
+                                layer_count: array_layers,
+                            })
+                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+
+                        self.device.cmd_pipeline_barrier(
+                            command_buffer,
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::PipelineStageFlags::FRAGMENT_SHADER,
+                            vk::DependencyFlags::empty(),
+                            &[],
+                            &[],
+                            &[barrier_all_mips],
+                        );
+                    }
+                    _ => {
+                        // No mipmaps or mip_levels == 1, transition all to SHADER_READ_ONLY
+                        let barrier_to_shader = vk::ImageMemoryBarrier::default()
+                            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                            .image(image)
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: mip_levels,
+                                base_array_layer: 0,
+                                layer_count: array_layers,
+                            })
+                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+
+                        self.device.cmd_pipeline_barrier(
+                            command_buffer,
+                            vk::PipelineStageFlags::TRANSFER,
+                            vk::PipelineStageFlags::FRAGMENT_SHADER,
+                            vk::DependencyFlags::empty(),
+                            &[],
+                            &[],
+                            &[barrier_to_shader],
+                        );
+                    }
+                }
 
                 // End recording, submit, and wait
                 self.device.end_command_buffer(command_buffer)
@@ -1167,7 +1515,7 @@ impl Renderer for VulkanRenderer {
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
-                        level_count: 1,
+                        level_count: mip_levels,
                         base_array_layer: 0,
                         layer_count: array_layers,
                     })
@@ -1216,6 +1564,7 @@ impl Renderer for VulkanRenderer {
                 format: desc.format,
                 usage: desc.usage,
                 array_layers,
+                mip_levels,
             };
 
             Ok(Arc::new(Texture::new(

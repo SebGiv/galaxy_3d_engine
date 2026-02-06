@@ -2,8 +2,8 @@
 
 > **Projet** : Moteur de rendu 3D multi-API en Rust
 > **Auteur** : Collaboration Claude & Utilisateur
-> **Date** : 2026-02-05
-> **Statut** : Phase 13 - Pattern Vec+HashMap pour accès par ID ✅
+> **Date** : 2026-02-06
+> **Statut** : Phase 15 - Unified Texture System ✅
 
 ---
 
@@ -1661,91 +1661,280 @@ let texture = renderer.create_texture(TextureDesc {
 
 ---
 
-#### Phase 10 : Mipmaps CPU (Planifié)
+#### Phase 14 : Mipmaps pour render::Texture (En cours)
 
-**Objectif** : Améliorer qualité mipmaps (Box → Lanczos-3)
+**Objectif** : Support complet des mipmaps pour les textures GPU
 
-**Changements API** :
+**Statut** : ✅ Structure API implémentée | ⏳ Génération GPU et upload manuel à implémenter
+
+---
+
+##### 1. API MipmapMode
+
+Trois modes de gestion des mipmaps :
 
 ```rust
-// Nouveau : TextureDesc accepte mipmaps pré-calculés
-pub struct TextureDesc {
-    pub format: TextureFormat,
-    pub width: u32,
-    pub height: u32,
-    pub data: &[u8],
-    pub mipmap_data: Option<Vec<Vec<u8>>>, // ✨ NOUVEAU
-    pub generate_mipmaps: bool, // Si false et mipmap_data = None, pas de mipmaps
+/// Mode de génération des mipmaps
+#[derive(Debug, Clone)]
+pub enum MipmapMode {
+    /// Pas de mipmaps - uniquement le niveau de base (mip_levels = 1)
+    /// Usage : textures UI, render targets, textures procédurales
+    None,
+
+    /// Génération automatique sur GPU via hardware blit
+    /// - Génère la chaîne complète jusqu'à 1x1 par défaut
+    /// - max_levels optionnel pour limiter la chaîne
+    /// - Qualité : filtre bilinéaire/box (rapide mais qualité moyenne)
+    Generate {
+        max_levels: Option<u32>,
+    },
+
+    /// Mipmaps fournies manuellement (niveaux 1+)
+    /// Le niveau 0 vient de TextureData
+    /// Usage : assets pré-traités avec mipmaps haute qualité (Lanczos, Kaiser)
+    Manual(ManualMipmapData),
 }
 
-// Usage
-let rgba = load_png("texture.png")?;
-let mipmaps = generate_mipmaps_lanczos3(&rgba)?; // Externe
+impl Default for MipmapMode {
+    fn default() -> Self { MipmapMode::None }
+}
+```
 
-let texture = renderer.create_texture(TextureDesc {
-    format: TextureFormat::RGBA8Unorm,
-    data: &rgba,
-    mipmap_data: Some(mipmaps), // ✨ Pré-calculés CPU
-    generate_mipmaps: false,
+##### 2. Données manuelles pour mipmaps
+
+```rust
+/// Données mipmap manuelles (niveaux 1, 2, 3, ...)
+/// Le niveau 0 est fourni via TextureData
+#[derive(Debug, Clone)]
+pub enum ManualMipmapData {
+    /// Pour textures simples
+    /// mips[0] = niveau 1 (demi-résolution)
+    /// mips[1] = niveau 2 (quart de résolution), etc.
+    Single(Vec<Vec<u8>>),
+
+    /// Pour array textures - données mip par layer
+    Layers(Vec<LayerMipmapData>),
+}
+
+/// Données mipmap par layer pour array textures
+#[derive(Debug, Clone)]
+pub struct LayerMipmapData {
+    /// Index du layer cible (0-based)
+    pub layer: u32,
+    /// Niveaux mip pour ce layer
+    /// mips[0] = niveau 1, mips[1] = niveau 2, etc.
+    pub mips: Vec<Vec<u8>>,
+}
+```
+
+##### 3. Calcul du nombre de niveaux
+
+```rust
+impl MipmapMode {
+    /// Calcule le nombre de niveaux mip pour les dimensions données
+    pub fn mip_levels(&self, width: u32, height: u32) -> u32 {
+        match self {
+            MipmapMode::None => 1,
+            MipmapMode::Generate { max_levels } => {
+                let full_chain = Self::max_mip_levels(width, height);
+                max_levels.map(|m| m.min(full_chain)).unwrap_or(full_chain)
+            }
+            MipmapMode::Manual(data) => {
+                let manual_levels = match data {
+                    ManualMipmapData::Single(mips) => mips.len(),
+                    ManualMipmapData::Layers(layers) => {
+                        layers.iter().map(|l| l.mips.len()).max().unwrap_or(0)
+                    }
+                };
+                1 + manual_levels as u32 // Niveau 0 + niveaux manuels
+            }
+        }
+    }
+
+    /// Calcule le nombre max de niveaux mip possibles
+    /// Retourne floor(log2(max(width, height))) + 1
+    pub fn max_mip_levels(width: u32, height: u32) -> u32 {
+        (width.max(height) as f32).log2().floor() as u32 + 1
+    }
+}
+```
+
+##### 4. TextureDesc mis à jour
+
+```rust
+pub struct TextureDesc {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,
+    pub usage: TextureUsage,
+    pub array_layers: u32,
+    pub data: Option<TextureData>,      // Niveau 0
+    pub mipmap: MipmapMode,             // ✨ NOUVEAU
+}
+```
+
+##### 5. TextureInfo avec helpers mipmap
+
+```rust
+pub struct TextureInfo {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,
+    pub usage: TextureUsage,
+    pub array_layers: u32,
+    pub mip_levels: u32,                // ✨ NOUVEAU
+}
+
+impl TextureInfo {
+    /// Retourne true si la texture a des mipmaps
+    pub fn has_mipmaps(&self) -> bool {
+        self.mip_levels > 1
+    }
+
+    /// Calcule les dimensions pour un niveau mip spécifique
+    pub fn mip_dimensions(&self, mip_level: u32) -> Option<(u32, u32)> {
+        if mip_level >= self.mip_levels { return None; }
+        let w = (self.width >> mip_level).max(1);
+        let h = (self.height >> mip_level).max(1);
+        Some((w, h))
+    }
+
+    /// Calcule la taille en octets pour un niveau mip spécifique
+    pub fn mip_byte_size(&self, mip_level: u32) -> Option<usize> {
+        self.mip_dimensions(mip_level).map(|(w, h)| {
+            (w * h * self.format.bytes_per_pixel()) as usize
+        })
+    }
+}
+```
+
+##### 6. Méthode update avec support mip_level
+
+```rust
+pub trait Texture: Send + Sync {
+    fn info(&self) -> &TextureInfo;
+
+    /// Met à jour les données à un layer et niveau mip spécifiques
+    fn update(&self, layer: u32, mip_level: u32, data: &[u8]) -> Result<()>;
+}
+```
+
+##### 7. Modifications Vulkan
+
+**Image création** :
+```rust
+// Calcul des niveaux mip
+let mip_levels = desc.mipmap.mip_levels(desc.width, desc.height);
+
+// Flags d'usage - ajouter TRANSFER_SRC si génération mipmaps
+let mut usage_flags = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+if matches!(desc.mipmap, MipmapMode::Generate { .. }) && mip_levels > 1 {
+    usage_flags |= vk::ImageUsageFlags::TRANSFER_SRC;
+}
+
+// Création image avec mip_levels
+let image_create_info = vk::ImageCreateInfo::default()
+    .mip_levels(mip_levels)
+    // ...
+```
+
+**Image view** :
+```rust
+.subresource_range(vk::ImageSubresourceRange {
+    aspect_mask: vk::ImageAspectFlags::COLOR,
+    base_mip_level: 0,
+    level_count: mip_levels,  // ✨ Tous les niveaux
+    base_array_layer: 0,
+    layer_count: array_layers,
+})
+```
+
+**Barriers** : Toutes les barrières utilisent `level_count: mip_levels` pour couvrir tous les niveaux.
+
+##### 8. Exemples d'utilisation
+
+```rust
+// Texture sans mipmaps (UI, render target)
+let ui_texture = renderer.create_texture(TextureDesc {
+    width: 256, height: 256,
+    format: TextureFormat::R8G8B8A8_SRGB,
+    usage: TextureUsage::Sampled,
+    array_layers: 1,
+    data: Some(TextureData::Single(pixels)),
+    mipmap: MipmapMode::None,
+})?;
+
+// Texture avec mipmaps générés sur GPU
+let world_texture = renderer.create_texture(TextureDesc {
+    width: 1024, height: 1024,
+    format: TextureFormat::R8G8B8A8_SRGB,
+    usage: TextureUsage::Sampled,
+    array_layers: 1,
+    data: Some(TextureData::Single(pixels)),
+    mipmap: MipmapMode::Generate { max_levels: None }, // Chaîne complète
+})?;
+
+// Texture avec mipmaps manuels haute qualité
+let hq_texture = renderer.create_texture(TextureDesc {
+    width: 512, height: 512,
+    format: TextureFormat::R8G8B8A8_SRGB,
+    usage: TextureUsage::Sampled,
+    array_layers: 1,
+    data: Some(TextureData::Single(level0_pixels)),
+    mipmap: MipmapMode::Manual(ManualMipmapData::Single(vec![
+        level1_pixels, // 256x256
+        level2_pixels, // 128x128
+        level3_pixels, // 64x64
+    ])),
 })?;
 ```
 
-**Implémentation** :
+##### 9. TODO - Implémentation backend
 
-1. **Fonction externe** (hors galaxy_3d_engine) :
+| Tâche | Statut |
+|-------|--------|
+| Structure API MipmapMode | ✅ Fait |
+| TextureDesc.mipmap | ✅ Fait |
+| TextureInfo.mip_levels | ✅ Fait |
+| Vulkan: Image avec mip_levels | ✅ Fait |
+| Vulkan: ImageView level_count | ✅ Fait |
+| Vulkan: Barriers level_count | ✅ Fait |
+| Vulkan: update(layer, mip_level, data) | ✅ Fait |
+| Vulkan: Génération GPU (vkCmdBlitImage) | ⏳ TODO |
+| Vulkan: Upload mipmaps manuels | ⏳ TODO |
+
+##### 10. Génération GPU (à implémenter)
+
+Pour `MipmapMode::Generate`, utiliser `vkCmdBlitImage` :
+
 ```rust
-// Dans galaxy_image ou app
-pub fn generate_mipmaps_lanczos3(image: &RgbaImage) -> Vec<Vec<u8>> {
-    use image::imageops::FilterType;
+// Pseudo-code pour génération GPU
+for mip in 1..mip_levels {
+    let src_mip = mip - 1;
+    let (src_w, src_h) = mip_dimensions(src_mip);
+    let (dst_w, dst_h) = mip_dimensions(mip);
 
-    let mut mipmaps = vec![];
-    let (mut w, mut h) = image.dimensions();
-    let mut current = image.clone();
+    // Transition src → TRANSFER_SRC_OPTIMAL
+    // Transition dst → TRANSFER_DST_OPTIMAL
 
-    while w > 1 || h > 1 {
-        w = (w / 2).max(1);
-        h = (h / 2).max(1);
+    vkCmdBlitImage(
+        command_buffer,
+        image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        &[VkImageBlit {
+            srcSubresource: { mip_level: src_mip, ... },
+            srcOffsets: [0,0,0], [src_w, src_h, 1],
+            dstSubresource: { mip_level: mip, ... },
+            dstOffsets: [0,0,0], [dst_w, dst_h, 1],
+        }],
+        VK_FILTER_LINEAR,
+    );
 
-        current = image::imageops::resize(
-            &current,
-            w, h,
-            FilterType::Lanczos3
-        );
-
-        mipmaps.push(current.into_raw());
-    }
-
-    mipmaps
+    // Transition dst → SHADER_READ_ONLY
 }
 ```
 
-2. **Modification galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer** :
-```rust
-// Si mipmap_data fourni, uploader les mipmaps
-if let Some(mipmap_data) = desc.mipmap_data {
-    for (level, data) in mipmap_data.iter().enumerate() {
-        vkCmdCopyBufferToImage(
-            staging_buffer(data),
-            image,
-            level + 1, // Mip level
-        );
-    }
-} else if desc.generate_mipmaps {
-    // Fallback : GPU Box filter
-    generate_mipmaps_gpu(image);
-}
-```
-
-**Avantages** :
-- ✅ Qualité 9/10 (vs 3/10 actuel)
-- ✅ Pas de dépendances lourdes (crate image suffit)
-- ✅ Flexible (app choisit le filtre)
-
-**Inconvénients** :
-- ⚠️ Chargement +50 ms par texture (génération CPU)
-- ⚠️ Toujours RGBA8 (pas de compression)
-
-**Estimation** : 2-3 jours développement
+**Note** : Le filtre LINEAR de Vulkan est équivalent à un box filter (qualité moyenne). Pour une meilleure qualité, utiliser `MipmapMode::Manual` avec des mipmaps pré-calculés (Lanczos, Kaiser) via une bibliothèque externe comme `image`
 
 ---
 
@@ -3930,6 +4119,209 @@ resource_manager.add_mesh_entry("characters", MeshEntryDesc { ... })?;
 resource_manager.add_mesh_lod("characters", "hero", MeshLODDesc { ... })?;
 resource_manager.add_submesh("characters", "hero", 1, SubMeshDesc { ... })?;
 ```
+
+---
+
+## Phase 14 : Système de Mipmaps pour Textures
+
+### Objectif
+
+Implémenter le support des mipmaps pour les textures avec trois modes : aucun mipmap, génération automatique GPU, ou mipmaps manuels fournis par l'utilisateur.
+
+### Philosophie et Décisions
+
+**Problématique** : Comment gérer les mipmaps pour améliorer la qualité visuelle et les performances ?
+
+**Solutions envisagées** :
+1. ❌ Toujours générer des mipmaps → Surcoût inutile pour certaines textures
+2. ❌ Seulement support manuel → Complexe pour l'utilisateur
+3. ✅ **Trois modes flexibles** → Laisse le choix à l'utilisateur
+
+**Mode retenu** : Enum `MipmapMode` avec trois variantes
+- `None` : Pas de mipmaps (1 seul niveau)
+- `Generate { max_levels: Option<u32> }` : Génération automatique GPU
+- `Manual(ManualMipmapData)` : Mipmaps fournis par l'utilisateur
+
+**Structure `ManualMipmapData`** :
+- `Single(Vec<Vec<u8>>)` : Mêmes mipmaps pour toutes les couches (SimpleTexture, AtlasTexture)
+- `Layers(Vec<LayerMipmapData>)` : Mipmaps par couche (ArrayTexture)
+
+### Implémentation (2026-02-06) ✅
+
+**Architecture Vulkan** :
+- **Génération GPU** : Utilise `vkCmdBlitImage` avec filtre LINEAR
+  - Boucle sur les niveaux 1..N
+  - Transition source → TRANSFER_SRC_OPTIMAL
+  - Blit du niveau précédent vers le niveau actuel (downsampling)
+  - Transition source → SHADER_READ_ONLY_OPTIMAL
+  - Gère toutes les array layers en un seul blit
+
+- **Upload Manuel** :
+  - Crée des staging buffers pour chaque niveau de mipmap
+  - Pattern : BufferCreateInfo → allocate → bind → copy data
+  - Pour `Single` : upload vers toutes les array layers
+  - Pour `Layers` : upload vers la couche spécifique
+  - Toutes les transitions vers SHADER_READ_ONLY à la fin
+
+**Fichiers modifiés** :
+- `galaxy_3d_engine/src/renderer/texture.rs` : Ajout `MipmapMode`, `ManualMipmapData`, `LayerMipmapData`
+- `galaxy_3d_engine/src/resource/texture.rs` : Validations des mipmaps dans `from_desc()`
+- `galaxy_3d_engine_renderer_vulkan/src/vulkan.rs` : Implémentation GPU et upload manuel
+
+**API publique** :
+```rust
+// Texture avec mipmaps générés automatiquement
+TextureDesc {
+    mipmap: MipmapMode::Generate { max_levels: None }, // Génère tous les niveaux
+    // ... autres paramètres
+}
+
+// Texture avec mipmaps manuels
+TextureDesc {
+    mipmap: MipmapMode::Manual(ManualMipmapData::Single(vec![
+        level1_data, // Half resolution
+        level2_data, // Quarter resolution
+        // ...
+    ])),
+    // ...
+}
+
+// Pas de mipmaps
+TextureDesc {
+    mipmap: MipmapMode::None, // Par défaut
+    // ...
+}
+```
+
+---
+
+## Phase 15 : Unified Texture System (Refactoring)
+
+### Objectif
+
+Simplifier l'architecture des textures en remplaçant 3 types distincts (SimpleTexture, AtlasTexture, ArrayTexture) par un seul type unifié avec support des layers et atlas regions.
+
+### Philosophie et Décisions
+
+**Problématique** : Trois types de textures séparés créent de la duplication et limitent la flexibilité (impossible d'avoir des atlas dans ArrayTexture).
+
+**Ancienne architecture** (obsolète) :
+```rust
+trait Texture { ... }
+struct SimpleTexture { ... }   // 1 texture 2D
+struct AtlasTexture { ... }    // 1 texture 2D + régions
+struct ArrayTexture { ... }    // N layers nommés
+```
+
+**Nouvelle architecture** (actuelle) :
+```rust
+struct Texture {
+    renderer_texture: Arc<dyn RendererTexture>,
+    descriptor_set: Arc<dyn DescriptorSet>,
+    layers: Vec<TextureLayer>,        // 1+ layers
+    layer_names: HashMap<String, usize>,
+}
+
+struct TextureLayer {
+    name: String,
+    layer_index: u32,
+    regions: Vec<AtlasRegion>,        // Optionnel (atlas)
+    region_names: HashMap<String, usize>,
+}
+```
+
+**Types de textures** :
+- **Simple texture** : array_layers=1, 1 seul layer, régions atlas optionnelles
+- **Indexed texture** : array_layers>1, N layers, chaque layer avec régions optionnelles
+
+**Avantages** :
+- ✅ Simplification : 1 type au lieu de 3
+- ✅ Flexibilité : Atlas possible dans les indexed textures
+- ✅ Cohérence : Même API pour tous les types
+- ✅ Extensibilité : Facile d'ajouter des features aux layers
+
+### Validations (9 checks dans from_desc())
+
+1. **Simple texture** : exactement 1 layer avec index 0
+2. **Indexed texture** : peut être créée vide (layers ajoutés plus tard)
+3. **Layer indices** : tous < array_layers
+4. **Noms de layer** : pas de doublons
+5. **Indices de layer** : pas de doublons
+6. **Régions atlas** : dans les bounds de la texture
+7. **Noms de région** : pas de doublons par layer
+8. **Données mipmap** : indices de layer valides
+9. **Données de layer** : taille correcte selon dimensions et format
+
+### Implémentation (2026-02-06) ✅
+
+**API publique** :
+```rust
+// Création via ResourceManager (une seule méthode)
+let texture = resource_manager.create_texture("sprites".to_string(), TextureDesc {
+    renderer: renderer.clone(),
+    texture: render::TextureDesc {
+        width: 1024,
+        height: 1024,
+        format: TextureFormat::R8G8B8A8_SRGB,
+        array_layers: 2,  // Indexed texture
+        mipmap: MipmapMode::Generate { max_levels: None },
+        // ...
+    },
+    layers: vec![
+        LayerDesc {
+            name: "layer0".to_string(),
+            layer_index: 0,
+            data: Some(layer0_pixels),
+            regions: vec![
+                AtlasRegionDesc {
+                    name: "player".to_string(),
+                    region: AtlasRegion { x: 0, y: 0, width: 64, height: 64 },
+                },
+            ],
+        },
+    ],
+})?;
+
+// Accès aux layers
+let layer = texture.layer(0)?;                    // Par index
+let layer = texture.layer_by_name("layer0")?;   // Par nom
+let index = texture.layer_index_by_name("layer0")?;  // Obtenir l'index
+
+// Accès aux régions atlas
+let region = texture.region("layer0", "player")?;  // Convenience
+let region = layer.region_by_name("player")?;      // Par nom
+let region = layer.region(0)?;                     // Par index
+
+// Modification (indexed textures)
+resource_manager.add_texture_layer("sprites", LayerDesc { ... })?;
+resource_manager.add_texture_region("sprites", "layer0", AtlasRegionDesc { ... })?;
+
+// Info
+let is_simple = texture.is_simple();      // array_layers == 1
+let is_indexed = texture.is_indexed();    // array_layers > 1
+let is_atlas = layer.is_atlas();          // regions.len() > 0
+```
+
+**ResourceManager simplifié** :
+```rust
+// Avant : 3 méthodes
+create_simple_texture(name, SimpleTextureDesc)
+create_atlas_texture(name, AtlasTextureDesc)
+create_array_texture(name, ArrayTextureDesc)
+
+// Maintenant : 1 méthode
+create_texture(name, TextureDesc)
+```
+
+**Fichiers modifiés** :
+- `galaxy_3d_engine/src/resource/texture.rs` : Réécriture complète avec nouvelle architecture
+- `galaxy_3d_engine/src/resource/resource_manager.rs` : Simplifié avec une seule méthode
+- `galaxy_3d_engine/src/resource/mod.rs` : Exports mis à jour
+
+**Migration** :
+- ❌ Suppression de `SimpleTexture`, `AtlasTexture`, `ArrayTexture`
+- ❌ Suppression du trait `resource::Texture` (un seul type concret)
+- ✅ Type unifié `Texture` avec layers et régions
 
 ---
 

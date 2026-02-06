@@ -29,6 +29,8 @@ use std::sync::{Arc, Mutex};
 use crate::error::{Error, Result};
 use crate::renderer::{
     Buffer,
+    BufferDesc,
+    BufferUsage,
     Renderer,
     VertexLayout,
     IndexType,
@@ -276,6 +278,91 @@ impl Mesh {
             mesh_entries: Vec::new(),
             entry_names: HashMap::new(),
         }
+    }
+
+    /// Create a Mesh from a descriptor
+    ///
+    /// Creates the GPU buffers and populates mesh entries from the descriptor.
+    pub(crate) fn from_desc(desc: MeshDesc) -> Result<Self> {
+        // Get stride from first binding (binding 0)
+        let vertex_stride = desc.vertex_layout.bindings
+            .first()
+            .map(|b| b.stride as usize)
+            .unwrap_or(0);
+
+        // Validate stride
+        if vertex_stride == 0 {
+            return Err(Error::BackendError(
+                "Vertex layout has no bindings or stride is 0".to_string()
+            ));
+        }
+
+        // Validate vertex data size
+        if desc.vertex_data.len() % vertex_stride != 0 {
+            return Err(Error::BackendError(format!(
+                "Vertex data size {} is not a multiple of stride {}",
+                desc.vertex_data.len(), vertex_stride
+            )));
+        }
+
+        let vertex_count = desc.vertex_data.len() / vertex_stride;
+
+        // Create vertex buffer
+        let vertex_buffer = {
+            let mut renderer = desc.renderer.lock().unwrap();
+            let buffer = renderer.create_buffer(BufferDesc {
+                size: desc.vertex_data.len() as u64,
+                usage: BufferUsage::Vertex,
+            })?;
+            buffer.update(0, &desc.vertex_data)?;
+            buffer
+        };
+
+        // Create index buffer (if provided)
+        let (index_buffer, index_count) = if let Some(ref index_data) = desc.index_data {
+            let index_size = desc.index_type.size_bytes() as usize;
+
+            // Validate index data size
+            if index_data.len() % index_size != 0 {
+                return Err(Error::BackendError(format!(
+                    "Index data size {} is not a multiple of index type size {}",
+                    index_data.len(), index_size
+                )));
+            }
+
+            let count = index_data.len() / index_size;
+            let buffer = {
+                let mut renderer = desc.renderer.lock().unwrap();
+                let buf = renderer.create_buffer(BufferDesc {
+                    size: index_data.len() as u64,
+                    usage: BufferUsage::Index,
+                })?;
+                buf.update(0, index_data)?;
+                buf
+            };
+            (Some(buffer), count as u32)
+        } else {
+            (None, 0)
+        };
+
+        // Build Mesh
+        let mut mesh = Self::new(
+            desc.name,
+            desc.renderer,
+            vertex_buffer,
+            index_buffer,
+            desc.vertex_layout,
+            desc.index_type,
+            vertex_count as u32,
+            index_count,
+        );
+
+        // Add mesh entries from descriptor
+        for mesh_entry_desc in desc.meshes {
+            mesh.add_mesh_entry(mesh_entry_desc)?;
+        }
+
+        Ok(mesh)
     }
 
     // ===== ACCESSORS =====
@@ -584,6 +671,8 @@ pub struct MeshEntryDesc {
 /// The ResourceManager will create the GPU buffers from the provided data.
 /// Vertex and index counts are computed automatically from data length and layout.
 pub struct MeshDesc {
+    /// Mesh group name
+    pub name: String,
     /// Renderer to use for GPU buffer creation
     pub renderer: Arc<Mutex<dyn Renderer>>,
     /// Raw vertex data (bytes, interleaved according to vertex_layout)
