@@ -431,6 +431,88 @@ let submesh_id: usize = resource_manager.add_submesh("characters", entry_id, lod
 let submesh = mesh.submesh(entry_id, lod_index, submesh_id)?;
 ```
 
+### Resource Pipeline System (Vec+HashMap Pattern)
+
+The engine uses a **Vec+HashMap pattern** for pipeline variant storage, consistent with textures and meshes. A `resource::Pipeline` groups related GPU pipeline configurations under named variants.
+
+```
+resource::Pipeline
+├── name: "mesh"
+├── renderer: Arc<Mutex<dyn Renderer>>       (stored for add_variant())
+├── variants: Vec<PipelineVariant>           (storage by index)
+└── variant_names: HashMap<String, usize>    (name → index mapping)
+    ├── "static" → 0
+    │   └── renderer_pipeline: Arc<dyn render::Pipeline>
+    ├── "animated" → 1
+    │   └── renderer_pipeline: Arc<dyn render::Pipeline>
+    └── "transparent" → 2
+        └── renderer_pipeline: Arc<dyn render::Pipeline>
+```
+
+**Key Design Decisions:**
+
+- **Vec+HashMap pattern**: Consistent with textures and meshes for O(1) access by index or name
+- **Variant concept**: User-defined organization (e.g., "static" vs "animated" meshes)
+- **Can be empty**: No validation requiring at least 1 variant (user responsibility)
+- **Stored renderer**: `Pipeline` stores renderer reference for `add_variant()` calls
+- **Skeleton implementation**: Descriptors and render pass configuration deferred for future phases
+
+**Access Patterns:**
+
+```rust
+// By index (fastest - direct Vec access)
+let variant = pipeline.variant(variant_index)?;
+
+// By name (convenience - HashMap lookup then index)
+let variant = pipeline.variant_by_name("static")?;
+
+// Get index for later use (avoids repeated name lookups)
+let variant_index = pipeline.variant_index("static")?;
+
+// Info
+let count = pipeline.variant_count();
+```
+
+**API Usage:**
+
+```rust
+// Creation via ResourceManager (returns Arc<Pipeline>)
+let pipeline = resource_manager.create_pipeline("mesh".to_string(), PipelineDesc {
+    renderer: renderer.clone(),
+    variants: vec![
+        PipelineVariantDesc {
+            name: "static".to_string(),
+            pipeline: render::PipelineDesc {
+                vertex_shader: vs,
+                fragment_shader: fs,
+                // ... other pipeline settings
+            },
+        },
+    ],
+})?;
+
+// Can be created empty
+let pipeline = resource_manager.create_pipeline("custom".to_string(), PipelineDesc {
+    renderer: renderer.clone(),
+    variants: vec![],  // Empty, variants added later
+})?;
+
+// Modification returns variant index
+let variant_idx: u32 = resource_manager.add_pipeline_variant("mesh", PipelineVariantDesc {
+    name: "wireframe".to_string(),
+    pipeline: render::PipelineDesc { /* ... */ },
+})?;
+
+// Fast access using stored index
+let variant = pipeline.variant(variant_idx)?;
+let renderer_pipeline = variant.renderer_pipeline();
+```
+
+**Validations:**
+
+- ✅ No duplicate variant names (within a pipeline)
+- ❌ No minimum variant count requirement (can be empty)
+
 ---
 
 ## Trait Hierarchy

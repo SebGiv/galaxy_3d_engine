@@ -5,6 +5,7 @@
 mod resource_manager;
 pub mod texture;
 pub mod mesh;
+pub mod pipeline;
 
 pub use resource_manager::ResourceManager;
 pub use texture::{
@@ -15,4 +16,8 @@ pub use texture::{
 pub use mesh::{
     Mesh, MeshEntry, MeshLOD, SubMesh,
     MeshDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc,
+};
+pub use pipeline::{
+    Pipeline, PipelineVariant,
+    PipelineDesc, PipelineVariantDesc,
 };

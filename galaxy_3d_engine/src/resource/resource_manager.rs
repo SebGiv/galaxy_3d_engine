@@ -13,10 +13,14 @@ use crate::resource::texture::{
 use crate::resource::mesh::{
     Mesh, MeshDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc,
 };
+use crate::resource::pipeline::{
+    Pipeline, PipelineDesc, PipelineVariantDesc,
+};
 
 pub struct ResourceManager {
     textures: HashMap<String, Arc<Texture>>,
     meshes: HashMap<String, Arc<Mesh>>,
+    pipelines: HashMap<String, Arc<Pipeline>>,
 }
 
 impl ResourceManager {
@@ -25,6 +29,7 @@ impl ResourceManager {
         Self {
             textures: HashMap::new(),
             meshes: HashMap::new(),
+            pipelines: HashMap::new(),
         }
     }
 
@@ -406,5 +411,113 @@ impl ResourceManager {
             )))?;
 
         mesh.add_submesh(entry_id, lod_index, desc)
+    }
+
+    // ===== PIPELINE CREATION =====
+
+    /// Create a pipeline resource with optional variants
+    ///
+    /// Internally creates GPU pipelines for each variant via the renderer.
+    /// Returns the created pipeline for immediate use.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for this pipeline resource
+    /// * `desc` - Pipeline descriptor with renderer and variant configurations
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let pipeline = resource_manager.create_pipeline(
+    ///     "mesh".to_string(),
+    ///     PipelineDesc {
+    ///         renderer: renderer.clone(),
+    ///         variants: vec![
+    ///             PipelineVariantDesc {
+    ///                 name: "static".to_string(),
+    ///                 pipeline: render::PipelineDesc {
+    ///                     vertex_shader: vs,
+    ///                     fragment_shader: fs,
+    ///                     // ... other pipeline settings
+    ///                 },
+    ///             },
+    ///         ],
+    ///     },
+    /// )?;
+    /// ```
+    pub fn create_pipeline(&mut self, name: String, desc: PipelineDesc) -> Result<Arc<Pipeline>> {
+        if self.pipelines.contains_key(&name) {
+            return Err(Error::BackendError(format!(
+                "Pipeline '{}' already exists in ResourceManager", name
+            )));
+        }
+
+        let pipeline = Pipeline::from_desc(desc)?;
+        let variant_count = pipeline.variant_count();
+
+        let pipeline_arc = Arc::new(pipeline);
+        self.pipelines.insert(name.clone(), Arc::clone(&pipeline_arc));
+
+        crate::engine_info!("galaxy3d::ResourceManager",
+            "Created Pipeline resource '{}' ({} variant{})",
+            name, variant_count, if variant_count != 1 { "s" } else { "" });
+
+        Ok(pipeline_arc)
+    }
+
+    // ===== PIPELINE ACCESS =====
+
+    /// Get a pipeline by name
+    pub fn pipeline(&self, name: &str) -> Option<&Arc<Pipeline>> {
+        self.pipelines.get(name)
+    }
+
+    /// Remove a pipeline by name
+    ///
+    /// Returns `true` if the pipeline was found and removed.
+    pub fn remove_pipeline(&mut self, name: &str) -> bool {
+        if self.pipelines.remove(name).is_some() {
+            crate::engine_info!("galaxy3d::ResourceManager", "Removed Pipeline resource '{}'", name);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the number of registered pipelines
+    pub fn pipeline_count(&self) -> usize {
+        self.pipelines.len()
+    }
+
+    // ===== PIPELINE MODIFICATION =====
+
+    /// Add a variant to an existing pipeline
+    ///
+    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
+    /// references to the pipeline Arc exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The pipeline does not exist
+    /// - Other Arc references prevent mutable access
+    /// - A variant with the same name already exists
+    /// - GPU pipeline creation fails
+    pub fn add_pipeline_variant(
+        &mut self,
+        pipeline_name: &str,
+        desc: PipelineVariantDesc,
+    ) -> Result<u32> {
+        let arc = self.pipelines.get_mut(pipeline_name)
+            .ok_or_else(|| Error::BackendError(format!(
+                "Pipeline '{}' not found in ResourceManager", pipeline_name
+            )))?;
+
+        let pipeline = Arc::get_mut(arc)
+            .ok_or_else(|| Error::BackendError(format!(
+                "Cannot mutate Pipeline '{}': other references exist", pipeline_name
+            )))?;
+
+        pipeline.add_variant(desc)
     }
 }

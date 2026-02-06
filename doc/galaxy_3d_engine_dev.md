@@ -3,7 +3,7 @@
 > **Projet** : Moteur de rendu 3D multi-API en Rust
 > **Auteur** : Collaboration Claude & Utilisateur
 > **Date** : 2026-02-06
-> **Statut** : Phase 15 - Unified Texture System ✅
+> **Statut** : Phase 16 - Pipeline Resource System ✅
 
 ---
 
@@ -4322,6 +4322,128 @@ create_texture(name, TextureDesc)
 - ❌ Suppression de `SimpleTexture`, `AtlasTexture`, `ArrayTexture`
 - ❌ Suppression du trait `resource::Texture` (un seul type concret)
 - ✅ Type unifié `Texture` avec layers et régions
+
+---
+
+## Phase 16 : Resource Pipeline System
+
+### Objectif
+
+Créer un système de resource::Pipeline pour regrouper des pipelines GPU sous forme de variantes nommées, suivant le même pattern Vec+HashMap que les textures et meshes.
+
+### Philosophie et Décisions
+
+**Problématique** : Comment organiser les pipelines GPU de manière flexible tout en permettant un accès rapide ?
+
+**Concept de variantes** :
+- Un `Pipeline` regroupe des configurations de pipeline liées (ex: "mesh" pipeline)
+- Chaque variante représente une configuration spécifique (ex: "static", "animated", "transparent")
+- L'utilisateur décide de l'organisation des variantes (responsabilité utilisateur)
+
+**Architecture retenue** : Pattern Vec+HashMap avec variantes
+```rust
+struct Pipeline {
+    renderer: Arc<Mutex<dyn Renderer>>,  // Pour add_variant()
+    variants: Vec<PipelineVariant>,
+    variant_names: HashMap<String, usize>,
+}
+
+struct PipelineVariant {
+    name: String,
+    renderer_pipeline: Arc<dyn RendererPipeline>,
+}
+```
+
+**Caractéristiques clés** :
+- ✅ Peut être créé vide (pas de variantes requises)
+- ✅ Stocke le renderer pour `add_variant()` ultérieur
+- ✅ Pattern cohérent avec Texture et Mesh
+- ✅ Descriptors et render pass gérés plus tard (focus sur le squelette)
+
+### Validations (1 check dans from_desc())
+
+1. **Noms de variantes** : pas de doublons
+
+### Implémentation (2026-02-06) ✅
+
+**API publique** :
+```rust
+// Création via ResourceManager
+let pipeline = resource_manager.create_pipeline("mesh".to_string(), PipelineDesc {
+    renderer: renderer.clone(),
+    variants: vec![
+        PipelineVariantDesc {
+            name: "static".to_string(),
+            pipeline: render::PipelineDesc {
+                vertex_shader: vs,
+                fragment_shader: fs,
+                // ... autres paramètres pipeline
+            },
+        },
+        PipelineVariantDesc {
+            name: "animated".to_string(),
+            pipeline: render::PipelineDesc { /* ... */ },
+        },
+    ],
+})?;
+
+// Peut être créé vide
+let pipeline = resource_manager.create_pipeline("custom".to_string(), PipelineDesc {
+    renderer: renderer.clone(),
+    variants: vec![],  // Vide, variantes ajoutées plus tard
+})?;
+
+// Accès aux variantes
+let variant = pipeline.variant(0)?;                      // Par index
+let variant = pipeline.variant_by_name("static")?;      // Par nom
+let index = pipeline.variant_index("static")?;          // Obtenir l'index
+
+// Info
+let count = pipeline.variant_count();
+
+// Modification
+resource_manager.add_pipeline_variant("mesh", PipelineVariantDesc {
+    name: "wireframe".to_string(),
+    pipeline: render::PipelineDesc { /* ... */ },
+})?;
+```
+
+**ResourceManager** :
+```rust
+// Création (retourne Arc<Pipeline>)
+create_pipeline(name: String, desc: PipelineDesc) -> Result<Arc<Pipeline>>
+
+// Accès
+pipeline(name: &str) -> Option<&Arc<Pipeline>>
+remove_pipeline(name: &str) -> bool
+pipeline_count() -> usize
+
+// Modification
+add_pipeline_variant(pipeline_name: &str, desc: PipelineVariantDesc) -> Result<u32>
+```
+
+**Fichiers créés** :
+- `galaxy_3d_engine/src/resource/pipeline.rs` (150 lignes)
+  - Structure `Pipeline` avec renderer stocké
+  - Structure `PipelineVariant`
+  - Descripteurs `PipelineDesc` et `PipelineVariantDesc`
+  - Méthode `from_desc()` avec validation
+  - API : `variant()`, `variant_by_name()`, `variant_index()`, `variant_count()`, `add_variant()`
+
+**Fichiers modifiés** :
+- `galaxy_3d_engine/src/resource/resource_manager.rs` : Ajout HashMap<String, Arc<Pipeline>> et méthodes
+- `galaxy_3d_engine/src/resource/mod.rs` : Exports Pipeline, PipelineVariant, PipelineDesc, PipelineVariantDesc
+
+**Détails d'implémentation** :
+- `Pipeline` stocke le renderer pour permettre `add_variant()` sans passer le renderer en paramètre
+- `add_variant()` utilise `self.renderer` pour créer le GPU pipeline
+- `ResourceManager::add_pipeline_variant()` appelle simplement `Pipeline::add_variant()` (pas de redondance)
+- Pattern `Arc::get_mut()` pour la modification sécurisée
+
+**Extension future** :
+- Ajout de descriptor sets au niveau variante
+- Support de render pass configuration
+- Gestion de pipeline cache
 
 ---
 
