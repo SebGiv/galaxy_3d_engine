@@ -8,7 +8,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Pipeline as RendererPipeline,
     Buffer as RendererBuffer,
     DescriptorSet as RendererDescriptorSet,
-    Viewport, Rect2D, ClearValue,
+    Viewport, Rect2D, ClearValue, IndexType,
 };
 use galaxy_3d_engine::engine_error;
 use ash::vk;
@@ -381,7 +381,7 @@ impl RendererCommandList for CommandList {
         }
     }
 
-    fn bind_index_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64) -> Result<()> {
+    fn bind_index_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64, index_type: IndexType) -> Result<()> {
         if !self.is_recording {
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
@@ -391,11 +391,17 @@ impl RendererCommandList for CommandList {
             let vk_buffer = buffer.as_ref() as *const dyn RendererBuffer as *const Buffer;
             let vk_buffer = &*vk_buffer;
 
+            // Convert engine IndexType to Vulkan IndexType
+            let vk_index_type = match index_type {
+                IndexType::U16 => vk::IndexType::UINT16,
+                IndexType::U32 => vk::IndexType::UINT32,
+            };
+
             self.device.cmd_bind_index_buffer(
                 self.command_buffer,
                 vk_buffer.buffer,
                 offset,
-                vk::IndexType::UINT32, // TODO: Support UINT16
+                vk_index_type,
             );
 
             Ok(())

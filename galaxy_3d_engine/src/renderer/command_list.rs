@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::error::Result;
 use crate::renderer::{
     RenderPass, RenderTarget, Pipeline, Buffer,
-    DescriptorSet,
+    DescriptorSet, IndexType,
 };
 
 /// Command list for recording rendering commands
@@ -92,7 +92,8 @@ pub trait CommandList: Send + Sync {
     ///
     /// * `buffer` - Buffer to bind
     /// * `offset` - Offset into the buffer in bytes
-    fn bind_index_buffer(&mut self, buffer: &Arc<dyn Buffer>, offset: u64) -> Result<()>;
+    /// * `index_type` - Type of indices (U16 or U32)
+    fn bind_index_buffer(&mut self, buffer: &Arc<dyn Buffer>, offset: u64, index_type: IndexType) -> Result<()>;
 
     /// Draw vertices
     ///
