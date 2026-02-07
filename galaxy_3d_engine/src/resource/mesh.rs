@@ -686,3 +686,7 @@ pub struct MeshDesc {
     /// Initial mesh entries (can be empty, add later via add_mesh_entry)
     pub meshes: Vec<MeshEntryDesc>,
 }
+
+#[cfg(test)]
+#[path = "mesh_tests.rs"]
+mod tests;

@@ -8,7 +8,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Pipeline as RendererPipeline,
     Buffer as RendererBuffer,
     DescriptorSet as RendererDescriptorSet,
-    Viewport, Rect2D, ClearValue, IndexType,
+    Viewport, Rect2D, ClearValue, IndexType, ShaderStage,
 };
 use galaxy_3d_engine::engine_error;
 use ash::vk;
@@ -336,7 +336,7 @@ impl RendererCommandList for CommandList {
         }
     }
 
-    fn push_constants(&mut self, offset: u32, data: &[u8]) -> Result<()> {
+    fn push_constants(&mut self, stages: &[ShaderStage], offset: u32, data: &[u8]) -> Result<()> {
         if !self.is_recording {
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
@@ -345,13 +345,21 @@ impl RendererCommandList for CommandList {
             Error::BackendError("No pipeline bound for push constants".to_string())
         })?;
 
+        // Convert ShaderStage to vk::ShaderStageFlags
+        let mut stage_flags = vk::ShaderStageFlags::empty();
+        for stage in stages {
+            stage_flags |= match stage {
+                ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
+                ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
+                ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
+            };
+        }
+
         unsafe {
-            // TODO: Use proper stage flags from pipeline layout
-            // For now, use VERTEX only (matching our push constant range)
             self.device.cmd_push_constants(
                 self.command_buffer,
                 layout,
-                vk::ShaderStageFlags::VERTEX,
+                stage_flags,
                 offset,
                 data,
             );

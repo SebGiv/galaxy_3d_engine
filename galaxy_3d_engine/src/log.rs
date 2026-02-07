@@ -248,3 +248,7 @@ macro_rules! engine_error {
         )
     };
 }
+
+#[cfg(test)]
+#[path = "log_tests.rs"]
+mod tests;

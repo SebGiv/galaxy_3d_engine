@@ -1,7 +1,7 @@
 /// Pipeline trait and pipeline descriptor
 
 use std::sync::Arc;
-use crate::renderer::{Shader, TextureFormat, ShaderStage};
+use crate::renderer::{Shader, BufferFormat, ShaderStage};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,8 +51,8 @@ pub struct VertexAttribute {
     pub location: u32,
     /// Binding index
     pub binding: u32,
-    /// Format of the attribute
-    pub format: TextureFormat,
+    /// Format of the attribute (data type and component count)
+    pub format: BufferFormat,
     /// Offset in bytes from the start of the vertex
     pub offset: u32,
 }
@@ -123,3 +123,7 @@ pub struct PipelineDesc {
 pub trait Pipeline: Send + Sync {
     // No public methods for now, pipelines are created and bound by frames
 }
+
+#[cfg(test)]
+#[path = "pipeline_tests.rs"]
+mod tests;

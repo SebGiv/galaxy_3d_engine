@@ -2,38 +2,37 @@
 
 use crate::error::{Error, Result};
 
-/// Texture and vertex attribute format
+/// Texture format enumeration
+///
+/// Defines pixel formats for textures, render targets, and depth buffers.
+/// For vertex attribute formats, see `BufferFormat` in buffer.rs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
 pub enum TextureFormat {
-    // Texture formats
+    // Color texture formats
     R8G8B8A8_SRGB,
     R8G8B8A8_UNORM,
     B8G8R8A8_SRGB,
     B8G8R8A8_UNORM,
+
+    // Depth/stencil formats
     D16_UNORM,
     D32_FLOAT,
     D24_UNORM_S8_UINT,
-
-    // Vertex attribute formats
-    R32_SFLOAT,
-    R32G32_SFLOAT,
-    R32G32B32_SFLOAT,
-    R32G32B32A32_SFLOAT,
 }
 
 impl TextureFormat {
     /// Returns bytes per pixel for this format
     pub fn bytes_per_pixel(&self) -> u32 {
         match self {
+            // Color formats (4 bytes per pixel)
             TextureFormat::R8G8B8A8_SRGB | TextureFormat::R8G8B8A8_UNORM |
-            TextureFormat::B8G8R8A8_SRGB | TextureFormat::B8G8R8A8_UNORM |
-            TextureFormat::R32_SFLOAT | TextureFormat::D32_FLOAT |
-            TextureFormat::D24_UNORM_S8_UINT => 4,
+            TextureFormat::B8G8R8A8_SRGB | TextureFormat::B8G8R8A8_UNORM => 4,
+
+            // Depth/stencil formats
             TextureFormat::D16_UNORM => 2,
-            TextureFormat::R32G32_SFLOAT => 8,
-            TextureFormat::R32G32B32_SFLOAT => 12,
-            TextureFormat::R32G32B32A32_SFLOAT => 16,
+            TextureFormat::D32_FLOAT => 4,
+            TextureFormat::D24_UNORM_S8_UINT => 4,
         }
     }
 }
@@ -263,3 +262,7 @@ pub trait Texture: Send + Sync {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "texture_tests.rs"]
+mod tests;

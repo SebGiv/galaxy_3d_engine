@@ -29,3 +29,7 @@ pub use render_target::*;
 pub use render_pass::*;
 pub use swapchain::*;
 pub use descriptor_set::*;
+
+// Mock renderer for tests (no GPU required)
+#[cfg(test)]
+pub mod mock_renderer;

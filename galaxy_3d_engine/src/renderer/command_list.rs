@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::error::Result;
 use crate::renderer::{
     RenderPass, RenderTarget, Pipeline, Buffer,
-    DescriptorSet, IndexType,
+    DescriptorSet, IndexType, ShaderStage,
 };
 
 /// Command list for recording rendering commands
@@ -74,9 +74,10 @@ pub trait CommandList: Send + Sync {
     ///
     /// # Arguments
     ///
+    /// * `stages` - Shader stages that will access the push constants
     /// * `offset` - Offset in bytes into push constant range
     /// * `data` - Data to push
-    fn push_constants(&mut self, offset: u32, data: &[u8]) -> Result<()>;
+    fn push_constants(&mut self, stages: &[ShaderStage], offset: u32, data: &[u8]) -> Result<()>;
 
     /// Bind a vertex buffer
     ///

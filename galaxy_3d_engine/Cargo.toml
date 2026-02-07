@@ -8,3 +8,7 @@ winit = "0.30"
 glam = "0.29"
 colored = "2"
 chrono = "0.4"
+
+[dev-dependencies]
+galaxy_3d_engine_renderer_vulkan = { path = "../galaxy_3d_engine_renderer_vulkan" }
+serial_test = "3"

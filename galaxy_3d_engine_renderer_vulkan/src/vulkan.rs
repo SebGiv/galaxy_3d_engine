@@ -10,7 +10,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     DescriptorSet as RendererDescriptorSet,
     RenderTargetDesc, RenderPassDesc,
     TextureDesc, TextureData, TextureInfo, BufferDesc, ShaderDesc, PipelineDesc,
-    TextureFormat, ShaderStage, BufferUsage, PrimitiveTopology,
+    TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
     RendererStats, VertexInputRate,
     Config, DebugSeverity, DebugOutput, DebugMessageFilter, ValidationStats, TextureUsage,
@@ -381,7 +381,7 @@ impl VulkanRenderer {
                 .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
                 .mip_lod_bias(0.0)
                 .min_lod(0.0)
-                .max_lod(0.0);
+                .max_lod(vk::LOD_CLAMP_NONE);  // Allow all mipmap levels (1000.0)
 
             let texture_sampler = device.create_sampler(&sampler_create_info, None)
                 .map_err(|e| Error::InitializationFailed(format!("Failed to create sampler: {:?}", e)))?;
@@ -451,10 +451,43 @@ impl VulkanRenderer {
             TextureFormat::D16_UNORM => vk::Format::D16_UNORM,
             TextureFormat::D32_FLOAT => vk::Format::D32_SFLOAT,
             TextureFormat::D24_UNORM_S8_UINT => vk::Format::D24_UNORM_S8_UINT,
-            TextureFormat::R32_SFLOAT => vk::Format::R32_SFLOAT,
-            TextureFormat::R32G32_SFLOAT => vk::Format::R32G32_SFLOAT,
-            TextureFormat::R32G32B32_SFLOAT => vk::Format::R32G32B32_SFLOAT,
-            TextureFormat::R32G32B32A32_SFLOAT => vk::Format::R32G32B32A32_SFLOAT,
+        }
+    }
+
+    /// Convert BufferFormat (vertex attributes) to Vulkan format
+    fn buffer_format_to_vk(&self, format: BufferFormat) -> vk::Format {
+        match format {
+            // Float formats
+            BufferFormat::R32_SFLOAT => vk::Format::R32_SFLOAT,
+            BufferFormat::R32G32_SFLOAT => vk::Format::R32G32_SFLOAT,
+            BufferFormat::R32G32B32_SFLOAT => vk::Format::R32G32B32_SFLOAT,
+            BufferFormat::R32G32B32A32_SFLOAT => vk::Format::R32G32B32A32_SFLOAT,
+            // Integer formats (signed)
+            BufferFormat::R32_SINT => vk::Format::R32_SINT,
+            BufferFormat::R32G32_SINT => vk::Format::R32G32_SINT,
+            BufferFormat::R32G32B32_SINT => vk::Format::R32G32B32_SINT,
+            BufferFormat::R32G32B32A32_SINT => vk::Format::R32G32B32A32_SINT,
+            // Integer formats (unsigned)
+            BufferFormat::R32_UINT => vk::Format::R32_UINT,
+            BufferFormat::R32G32_UINT => vk::Format::R32G32_UINT,
+            BufferFormat::R32G32B32_UINT => vk::Format::R32G32B32_UINT,
+            BufferFormat::R32G32B32A32_UINT => vk::Format::R32G32B32A32_UINT,
+            // Short formats (signed)
+            BufferFormat::R16_SINT => vk::Format::R16_SINT,
+            BufferFormat::R16G16_SINT => vk::Format::R16G16_SINT,
+            BufferFormat::R16G16B16A16_SINT => vk::Format::R16G16B16A16_SINT,
+            // Short formats (unsigned)
+            BufferFormat::R16_UINT => vk::Format::R16_UINT,
+            BufferFormat::R16G16_UINT => vk::Format::R16G16_UINT,
+            BufferFormat::R16G16B16A16_UINT => vk::Format::R16G16B16A16_UINT,
+            // Byte formats (signed)
+            BufferFormat::R8_SINT => vk::Format::R8_SINT,
+            BufferFormat::R8G8_SINT => vk::Format::R8G8_SINT,
+            BufferFormat::R8G8B8A8_SINT => vk::Format::R8G8B8A8_SINT,
+            // Byte formats (unsigned)
+            BufferFormat::R8_UINT => vk::Format::R8_UINT,
+            BufferFormat::R8G8_UINT => vk::Format::R8G8_UINT,
+            BufferFormat::R8G8B8A8_UINT => vk::Format::R8G8B8A8_UINT,
         }
     }
 
@@ -1749,7 +1782,7 @@ impl Renderer for VulkanRenderer {
                 .map(|attribute| vk::VertexInputAttributeDescription {
                     location: attribute.location,
                     binding: attribute.binding,
-                    format: self.format_to_vk(attribute.format),
+                    format: self.buffer_format_to_vk(attribute.format),
                     offset: attribute.offset,
                 })
                 .collect();
@@ -2109,3 +2142,7 @@ impl Drop for VulkanRenderer {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "vulkan_format_tests.rs"]
+mod tests;

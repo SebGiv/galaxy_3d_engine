@@ -522,3 +522,7 @@ impl TextureLayer {
         Ok(index as u32)
     }
 }
+
+#[cfg(test)]
+#[path = "texture_tests.rs"]
+mod tests;

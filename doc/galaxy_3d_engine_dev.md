@@ -4447,6 +4447,340 @@ add_pipeline_variant(pipeline_name: &str, desc: PipelineVariantDesc) -> Result<u
 
 ---
 
+## 🧪 Tests Unitaires et Tests d'Intégration
+
+### Philosophie de Test
+
+Le projet Galaxy3D Engine utilise une approche pragmatique des tests :
+- **Tests unitaires** pour la logique métier (ResourceManager, structures de données)
+- **Tests d'intégration** pour les workflows complets (Engine lifecycle)
+- **Tests GPU** pour le backend Vulkan (marqués `#[ignore]`)
+
+### Différence entre Tests Unitaires et Tests d'Intégration
+
+#### Tests Unitaires (`src/`)
+
+**Emplacement** : Dans le même module que le code testé (via `#[cfg(test)]` + `#[path]`)
+
+**Caractéristiques** :
+- Testent **une seule unité** de code (fonction, méthode, struct)
+- Accès au **code privé** (`pub(crate)`, fonctions privées)
+- **Rapides** (pas de dépendances externes)
+- **Nombreux** (centaines)
+
+**Exemple** :
+```rust
+// src/resource/texture.rs
+struct InternalCache { }  // Privé
+
+pub struct Texture { }
+
+#[cfg(test)]
+#[path = "texture_tests.rs"]
+mod tests;
+```
+
+```rust
+// src/resource/texture_tests.rs
+use super::*;
+
+#[test]
+fn test_texture_creation() {
+    let texture = Texture::new(/* ... */);
+    assert_eq!(texture.width, 1024);
+}
+
+#[test]
+fn test_internal_cache() {
+    // ✅ Peut tester le code privé !
+    let cache = InternalCache::new();
+    assert!(cache.is_empty());
+}
+```
+
+#### Tests d'Intégration (`tests/`)
+
+**Emplacement** : Dossier `tests/` à la racine du crate
+
+**Caractéristiques** :
+- Testent **plusieurs modules ensemble**
+- Accès **uniquement à l'API publique**
+- **Plus lents** (setup complet)
+- **Moins nombreux** (dizaines)
+- Chaque fichier = **crate séparé**
+
+**Exemple** :
+```rust
+// tests/resource_manager_integration_test.rs
+use galaxy_3d_engine::{Engine, resource::*};
+
+#[test]
+fn test_full_workflow() {
+    Engine::initialize().unwrap();
+    Engine::create_resource_manager().unwrap();
+
+    let rm = Engine::resource_manager().unwrap();
+    // Test du workflow complet...
+
+    Engine::shutdown();
+}
+```
+
+#### Règles de Visibilité en Rust
+
+**Point clé** : En Rust, la hiérarchie des modules définit la visibilité.
+
+```
+crate
+└── resource
+    ├── texture (privé : InternalCache)
+    │   └── tests ← ✅ Peut accéder à InternalCache (sous-module)
+    │
+    └── tests/
+        └── texture_tests ← ❌ Ne peut PAS accéder à InternalCache (module cousin)
+```
+
+**Pourquoi `tests/` ne peut pas accéder au code privé ?**
+- Le dossier `tests/` contient des **crates séparés**
+- C'est comme si vous utilisiez le crate depuis un projet externe
+- Seule l'API publique (`pub`) est accessible
+
+**Pourquoi `#[cfg(test)] mod tests` peut accéder au code privé ?**
+- Le module `tests` est un **sous-module** du module parent
+- Il fait partie du même module logique
+- Il a accès à tout (public + privé)
+
+### Structure Recommandée
+
+#### Pour le Moteur (galaxy_3d_engine)
+
+```
+galaxy_3d_engine/
+└── src/
+    ├── resource/
+    │   ├── mod.rs
+    │   │
+    │   ├── texture.rs              ← Code
+    │   ├── texture_tests.rs        ← Tests unitaires
+    │   │
+    │   ├── mesh.rs                 ← Code
+    │   ├── mesh_tests.rs           ← Tests unitaires
+    │   │
+    │   ├── pipeline.rs             ← Code
+    │   ├── pipeline_tests.rs       ← Tests unitaires
+    │   │
+    │   ├── resource_manager.rs     ← Code
+    │   └── resource_manager_tests.rs ← Tests unitaires
+    │
+    └── renderer/
+        ├── command_list.rs
+        └── command_list_tests.rs
+```
+
+**Déclaration dans chaque fichier** :
+```rust
+// À la fin de texture.rs
+#[cfg(test)]
+#[path = "texture_tests.rs"]
+mod tests;
+```
+
+#### Pour le Backend Vulkan (galaxy_3d_engine_renderer_vulkan)
+
+```
+galaxy_3d_engine_renderer_vulkan/
+└── src/
+    ├── vulkan_command_list.rs
+    ├── vulkan_command_list_tests.rs  ← Tests avec GPU (#[ignore])
+    │
+    ├── vulkan_buffer.rs
+    ├── vulkan_buffer_tests.rs        ← Tests avec GPU (#[ignore])
+    │
+    └── vulkan_texture.rs
+        └── vulkan_texture_tests.rs   ← Tests avec GPU (#[ignore])
+```
+
+**Tous les tests backend nécessitent GPU** :
+```rust
+// vulkan_command_list_tests.rs
+use super::*;
+
+#[test]
+#[ignore]  // Nécessite GPU réel
+fn test_bind_index_buffer() {
+    let (device, ctx) = create_test_context();
+    // Test avec Vulkan réel...
+}
+```
+
+### Types de Tests
+
+#### Tests Sans GPU (Moteur)
+
+**Ce qui peut être testé** :
+- ✅ Structures de données (TextureDesc, MeshDesc, PipelineDesc)
+- ✅ Validations de paramètres
+- ✅ Calculs mathématiques
+- ✅ Logique du ResourceManager
+- ✅ State tracking
+- ✅ Conversions de types
+
+**Exemple** :
+```rust
+#[test]
+fn test_submesh_offsets() {
+    let submesh = SubMeshDesc {
+        vertex_offset: 4,
+        vertex_count: 4,
+        index_offset: 6,
+        index_count: 6,
+        topology: PrimitiveTopology::TriangleList,
+    };
+
+    assert_eq!(submesh.vertex_offset, 4);
+    assert_eq!(submesh.index_count, 6);
+}
+```
+
+#### Tests Avec GPU (Backend)
+
+**Ce qui nécessite GPU** :
+- Création de buffers Vulkan
+- Création de textures Vulkan
+- Command list recording/submission
+- Validation layers Vulkan
+
+**Tous marqués avec `#[ignore]`** :
+```rust
+#[test]
+#[ignore]  // Lancé avec: cargo test -- --ignored
+fn test_vulkan_buffer_creation() {
+    let (device, ctx) = create_test_context();
+    let buffer = Buffer::new(&ctx, /* ... */).unwrap();
+    assert_ne!(buffer.buffer, vk::Buffer::null());
+}
+```
+
+### Commandes Cargo Test
+
+```bash
+# Tests normaux (sans GPU)
+cargo test
+
+# Tests d'un module spécifique
+cargo test resource
+
+# Tests d'une fonction spécifique
+cargo test test_texture_creation
+
+# Tests avec GPU uniquement
+cargo test -- --ignored
+
+# Tous les tests (avec et sans GPU)
+cargo test -- --include-ignored
+
+# Afficher les println! même si le test passe
+cargo test -- --show-output
+
+# Tests en séquentiel (important pour singletons)
+cargo test -- --test-threads=1
+```
+
+### Macros d'Assertion
+
+```rust
+// Égalité
+assert_eq!(2 + 2, 4);
+assert_ne!(2 + 2, 5);
+
+// Booléen
+assert!(true);
+assert!(!false, "Message si échec");
+
+// Résultats
+let result: Result<i32, &str> = Ok(42);
+assert!(result.is_ok());
+assert_eq!(result.unwrap(), 42);
+
+// Option
+let value: Option<i32> = Some(42);
+assert!(value.is_some());
+assert_eq!(value.unwrap(), 42);
+
+// Panic attendu
+#[test]
+#[should_panic(expected = "Width must be > 0")]
+fn test_invalid_dimensions() {
+    let desc = TextureDesc { width: 0, /* ... */ };
+}
+```
+
+### Pyramide de Tests
+
+```
+        /\
+       /  \      ← Tests Manuels (rares)
+      /----\
+     / E2E  \    ← Tests GPU (#[ignore]) (quelques-uns)
+    /--------\
+   /  INTÉG.  \  ← Tests d'Intégration (dizaines)
+  /------------\
+ /   UNITAIRES  \ ← Tests Unitaires (centaines)
+/________________\
+```
+
+**Pour Galaxy 3D Engine** :
+1. **70-80%** : Tests unitaires (moteur, sans GPU)
+2. **15-20%** : Tests d'intégration (workflows)
+3. **5-10%** : Tests GPU (backend Vulkan, avec `#[ignore]`)
+
+### Crates Utiles
+
+```toml
+[dev-dependencies]
+serial_test = "3.0"   # Tests séquentiels (pour singletons)
+```
+
+**Exemple avec `serial_test`** :
+```rust
+use serial_test::serial;
+
+#[test]
+#[serial]  // Force l'exécution séquentielle
+fn test_engine_singleton_1() {
+    Engine::reset_for_testing();
+    Engine::initialize().unwrap();
+    // Test...
+    Engine::shutdown();
+}
+
+#[test]
+#[serial]  // Ne s'exécute PAS en parallèle
+fn test_engine_singleton_2() {
+    Engine::reset_for_testing();
+    Engine::initialize().unwrap();
+    // Test...
+    Engine::shutdown();
+}
+```
+
+### Décision : Option 1 pour le Backend
+
+**Choix retenu** : Tests avec GPU uniquement pour le backend Vulkan
+
+**Raisons** :
+- Backend petit (13 fichiers)
+- Peu de logique métier (surtout appels Vulkan)
+- Refactorer pour tests = over-engineering
+- Tests réels avec GPU = validation complète
+
+**Garantie** :
+- ✅ **ZÉRO refactoring** du code de production
+- ✅ Seul ajout : 3 lignes `#[cfg(test)]` à la fin de chaque fichier
+- ✅ Logique métier **inchangée**
+
+---
+
 ## 📚 References
 
 - [Vulkan Tutorial](https://vulkan-tutorial.com/)
