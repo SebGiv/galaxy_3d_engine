@@ -21,6 +21,7 @@ pub struct Buffer {
     /// GPU memory allocation
     pub(crate) allocation: Option<Allocation>,
     /// Buffer size
+    #[allow(dead_code)]
     pub(crate) size: u64,
 }
 

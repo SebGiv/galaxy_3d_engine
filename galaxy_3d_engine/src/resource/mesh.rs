@@ -418,6 +418,7 @@ impl Mesh {
     }
 
     /// Get mutable mesh entry by id (internal)
+    #[allow(dead_code)]
     fn mesh_entry_mut(&mut self, id: usize) -> Option<&mut MeshEntry> {
         self.mesh_entries.get_mut(id)
     }

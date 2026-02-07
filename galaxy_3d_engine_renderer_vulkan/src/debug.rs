@@ -259,7 +259,7 @@ unsafe fn vulkan_debug_callback_inner(
     }
 
     // Determine severity level and color, increment statistics
-    let (severity_str, severity_colored) =
+    let (_severity_str, _severity_colored) =
         if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
             if config.enable_stats {
                 VALIDATION_STATS.increment_error();

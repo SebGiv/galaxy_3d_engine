@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! GPU test utilities - Shared Vulkan renderer for integration tests
 //!
 //! This module provides a global VulkanRenderer instance shared across all GPU tests.

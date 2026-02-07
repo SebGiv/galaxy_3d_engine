@@ -2,7 +2,7 @@
 
 use galaxy_3d_engine::galaxy3d::{Result, Error};
 use galaxy_3d_engine::galaxy3d::render::{Swapchain as RendererSwapchain, RenderTarget as RendererRenderTarget, TextureFormat};
-use galaxy_3d_engine::{engine_error, engine_info};
+use galaxy_3d_engine::engine_error;
 use ash::vk;
 use std::sync::Arc;
 
@@ -69,8 +69,8 @@ impl Swapchain {
         surface: vk::SurfaceKHR,
         surface_loader: ash::khr::surface::Instance,
         present_queue: vk::Queue,
-        width: u32,
-        height: u32,
+        _width: u32,
+        _height: u32,
     ) -> Result<Self> {
         unsafe {
             // Query surface capabilities

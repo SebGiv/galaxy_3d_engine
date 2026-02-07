@@ -440,7 +440,7 @@ impl Renderer for MockRenderer {
 
     fn create_descriptor_set_for_texture(
         &self,
-        texture: &Arc<dyn Texture>,
+        _texture: &Arc<dyn Texture>,
     ) -> Result<Arc<dyn DescriptorSet>> {
         Ok(Arc::new(MockDescriptorSet::new(format!("descriptor_set_for_texture"))))
     }

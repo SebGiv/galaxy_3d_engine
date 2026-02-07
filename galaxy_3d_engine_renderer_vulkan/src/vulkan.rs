@@ -1,8 +1,7 @@
 /// VulkanRenderer - Vulkan implementation of Renderer trait
 
-use galaxy_3d_engine::galaxy3d::{self, Renderer, Result, Error};
+use galaxy_3d_engine::galaxy3d::{Renderer, Result, Error};
 use galaxy_3d_engine::galaxy3d::render::{
-    self as render_trait,
     CommandList as RendererCommandList, RenderTarget as RendererRenderTarget,
     RenderPass as RendererRenderPass, Swapchain as RendererSwapchain,
     Texture as RendererTexture, Buffer as RendererBuffer,
@@ -13,7 +12,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
     RendererStats, VertexInputRate,
-    Config, DebugSeverity, DebugOutput, DebugMessageFilter, ValidationStats, TextureUsage,
+    Config, DebugSeverity, TextureUsage,
     MipmapMode, ManualMipmapData,
 };
 use ash::vk;

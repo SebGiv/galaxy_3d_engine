@@ -13,6 +13,7 @@ pub struct DescriptorSet {
     pub(crate) descriptor_set: vk::DescriptorSet,
 
     /// Vulkan device (for potential cleanup operations)
+    #[allow(dead_code)]
     pub(crate) device: ash::Device,
 }
 

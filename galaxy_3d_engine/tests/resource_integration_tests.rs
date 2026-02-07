@@ -52,7 +52,7 @@ fn test_integration_create_texture_with_vulkan() {
     };
 
     // Create texture
-    let texture = rm.create_texture("test_texture".to_string(), desc).unwrap();
+    let _texture = rm.create_texture("test_texture".to_string(), desc).unwrap();
 
     // Verify
     assert_eq!(rm.texture_count(), 1);
@@ -136,7 +136,7 @@ fn test_integration_create_mesh_with_vulkan() {
     };
 
     // Create mesh
-    let mesh = rm.create_mesh("test_mesh".to_string(), desc).unwrap();
+    let _mesh = rm.create_mesh("test_mesh".to_string(), desc).unwrap();
 
     // Verify
     assert_eq!(rm.mesh_count(), 1);
@@ -309,7 +309,7 @@ fn test_integration_mesh_with_multiple_lods() {
     };
 
     // Create mesh
-    let mesh = rm.create_mesh("lod_mesh".to_string(), desc).unwrap();
+    let _mesh = rm.create_mesh("lod_mesh".to_string(), desc).unwrap();
 
     // Verify mesh structure
     let mesh_ref = rm.mesh("lod_mesh").unwrap();
@@ -416,7 +416,7 @@ fn test_integration_mesh_with_multiple_submeshes() {
     };
 
     // Create mesh
-    let mesh = rm.create_mesh("character_mesh".to_string(), desc).unwrap();
+    let _mesh = rm.create_mesh("character_mesh".to_string(), desc).unwrap();
 
     // Verify mesh structure
     let mesh_ref = rm.mesh("character_mesh").unwrap();

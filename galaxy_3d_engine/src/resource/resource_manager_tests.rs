@@ -24,7 +24,7 @@ fn create_mock_renderer() -> Arc<Mutex<dyn crate::renderer::Renderer>> {
 /// Create a simple texture descriptor for testing
 fn create_test_texture_desc(
     renderer: Arc<Mutex<dyn crate::renderer::Renderer>>,
-   name: &str,
+   _name: &str,
     width: u32,
     height: u32,
 ) -> TextureDesc {
@@ -182,7 +182,7 @@ fn test_create_texture() {
     let renderer = create_mock_renderer();
 
     let desc = create_test_texture_desc(renderer.clone(), "test_texture", 256, 256);
-    let texture = rm.create_texture("test_texture".to_string(), desc).unwrap();
+    let _texture = rm.create_texture("test_texture".to_string(), desc).unwrap();
 
     assert_eq!(rm.texture_count(), 1);
     // texture has been created successfully (no direct width/height access)

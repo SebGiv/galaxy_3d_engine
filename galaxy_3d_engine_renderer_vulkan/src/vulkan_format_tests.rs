@@ -4,8 +4,6 @@
 //! Validates correct mapping between engine formats and Vulkan formats.
 
 #[cfg(test)]
-use super::VulkanRenderer;
-#[cfg(test)]
 use galaxy_3d_engine::galaxy3d::render::{BufferFormat, TextureFormat};
 #[cfg(test)]
 use ash::vk;
