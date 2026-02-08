@@ -9,7 +9,7 @@ use crate::renderer::{
     MipmapMode, TextureData, VertexLayout, VertexBinding, VertexAttribute,
     VertexInputRate,
 };
-use crate::resource::{AtlasRegion, AtlasRegionDesc, LayerDesc};
+use crate::resource::{AtlasRegion, AtlasRegionDesc, LayerDesc, PipelinePassDesc};
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
@@ -147,15 +147,17 @@ fn create_test_pipeline_desc(
         renderer,
         variants: vec![PipelineVariantDesc {
             name: name.to_string(),
-            pipeline: crate::renderer::PipelineDesc {
-                vertex_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("vert".to_string())),
-                fragment_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("frag".to_string())),
-                vertex_layout,
-                topology: PrimitiveTopology::TriangleList,
-                push_constant_ranges: vec![],
-                descriptor_set_layouts: vec![],
-                enable_blending: false,
-            },
+            passes: vec![PipelinePassDesc {
+                pipeline: crate::renderer::PipelineDesc {
+                    vertex_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("vert".to_string())),
+                    fragment_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("frag".to_string())),
+                    vertex_layout,
+                    topology: PrimitiveTopology::TriangleList,
+                    push_constant_ranges: vec![],
+                    descriptor_set_layouts: vec![],
+                    enable_blending: false,
+                },
+            }],
         }],
     }
 }
@@ -1005,27 +1007,29 @@ fn test_add_pipeline_variant() {
     // Add another variant
     let variant = PipelineVariantDesc {
         name: "wireframe".to_string(),
-        pipeline: crate::renderer::PipelineDesc {
-            vertex_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("vert".to_string())),
-            fragment_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("frag".to_string())),
-            vertex_layout: VertexLayout {
-                bindings: vec![VertexBinding {
-                    binding: 0,
-                    stride: 8,
-                    input_rate: VertexInputRate::Vertex,
-                }],
-                attributes: vec![VertexAttribute {
-                    location: 0,
-                    binding: 0,
-                    format: BufferFormat::R32G32_SFLOAT,
-                    offset: 0,
-                }],
+        passes: vec![PipelinePassDesc {
+            pipeline: crate::renderer::PipelineDesc {
+                vertex_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("vert".to_string())),
+                fragment_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("frag".to_string())),
+                vertex_layout: VertexLayout {
+                    bindings: vec![VertexBinding {
+                        binding: 0,
+                        stride: 8,
+                        input_rate: VertexInputRate::Vertex,
+                    }],
+                    attributes: vec![VertexAttribute {
+                        location: 0,
+                        binding: 0,
+                        format: BufferFormat::R32G32_SFLOAT,
+                        offset: 0,
+                    }],
+                },
+                topology: PrimitiveTopology::LineList,
+                push_constant_ranges: vec![],
+                descriptor_set_layouts: vec![],
+                enable_blending: false,
             },
-            topology: PrimitiveTopology::LineList,
-            push_constant_ranges: vec![],
-            descriptor_set_layouts: vec![],
-            enable_blending: false,
-        },
+        }],
     };
 
     let result = rm.add_pipeline_variant("pipeline", variant);
@@ -1042,18 +1046,20 @@ fn test_add_pipeline_variant_to_nonexistent_pipeline() {
 
     let variant = PipelineVariantDesc {
         name: "variant".to_string(),
-        pipeline: crate::renderer::PipelineDesc {
-            vertex_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("vert".to_string())),
-            fragment_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("frag".to_string())),
-            vertex_layout: VertexLayout {
-                bindings: vec![],
-                attributes: vec![],
+        passes: vec![PipelinePassDesc {
+            pipeline: crate::renderer::PipelineDesc {
+                vertex_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("vert".to_string())),
+                fragment_shader: Arc::new(crate::renderer::mock_renderer::MockShader::new("frag".to_string())),
+                vertex_layout: VertexLayout {
+                    bindings: vec![],
+                    attributes: vec![],
+                },
+                topology: PrimitiveTopology::TriangleList,
+                push_constant_ranges: vec![],
+                descriptor_set_layouts: vec![],
+                enable_blending: false,
             },
-            topology: PrimitiveTopology::TriangleList,
-            push_constant_ranges: vec![],
-            descriptor_set_layouts: vec![],
-            enable_blending: false,
-        },
+        }],
     };
 
     let result = rm.add_pipeline_variant("nonexistent", variant);

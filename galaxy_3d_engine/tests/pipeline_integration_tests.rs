@@ -8,7 +8,7 @@
 mod gpu_test_utils;
 
 use galaxy_3d_engine::galaxy3d::Renderer;
-use galaxy_3d_engine::galaxy3d::resource::{ResourceManager, PipelineDesc, PipelineVariantDesc};
+use galaxy_3d_engine::galaxy3d::resource::{ResourceManager, PipelineDesc, PipelineVariantDesc, PipelinePassDesc};
 use galaxy_3d_engine::galaxy3d::render::{
     PipelineDesc as RenderPipelineDesc, VertexLayout, VertexBinding, VertexAttribute,
     BufferFormat, VertexInputRate, PrimitiveTopology, ShaderDesc, ShaderStage,
@@ -60,6 +60,30 @@ fn create_simple_vertex_layout() -> VertexLayout {
     }
 }
 
+/// Helper to create a single-pass PipelineVariantDesc
+fn create_variant(
+    name: &str,
+    vertex_shader: std::sync::Arc<dyn galaxy_3d_engine::galaxy3d::render::Shader>,
+    fragment_shader: std::sync::Arc<dyn galaxy_3d_engine::galaxy3d::render::Shader>,
+    topology: PrimitiveTopology,
+    enable_blending: bool,
+) -> PipelineVariantDesc {
+    PipelineVariantDesc {
+        name: name.to_string(),
+        passes: vec![PipelinePassDesc {
+            pipeline: RenderPipelineDesc {
+                vertex_shader,
+                fragment_shader,
+                vertex_layout: create_simple_vertex_layout(),
+                topology,
+                push_constant_ranges: vec![],
+                descriptor_set_layouts: vec![],
+                enable_blending,
+            },
+        }],
+    }
+}
+
 // ============================================================================
 // PIPELINE CREATION TESTS
 // ============================================================================
@@ -100,18 +124,7 @@ fn test_integration_create_pipeline_single_variant() {
     let desc = PipelineDesc {
         renderer: renderer_arc.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "default".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: false,
-                },
-            }
+            create_variant("default", vertex_shader, fragment_shader, PrimitiveTopology::TriangleList, false),
         ],
     };
 
@@ -126,6 +139,7 @@ fn test_integration_create_pipeline_single_variant() {
         let pipeline = rm.pipeline("test_pipeline").unwrap();
         assert_eq!(pipeline.variant_count(), 1);
         assert_eq!(pipeline.variant(0).unwrap().name(), "default");
+        assert_eq!(pipeline.variant(0).unwrap().pass_count(), 1);
     }
 }
 
@@ -165,42 +179,9 @@ fn test_integration_create_pipeline_multiple_variants() {
     let desc = PipelineDesc {
         renderer: renderer_arc.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "static".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: false,
-                },
-            },
-            PipelineVariantDesc {
-                name: "animated".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: false,
-                },
-            },
-            PipelineVariantDesc {
-                name: "transparent".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: true, // Different blending
-                },
-            },
+            create_variant("static", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, false),
+            create_variant("animated", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, false),
+            create_variant("transparent", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, true),
         ],
     };
 
@@ -260,30 +241,8 @@ fn test_integration_pipeline_variant_selection() {
     let desc = PipelineDesc {
         renderer: renderer_arc.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "opaque".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: false,
-                },
-            },
-            PipelineVariantDesc {
-                name: "alpha".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: true,
-                },
-            },
+            create_variant("opaque", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, false),
+            create_variant("alpha", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, true),
         ],
     };
 
@@ -347,42 +306,9 @@ fn test_integration_pipeline_different_topologies() {
     let desc = PipelineDesc {
         renderer: renderer_arc.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "triangles".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: false,
-                },
-            },
-            PipelineVariantDesc {
-                name: "lines".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::LineList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: false,
-                },
-            },
-            PipelineVariantDesc {
-                name: "points".to_string(),
-                pipeline: RenderPipelineDesc {
-                    vertex_shader: vertex_shader.clone(),
-                    fragment_shader: fragment_shader.clone(),
-                    vertex_layout: create_simple_vertex_layout(),
-                    topology: PrimitiveTopology::PointList,
-                    push_constant_ranges: vec![],
-                    descriptor_set_layouts: vec![],
-                    enable_blending: false,
-                },
-            },
+            create_variant("triangles", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, false),
+            create_variant("lines", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::LineList, false),
+            create_variant("points", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::PointList, false),
         ],
     };
 

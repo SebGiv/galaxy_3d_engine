@@ -1,6 +1,6 @@
 //! Unit tests for Pipeline resource
 //!
-//! Tests Pipeline and PipelineVariant hierarchy without requiring GPU.
+//! Tests Pipeline, PipelineVariant, and PipelinePass hierarchy without requiring GPU.
 //! Uses MockRenderer for testing.
 
 #[cfg(test)]
@@ -13,7 +13,7 @@ use crate::renderer::{
 };
 #[cfg(test)]
 use crate::resource::{
-    Pipeline, PipelineDesc, PipelineVariantDesc,
+    Pipeline, PipelineDesc, PipelineVariantDesc, PipelinePassDesc,
 };
 
 // ============================================================================
@@ -71,22 +71,43 @@ fn create_mock_render_pipeline_desc() -> RenderPipelineDesc {
     }
 }
 
+/// Create a single-pass PipelineVariantDesc for convenience
+fn create_single_pass_variant(name: &str) -> PipelineVariantDesc {
+    PipelineVariantDesc {
+        name: name.to_string(),
+        passes: vec![
+            PipelinePassDesc {
+                pipeline: create_mock_render_pipeline_desc(),
+            }
+        ],
+    }
+}
+
+/// Create a multi-pass PipelineVariantDesc for convenience
+fn create_multi_pass_variant(name: &str, pass_count: usize) -> PipelineVariantDesc {
+    let passes = (0..pass_count)
+        .map(|_| PipelinePassDesc {
+            pipeline: create_mock_render_pipeline_desc(),
+        })
+        .collect();
+
+    PipelineVariantDesc {
+        name: name.to_string(),
+        passes,
+    }
+}
+
 // ============================================================================
 // PIPELINE CREATION TESTS
 // ============================================================================
 
 #[test]
-fn test_create_pipeline_single_variant() {
+fn test_create_pipeline_single_variant_single_pass() {
     let renderer = Arc::new(Mutex::new(MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
-        variants: vec![
-            PipelineVariantDesc {
-                name: "default".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            }
-        ],
+        variants: vec![create_single_pass_variant("default")],
     };
 
     let pipeline = Pipeline::from_desc(desc).unwrap();
@@ -94,6 +115,7 @@ fn test_create_pipeline_single_variant() {
     assert_eq!(pipeline.variant_count(), 1);
     assert!(pipeline.variant(0).is_some());
     assert_eq!(pipeline.variant(0).unwrap().name(), "default");
+    assert_eq!(pipeline.variant(0).unwrap().pass_count(), 1);
 }
 
 #[test]
@@ -103,18 +125,9 @@ fn test_create_pipeline_multiple_variants() {
     let desc = PipelineDesc {
         renderer: renderer.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "static".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
-            PipelineVariantDesc {
-                name: "animated".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
-            PipelineVariantDesc {
-                name: "transparent".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
+            create_single_pass_variant("static"),
+            create_single_pass_variant("animated"),
+            create_single_pass_variant("transparent"),
         ],
     };
 
@@ -124,6 +137,46 @@ fn test_create_pipeline_multiple_variants() {
     assert_eq!(pipeline.variant(0).unwrap().name(), "static");
     assert_eq!(pipeline.variant(1).unwrap().name(), "animated");
     assert_eq!(pipeline.variant(2).unwrap().name(), "transparent");
+}
+
+#[test]
+fn test_create_pipeline_multi_pass_variant() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![create_multi_pass_variant("toon_outline", 2)],
+    };
+
+    let pipeline = Pipeline::from_desc(desc).unwrap();
+
+    assert_eq!(pipeline.variant_count(), 1);
+    let variant = pipeline.variant(0).unwrap();
+    assert_eq!(variant.name(), "toon_outline");
+    assert_eq!(variant.pass_count(), 2);
+    assert!(variant.pass(0).is_some());
+    assert!(variant.pass(1).is_some());
+    assert!(variant.pass(2).is_none());
+}
+
+#[test]
+fn test_create_pipeline_mixed_pass_counts() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![
+            create_single_pass_variant("standard"),     // 1 pass
+            create_multi_pass_variant("toon", 2),       // 2 passes
+            create_multi_pass_variant("fur", 4),         // 4 passes
+        ],
+    };
+
+    let pipeline = Pipeline::from_desc(desc).unwrap();
+
+    assert_eq!(pipeline.variant(0).unwrap().pass_count(), 1);
+    assert_eq!(pipeline.variant(1).unwrap().pass_count(), 2);
+    assert_eq!(pipeline.variant(2).unwrap().pass_count(), 4);
 }
 
 // ============================================================================
@@ -137,14 +190,8 @@ fn test_create_pipeline_duplicate_variant_names_fails() {
     let desc = PipelineDesc {
         renderer: renderer.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "default".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
-            PipelineVariantDesc {
-                name: "default".to_string(), // DUPLICATE!
-                pipeline: create_mock_render_pipeline_desc(),
-            },
+            create_single_pass_variant("default"),
+            create_single_pass_variant("default"), // DUPLICATE!
         ],
     };
 
@@ -157,30 +204,65 @@ fn test_create_pipeline_duplicate_variant_names_fails() {
 }
 
 #[test]
-fn test_add_variant_duplicate_name_fails() {
+fn test_create_pipeline_empty_passes_fails() {
     let renderer = Arc::new(Mutex::new(MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
         variants: vec![
             PipelineVariantDesc {
-                name: "default".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
+                name: "empty".to_string(),
+                passes: vec![], // No passes!
             }
         ],
     };
 
+    let result = Pipeline::from_desc(desc);
+
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.to_string().contains("at least one pass"));
+    }
+}
+
+#[test]
+fn test_add_variant_duplicate_name_fails() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![create_single_pass_variant("default")],
+    };
+
     let mut pipeline = Pipeline::from_desc(desc).unwrap();
 
-    // Try to add variant with duplicate name
-    let result = pipeline.add_variant(PipelineVariantDesc {
-        name: "default".to_string(),
-        pipeline: create_mock_render_pipeline_desc(),
-    });
+    let result = pipeline.add_variant(create_single_pass_variant("default"));
 
     assert!(result.is_err());
     if let Err(e) = result {
         assert!(e.to_string().contains("already exists"));
+    }
+}
+
+#[test]
+fn test_add_variant_empty_passes_fails() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![create_single_pass_variant("default")],
+    };
+
+    let mut pipeline = Pipeline::from_desc(desc).unwrap();
+
+    let result = pipeline.add_variant(PipelineVariantDesc {
+        name: "empty".to_string(),
+        passes: vec![],
+    });
+
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.to_string().contains("at least one pass"));
     }
 }
 
@@ -195,14 +277,8 @@ fn test_variant_by_name_found() {
     let desc = PipelineDesc {
         renderer: renderer.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "alpha".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
-            PipelineVariantDesc {
-                name: "beta".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
+            create_single_pass_variant("alpha"),
+            create_single_pass_variant("beta"),
         ],
     };
 
@@ -219,12 +295,7 @@ fn test_variant_by_name_not_found() {
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
-        variants: vec![
-            PipelineVariantDesc {
-                name: "alpha".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            }
-        ],
+        variants: vec![create_single_pass_variant("alpha")],
     };
 
     let pipeline = Pipeline::from_desc(desc).unwrap();
@@ -240,14 +311,8 @@ fn test_variant_by_index_found() {
     let desc = PipelineDesc {
         renderer: renderer.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "first".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
-            PipelineVariantDesc {
-                name: "second".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
+            create_single_pass_variant("first"),
+            create_single_pass_variant("second"),
         ],
     };
 
@@ -265,12 +330,7 @@ fn test_variant_by_index_out_of_bounds() {
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
-        variants: vec![
-            PipelineVariantDesc {
-                name: "only".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            }
-        ],
+        variants: vec![create_single_pass_variant("only")],
     };
 
     let pipeline = Pipeline::from_desc(desc).unwrap();
@@ -287,18 +347,9 @@ fn test_variant_index_from_name() {
     let desc = PipelineDesc {
         renderer: renderer.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "zero".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
-            PipelineVariantDesc {
-                name: "one".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
-            PipelineVariantDesc {
-                name: "two".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
+            create_single_pass_variant("zero"),
+            create_single_pass_variant("one"),
+            create_single_pass_variant("two"),
         ],
     };
 
@@ -308,6 +359,99 @@ fn test_variant_index_from_name() {
     assert_eq!(pipeline.variant_index("one"), Some(1));
     assert_eq!(pipeline.variant_index("two"), Some(2));
     assert_eq!(pipeline.variant_index("nonexistent"), None);
+}
+
+// ============================================================================
+// PASS ACCESS TESTS
+// ============================================================================
+
+#[test]
+fn test_pass_by_index() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![create_multi_pass_variant("toon", 3)],
+    };
+
+    let pipeline = Pipeline::from_desc(desc).unwrap();
+    let variant = pipeline.variant(0).unwrap();
+
+    assert_eq!(variant.pass_count(), 3);
+    assert!(variant.pass(0).is_some());
+    assert!(variant.pass(1).is_some());
+    assert!(variant.pass(2).is_some());
+    assert!(variant.pass(3).is_none());
+}
+
+#[test]
+fn test_pass_renderer_pipeline_getter() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![create_multi_pass_variant("toon", 2)],
+    };
+
+    let pipeline = Pipeline::from_desc(desc).unwrap();
+    let variant = pipeline.variant(0).unwrap();
+
+    let pass_0 = variant.pass(0).unwrap();
+    let pass_1 = variant.pass(1).unwrap();
+
+    // Both passes should have valid renderer pipelines
+    assert!(Arc::strong_count(pass_0.renderer_pipeline()) >= 1);
+    assert!(Arc::strong_count(pass_1.renderer_pipeline()) >= 1);
+
+    // Passes should have different renderer pipelines
+    assert!(!Arc::ptr_eq(pass_0.renderer_pipeline(), pass_1.renderer_pipeline()));
+}
+
+// ============================================================================
+// MAX PASS COUNT TESTS
+// ============================================================================
+
+#[test]
+fn test_max_pass_count_single_variant() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![create_multi_pass_variant("toon", 3)],
+    };
+
+    let pipeline = Pipeline::from_desc(desc).unwrap();
+    assert_eq!(pipeline.max_pass_count(), 3);
+}
+
+#[test]
+fn test_max_pass_count_mixed_variants() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![
+            create_single_pass_variant("standard"),     // 1 pass
+            create_multi_pass_variant("toon", 2),       // 2 passes
+            create_multi_pass_variant("fur", 4),        // 4 passes
+        ],
+    };
+
+    let pipeline = Pipeline::from_desc(desc).unwrap();
+    assert_eq!(pipeline.max_pass_count(), 4);
+}
+
+#[test]
+fn test_max_pass_count_empty_pipeline() {
+    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+
+    let desc = PipelineDesc {
+        renderer: renderer.clone(),
+        variants: vec![],
+    };
+
+    let pipeline = Pipeline::from_desc(desc).unwrap();
+    assert_eq!(pipeline.max_pass_count(), 0);
 }
 
 // ============================================================================
@@ -321,14 +465,8 @@ fn test_variant_names_case_sensitive() {
     let desc = PipelineDesc {
         renderer: renderer.clone(),
         variants: vec![
-            PipelineVariantDesc {
-                name: "Default".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            },
-            PipelineVariantDesc {
-                name: "default".to_string(), // Different case
-                pipeline: create_mock_render_pipeline_desc(),
-            },
+            create_single_pass_variant("Default"),
+            create_single_pass_variant("default"), // Different case
         ],
     };
 
@@ -345,72 +483,36 @@ fn test_add_variant_increases_count() {
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
-        variants: vec![
-            PipelineVariantDesc {
-                name: "initial".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            }
-        ],
+        variants: vec![create_single_pass_variant("initial")],
     };
 
     let mut pipeline = Pipeline::from_desc(desc).unwrap();
     assert_eq!(pipeline.variant_count(), 1);
 
-    let new_variant_idx = pipeline.add_variant(PipelineVariantDesc {
-        name: "added".to_string(),
-        pipeline: create_mock_render_pipeline_desc(),
-    }).unwrap();
+    let new_variant_idx = pipeline.add_variant(
+        create_single_pass_variant("added")
+    ).unwrap();
 
     assert_eq!(pipeline.variant_count(), 2);
     assert_eq!(new_variant_idx, 1);
     assert!(pipeline.variant_by_name("added").is_some());
 }
 
-// ============================================================================
-// VARIANT GETTER TESTS
-// ============================================================================
-
 #[test]
-fn test_variant_renderer_pipeline_getter() {
+fn test_add_multi_pass_variant() {
     let renderer = Arc::new(Mutex::new(MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
-        variants: vec![
-            PipelineVariantDesc {
-                name: "default".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            }
-        ],
+        variants: vec![create_single_pass_variant("standard")],
     };
 
-    let pipeline = Pipeline::from_desc(desc).unwrap();
+    let mut pipeline = Pipeline::from_desc(desc).unwrap();
+    assert_eq!(pipeline.max_pass_count(), 1);
 
-    let variant = pipeline.variant(0).unwrap();
+    pipeline.add_variant(create_multi_pass_variant("toon", 3)).unwrap();
 
-    // Test renderer_pipeline() getter
-    let renderer_pipeline = variant.renderer_pipeline();
-    assert!(Arc::strong_count(renderer_pipeline) >= 1);
-}
-
-#[test]
-fn test_variant_name_getter() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
-
-    let desc = PipelineDesc {
-        renderer: renderer.clone(),
-        variants: vec![
-            PipelineVariantDesc {
-                name: "test_variant".to_string(),
-                pipeline: create_mock_render_pipeline_desc(),
-            }
-        ],
-    };
-
-    let pipeline = Pipeline::from_desc(desc).unwrap();
-
-    let variant = pipeline.variant(0).unwrap();
-
-    // Test name() getter (already tested but verify explicitly)
-    assert_eq!(variant.name(), "test_variant");
+    assert_eq!(pipeline.variant_count(), 2);
+    assert_eq!(pipeline.max_pass_count(), 3);
+    assert_eq!(pipeline.variant_by_name("toon").unwrap().pass_count(), 3);
 }

@@ -18,6 +18,6 @@ pub use mesh::{
     MeshDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc,
 };
 pub use pipeline::{
-    Pipeline, PipelineVariant,
-    PipelineDesc, PipelineVariantDesc,
+    Pipeline, PipelineVariant, PipelinePass,
+    PipelineDesc, PipelineVariantDesc, PipelinePassDesc,
 };

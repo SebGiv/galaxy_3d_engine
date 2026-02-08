@@ -1,7 +1,9 @@
-/// Resource-level pipeline type with variant support.
+/// Resource-level pipeline type with variant and multi-pass support.
 ///
 /// A Pipeline groups related pipeline configurations under named variants.
-/// For example: "mesh" pipeline with variants "static", "animated", "transparent".
+/// Each variant contains one or more ordered rendering passes.
+/// For example: "toon_outline" pipeline with variant "static" containing
+/// pass 0 (toon base, cull back) and pass 1 (outline, cull front).
 ///
 /// Can be created empty and variants added later (user responsibility).
 
@@ -23,9 +25,14 @@ pub struct Pipeline {
     variant_names: HashMap<String, usize>,
 }
 
-/// A single pipeline variant
+/// A single pipeline variant with one or more rendering passes
 pub struct PipelineVariant {
     name: String,
+    passes: Vec<PipelinePass>,
+}
+
+/// A single rendering pass within a pipeline variant
+pub struct PipelinePass {
     renderer_pipeline: Arc<dyn RendererPipeline>,
 }
 
@@ -37,9 +44,14 @@ pub struct PipelineDesc {
     pub variants: Vec<PipelineVariantDesc>,
 }
 
-/// Pipeline variant descriptor
+/// Pipeline variant descriptor with one or more passes
 pub struct PipelineVariantDesc {
     pub name: String,
+    pub passes: Vec<PipelinePassDesc>,
+}
+
+/// Descriptor for a single rendering pass
+pub struct PipelinePassDesc {
     pub pipeline: RenderPipelineDesc,
 }
 
@@ -58,18 +70,31 @@ impl Pipeline {
             }
         }
 
+        // ========== VALIDATION 2: Each variant must have at least one pass ==========
+        for variant_desc in &desc.variants {
+            if variant_desc.passes.is_empty() {
+                return Err(Error::BackendError(format!(
+                    "Variant '{}' must have at least one pass", variant_desc.name
+                )));
+            }
+        }
+
         // ========== CREATE VARIANTS ==========
         let mut variants = Vec::new();
         let mut variant_names = HashMap::new();
 
         for (vec_index, variant_desc) in desc.variants.into_iter().enumerate() {
-            // Create GPU pipeline
-            let renderer_pipeline = desc.renderer.lock().unwrap()
-                .create_pipeline(variant_desc.pipeline)?;
+            // Create GPU pipelines for each pass
+            let mut passes = Vec::new();
+            for pass_desc in variant_desc.passes {
+                let renderer_pipeline = desc.renderer.lock().unwrap()
+                    .create_pipeline(pass_desc.pipeline)?;
+                passes.push(PipelinePass { renderer_pipeline });
+            }
 
             let variant = PipelineVariant {
                 name: variant_desc.name.clone(),
-                renderer_pipeline,
+                passes,
             };
 
             variants.push(variant);
@@ -106,11 +131,16 @@ impl Pipeline {
         self.variants.len()
     }
 
+    /// Get maximum pass count across all variants
+    pub fn max_pass_count(&self) -> usize {
+        self.variants.iter().map(|v| v.passes.len()).max().unwrap_or(0)
+    }
+
     // ===== MODIFICATION =====
 
     /// Add a new variant
     ///
-    /// Uses the stored renderer to create the GPU pipeline.
+    /// Uses the stored renderer to create GPU pipelines for each pass.
     pub fn add_variant(&mut self, desc: PipelineVariantDesc) -> Result<u32> {
         // Check for duplicate name
         if self.variant_names.contains_key(&desc.name) {
@@ -119,13 +149,24 @@ impl Pipeline {
             )));
         }
 
-        // Create GPU pipeline using stored renderer
-        let renderer_pipeline = self.renderer.lock().unwrap()
-            .create_pipeline(desc.pipeline)?;
+        // Validate at least one pass
+        if desc.passes.is_empty() {
+            return Err(Error::BackendError(format!(
+                "Variant '{}' must have at least one pass", desc.name
+            )));
+        }
+
+        // Create GPU pipelines for each pass
+        let mut passes = Vec::new();
+        for pass_desc in desc.passes {
+            let renderer_pipeline = self.renderer.lock().unwrap()
+                .create_pipeline(pass_desc.pipeline)?;
+            passes.push(PipelinePass { renderer_pipeline });
+        }
 
         let variant = PipelineVariant {
             name: desc.name.clone(),
-            renderer_pipeline,
+            passes,
         };
 
         let vec_index = self.variants.len();
@@ -144,6 +185,20 @@ impl PipelineVariant {
         &self.name
     }
 
+    /// Get number of rendering passes
+    pub fn pass_count(&self) -> usize {
+        self.passes.len()
+    }
+
+    /// Get pass by index
+    pub fn pass(&self, index: u32) -> Option<&PipelinePass> {
+        self.passes.get(index as usize)
+    }
+}
+
+// ===== PIPELINE PASS IMPLEMENTATION =====
+
+impl PipelinePass {
     /// Get the underlying renderer pipeline
     pub fn renderer_pipeline(&self) -> &Arc<dyn RendererPipeline> {
         &self.renderer_pipeline
