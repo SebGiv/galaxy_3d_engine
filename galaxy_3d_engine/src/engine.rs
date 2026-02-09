@@ -44,26 +44,6 @@ impl EngineState {
 ///
 /// Manages the lifecycle of all engine subsystems (renderer, resource manager, etc.)
 /// using a singleton pattern with thread-safe access.
-///
-/// # Example
-///
-/// ```no_run
-/// use galaxy_3d_engine::{Engine, Renderer};
-/// use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
-///
-/// // Initialize engine
-/// Engine::initialize()?;
-///
-/// // Create renderer singleton
-/// Engine::create_renderer(VulkanRenderer::new(&window, config)?)?;
-///
-/// // Access renderer globally
-/// let renderer = Renderer::instance()?;
-///
-/// // Cleanup
-/// Engine::shutdown();
-/// # Ok::<(), galaxy_3d_engine::Error>(())
-/// ```
 pub struct Engine;
 
 impl Engine {
@@ -136,17 +116,6 @@ impl Engine {
     /// - A renderer with the same name already exists
     /// - The renderers lock is poisoned
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use galaxy_3d_engine::Engine;
-    /// use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
-    ///
-    /// Engine::initialize()?;
-    /// let renderer = Engine::create_renderer("main", VulkanRenderer::new(&window, config)?)?;
-    /// // Use renderer directly...
-    /// # Ok::<(), galaxy_3d_engine::Error>(())
-    /// ```
     pub fn create_renderer<R: Renderer + 'static>(name: &str, renderer: R) -> Result<Arc<Mutex<dyn Renderer>>> {
         let arc_renderer: Arc<Mutex<dyn Renderer>> = Arc::new(Mutex::new(renderer));
 
@@ -195,16 +164,6 @@ impl Engine {
     /// - The engine is not initialized
     /// - No renderer with the given name exists
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use galaxy_3d_engine::Engine;
-    ///
-    /// let renderer = Engine::renderer("main")?;
-    /// let renderer_guard = renderer.lock().unwrap();
-    /// // Use renderer_guard...
-    /// # Ok::<(), galaxy_3d_engine::Error>(())
-    /// ```
     pub fn renderer(name: &str) -> Result<Arc<Mutex<dyn Renderer>>> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
@@ -235,14 +194,6 @@ impl Engine {
     ///
     /// Returns an error if the engine is not initialized
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use galaxy_3d_engine::Engine;
-    ///
-    /// Engine::destroy_renderer("main")?;
-    /// # Ok::<(), galaxy_3d_engine::Error>(())
-    /// ```
     pub fn destroy_renderer(name: &str) -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
@@ -289,15 +240,6 @@ impl Engine {
     /// - The engine is not initialized
     /// - A resource manager already exists
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use galaxy_3d_engine::galaxy3d::Engine;
-    ///
-    /// Engine::initialize()?;
-    /// Engine::create_resource_manager()?;
-    /// # Ok::<(), galaxy_3d_engine::galaxy3d::Error>(())
-    /// ```
     pub fn create_resource_manager() -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
@@ -336,16 +278,6 @@ impl Engine {
     /// - The engine is not initialized
     /// - The resource manager has not been created
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use galaxy_3d_engine::galaxy3d::Engine;
-    ///
-    /// let rm = Engine::resource_manager()?;
-    /// let rm_guard = rm.lock().unwrap();
-    /// // Use rm_guard...
-    /// # Ok::<(), galaxy_3d_engine::galaxy3d::Error>(())
-    /// ```
     pub fn resource_manager() -> Result<Arc<Mutex<ResourceManager>>> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
@@ -371,14 +303,6 @@ impl Engine {
     ///
     /// Returns an error if the engine is not initialized
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use galaxy_3d_engine::galaxy3d::Engine;
-    ///
-    /// Engine::destroy_resource_manager()?;
-    /// # Ok::<(), galaxy_3d_engine::galaxy3d::Error>(())
-    /// ```
     pub fn destroy_resource_manager() -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
@@ -420,20 +344,6 @@ impl Engine {
     ///
     /// * `logger` - Any type implementing the Logger trait
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use galaxy_3d_engine::galaxy3d::{Engine, log::{Logger, LogEntry}};
-    ///
-    /// struct FileLogger;
-    /// impl Logger for FileLogger {
-    ///     fn log(&self, entry: &LogEntry) {
-    ///         // Write to file...
-    ///     }
-    /// }
-    ///
-    /// Engine::set_logger(FileLogger);
-    /// ```
     pub fn set_logger<L: Logger + 'static>(logger: L) {
         let logger_lock = LOGGER.get_or_init(|| RwLock::new(Box::new(DefaultLogger)));
         if let Ok(mut lock) = logger_lock.write() {
@@ -443,13 +353,6 @@ impl Engine {
 
     /// Reset logger to default (DefaultLogger)
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use galaxy_3d_engine::galaxy3d::Engine;
-    ///
-    /// Engine::reset_logger();
-    /// ```
     pub fn reset_logger() {
         let logger_lock = LOGGER.get_or_init(|| RwLock::new(Box::new(DefaultLogger)));
         if let Ok(mut lock) = logger_lock.write() {

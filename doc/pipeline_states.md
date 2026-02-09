@@ -16,9 +16,13 @@
 5. [Stencil State (Masque)](#5-stencil-state-masque)
 6. [Color Blend State (Mélange de couleurs)](#6-color-blend-state-mélange-de-couleurs)
 7. [Multisample State (Anti-aliasing)](#7-multisample-state-anti-aliasing)
-8. [Récapitulatif : paramètres d'une passe de pipeline](#8-récapitulatif--paramètres-dune-passe-de-pipeline)
-9. [Ce qui existe déjà dans Galaxy3D](#9-ce-qui-existe-déjà-dans-galaxy3d)
-10. [Priorité d'implémentation](#10-priorité-dimplémentation)
+8. [États Fixes vs Dynamiques](#8-états-fixes-vs-dynamiques)
+9. [Récapitulatif : paramètres d'une passe de pipeline](#9-récapitulatif--paramètres-dune-passe-de-pipeline)
+10. [Paramètres complets d'un pipeline Vulkan](#10-paramètres-complets-dun-pipeline-vulkan)
+11. [Ce qui existe déjà dans Galaxy3D](#11-ce-qui-existe-déjà-dans-galaxy3d)
+12. [Proposition d'implémentation pour Galaxy3D](#12-proposition-dimplémentation-pour-galaxy3d)
+13. [Approche progressive d'implémentation](#13-approche-progressive-dimplémentation)
+14. [Priorité d'implémentation des états](#14-priorité-dimplémentation-des-états)
 
 ---
 
@@ -666,7 +670,150 @@ Sans alpha to coverage :        Avec alpha to coverage :
 
 ---
 
-## 8. Récapitulatif : paramètres d'une passe de pipeline
+## 8. États Fixes vs Dynamiques
+
+### Le principe fondamental
+
+Quand tu crées un pipeline GPU, **tous les états sont compilés** en un seul objet
+binaire optimisé par le driver. Après création, tu ne peux plus rien changer. C'est
+comme graver un CD : une fois gravé, c'est fini.
+
+```
+Pipeline A (compilé) :
+  ├── Vertex Shader : model_vert.spv
+  ├── Fragment Shader : model_frag.spv
+  ├── Depth Test : ON
+  ├── Cull Mode : Back
+  └── Blend : OFF
+
+  → Objet binaire figé. Impossible de modifier le depth test.
+
+Si tu veux le même pipeline SANS depth test :
+  → Tu dois créer un Pipeline B distinct.
+```
+
+**Pourquoi ?** Pour la performance. Le GPU a besoin de savoir à l'avance exactement
+quelle configuration utiliser. En compilant tout en un bloc, le driver peut pré-calculer
+le chemin optimal dans le hardware.
+
+### L'exception : les Dynamic States
+
+Vulkan permet de déclarer certains paramètres comme **dynamiques** à la création du
+pipeline. Ces paramètres ne sont pas compilés — ils sont définis au moment du rendu
+par des commandes.
+
+```
+Création du pipeline :
+  ├── cullMode : Back                    ← FIXE (compilé, optimisé)
+  ├── depthTestEnable : true             ← FIXE (compilé, optimisé)
+  ├── depthBias : ???                    ← DYNAMIQUE (défini au rendu)
+  ├── viewport : ???                     ← DYNAMIQUE (défini au rendu)
+  └── dynamicStates : [Viewport, DepthBias]
+
+Au moment du rendu :
+  cmd.set_viewport(...)      ← Obligatoire, pas de valeur par défaut
+  cmd.set_depth_bias(2.0, 0.0, 1.5)  ← Obligatoire aussi
+```
+
+### Fixe vs Dynamique : le compromis
+
+| | Fixe | Dynamique |
+|---|------|-----------|
+| **Performance** | Micro-optimisé par le driver | Légèrement moins optimisé |
+| **Flexibilité** | Changer = recompiler un pipeline | Changer = une simple commande |
+| **Nombre de pipelines** | Plus de combinaisons = plus de pipelines | Moins de pipelines nécessaires |
+
+Le vrai coût n'est pas la micro-optimisation, c'est le **changement de pipeline** entre
+deux draw calls. Si rendre un paramètre dynamique permet d'utiliser 1 pipeline au lieu
+de 5, on gagne plus qu'on ne perd.
+
+```
+Stratégie A (tout fixe) :
+  Draw objet 1 → Pipeline A (cull=Back, depth=ON)
+  Draw objet 2 → Pipeline B (cull=Back, depth=OFF)    ← changement !
+  Draw objet 3 → Pipeline A                           ← changement !
+  = 2 changements de pipeline (coûteux)
+
+Stratégie B (depth dynamique) :
+  Draw objet 1 → Pipeline X + cmd.set(depth=ON)
+  Draw objet 2 → cmd.set(depth=OFF)                   ← simple commande
+  Draw objet 3 → cmd.set(depth=ON)                    ← simple commande
+  = 0 changement de pipeline
+```
+
+### Dynamic States disponibles en Vulkan
+
+#### Vulkan 1.0 (disponibles partout)
+
+| Dynamic State | Commande | Utilité |
+|--------------|----------|---------|
+| Viewport | `set_viewport` | Zone de rendu (quasi obligatoire) |
+| Scissor | `set_scissor` | Rectangle de clipping (quasi obligatoire) |
+| LineWidth | `set_line_width` | Épaisseur des lignes |
+| DepthBias | `set_depth_bias` | Valeurs du bias (constant, slope, clamp) |
+| BlendConstants | `set_blend_constants` | Couleur pour ConstantColor blend factor |
+| DepthBounds | `set_depth_bounds` | Min/max du depth bounds test |
+| StencilCompareMask | `set_stencil_compare_mask` | Masque de comparaison stencil |
+| StencilWriteMask | `set_stencil_write_mask` | Masque d'écriture stencil |
+| StencilReference | `set_stencil_reference` | Valeur de référence stencil |
+
+#### Vulkan 1.3 (nécessite Vulkan 1.3)
+
+| Dynamic State | Commande | Utilité |
+|--------------|----------|---------|
+| CullMode | `set_cull_mode` | Changer le culling sans recompiler |
+| FrontFace | `set_front_face` | Changer le sens de la face avant |
+| PrimitiveTopology | `set_primitive_topology` | Changer triangle/line/point |
+| DepthTestEnable | `set_depth_test_enable` | Activer/désactiver le depth test |
+| DepthWriteEnable | `set_depth_write_enable` | Activer/désactiver le depth write |
+| DepthCompareOp | `set_depth_compare_op` | Changer l'opérateur de comparaison |
+| StencilTestEnable | `set_stencil_test_enable` | Activer/désactiver le stencil |
+| StencilOp | `set_stencil_op` | Changer les opérations stencil |
+| RasterizerDiscardEnable | `set_rasterizer_discard` | Skip la rasterization |
+| DepthBiasEnable | `set_depth_bias_enable` | Activer/désactiver le depth bias |
+
+#### Extensions récentes (VK_EXT_extended_dynamic_state3)
+
+| Dynamic State | Utilité |
+|--------------|---------|
+| PolygonMode | Fill/Line/Point dynamique |
+| RasterizationSamples | Sample count MSAA dynamique |
+| ColorBlendEnable | Blending on/off dynamique |
+| ColorBlendEquation | Factors + op dynamiques |
+| ColorWriteMask | Masque R/G/B/A dynamique |
+| AlphaToCoverageEnable | Alpha to coverage dynamique |
+
+### Résumé : ce qui est toujours fixe, ce qui peut être dynamique
+
+| Catégorie | Toujours FIXE | Dynamique possible |
+|-----------|--------------|-------------------|
+| **Shaders** | Toujours fixe | Jamais dynamique |
+| **Pipeline Layout** | Toujours fixe | Jamais dynamique |
+| **Render Pass** | Toujours fixe | Jamais dynamique |
+| **Vertex Input** | Par défaut fixe | Dynamique (extensions récentes) |
+| **Viewport/Scissor** | Par défaut fixe | Dynamique depuis Vulkan 1.0 |
+| **Rasterization** | Par défaut fixe | Tout dynamique (Vulkan 1.3+) |
+| **Depth/Stencil** | Par défaut fixe | Tout dynamique (Vulkan 1.3) |
+| **Color Blend** | Par défaut fixe | Tout dynamique (extensions récentes) |
+| **Multisample** | Par défaut fixe | Tout dynamique (extensions récentes) |
+
+Avec les extensions les plus récentes, quasi tout peut être dynamique sauf les shaders,
+le pipeline layout et le render pass. Mais en pratique, la plupart des moteurs ne
+rendent dynamiques que viewport, scissor, et quelques paramètres ciblés.
+
+### Note sur le depth bias
+
+Le depth bias a une particularité : on peut séparer **l'activation** et **les valeurs**.
+
+- `depth_bias_enable` (ON/OFF) → fixe dans le pipeline (ou dynamique en Vulkan 1.3)
+- `constant_factor`, `slope_factor`, `clamp` → dynamiques depuis Vulkan 1.0
+
+Cela permet de créer un seul pipeline avec depth bias activé, et d'ajuster les valeurs
+au moment du rendu selon la scène (distance de la lumière, taille de la shadow map...).
+
+---
+
+## 9. Récapitulatif : paramètres d'une passe de pipeline
 
 Voici **tous les paramètres** qu'une passe (`PipelinePassDesc`) pourrait contenir,
 organisés par bloc :
@@ -721,7 +868,89 @@ PipelinePassDesc
 
 ---
 
-## 9. Ce qui existe déjà dans Galaxy3D
+## 10. Paramètres complets d'un pipeline Vulkan
+
+Liste exhaustive de **tous les paramètres fixes** d'un pipeline graphique Vulkan :
+
+### Input Assembly (existant dans Galaxy3D)
+
+| Paramètre | Valeurs |
+|-----------|---------|
+| `topology` | PointList, LineList, LineStrip, TriangleList, TriangleStrip, TriangleFan, PatchList |
+| `primitiveRestartEnable` | true / false |
+
+### Vertex Input (existant dans Galaxy3D)
+
+| Paramètre | Description |
+|-----------|-------------|
+| `vertexBindingDescriptions` | Liste des bindings (stride, input rate) |
+| `vertexAttributeDescriptions` | Liste des attributs (location, format, offset) |
+
+### Rasterization
+
+| Paramètre | Valeurs | Défaut recommandé |
+|-----------|---------|-------------------|
+| `cullMode` | None, Front, Back, FrontAndBack | Back |
+| `frontFace` | CounterClockwise, Clockwise | CounterClockwise |
+| `polygonMode` | Fill, Line, Point | Fill |
+| `depthBiasEnable` | true / false | false |
+| `depthBiasConstantFactor` | f32 | 0.0 |
+| `depthBiasClamp` | f32 | 0.0 |
+| `depthBiasSlopeFactor` | f32 | 0.0 |
+| `lineWidth` | f32 | 1.0 |
+| `depthClampEnable` | true / false | false |
+| `rasterizerDiscardEnable` | true / false | false |
+
+### Depth/Stencil
+
+| Paramètre | Valeurs | Défaut recommandé |
+|-----------|---------|-------------------|
+| `depthTestEnable` | true / false | true |
+| `depthWriteEnable` | true / false | true |
+| `depthCompareOp` | Never, Less, Equal, LessOrEqual, Greater, NotEqual, GreaterOrEqual, Always | Less |
+| `depthBoundsTestEnable` | true / false | false |
+| `stencilTestEnable` | true / false | false |
+| `front/back.failOp` | Keep, Zero, Replace, IncrementAndClamp, DecrementAndClamp, Invert, IncrementAndWrap, DecrementAndWrap | Keep |
+| `front/back.passOp` | (idem) | Keep |
+| `front/back.depthFailOp` | (idem) | Keep |
+| `front/back.compareOp` | (comme depthCompareOp) | Always |
+| `front/back.compareMask` | u32 | 0xFF |
+| `front/back.writeMask` | u32 | 0xFF |
+| `front/back.reference` | u32 | 0 |
+
+### Color Blend (par attachment)
+
+| Paramètre | Valeurs | Défaut recommandé |
+|-----------|---------|-------------------|
+| `blendEnable` | true / false | false |
+| `srcColorBlendFactor` | Zero, One, SrcColor, OneMinusSrcColor, DstColor, OneMinusDstColor, SrcAlpha, OneMinusSrcAlpha, DstAlpha, OneMinusDstAlpha, ConstantColor, OneMinusConstantColor, SrcAlphaSaturate | SrcAlpha |
+| `dstColorBlendFactor` | (idem) | OneMinusSrcAlpha |
+| `colorBlendOp` | Add, Subtract, ReverseSubtract, Min, Max | Add |
+| `srcAlphaBlendFactor` | (idem) | One |
+| `dstAlphaBlendFactor` | (idem) | Zero |
+| `alphaBlendOp` | Add, Subtract, ReverseSubtract, Min, Max | Add |
+| `colorWriteMask` | combinaison R, G, B, A | RGBA |
+
+### Multisample
+
+| Paramètre | Valeurs | Défaut recommandé |
+|-----------|---------|-------------------|
+| `rasterizationSamples` | 1, 2, 4, 8, 16, 32, 64 | 1 |
+| `sampleShadingEnable` | true / false | false |
+| `alphaToCoverageEnable` | true / false | false |
+| `alphaToOneEnable` | true / false | false |
+
+### Toujours fixes (jamais dynamiques)
+
+| Paramètre | Description |
+|-----------|-------------|
+| Shaders | Vertex, Fragment (+ optionnels : Tessellation, Geometry) |
+| Pipeline Layout | Descriptor set layouts + push constant ranges |
+| Render Pass | Compatible render pass + subpass index |
+
+---
+
+## 11. Ce qui existe déjà dans Galaxy3D
 
 | Bloc | État | Détail |
 |------|------|--------|
@@ -734,9 +963,195 @@ PipelinePassDesc
 | Depth/Stencil | Absent | Pas du tout implémenté |
 | Multisample | Hardcodé | 1 sample, pas d'alpha to coverage |
 
+Le `render::PipelineDesc` actuel :
+
+```rust
+pub struct PipelineDesc {
+    pub vertex_shader: Arc<dyn Shader>,
+    pub fragment_shader: Arc<dyn Shader>,
+    pub vertex_layout: VertexLayout,
+    pub topology: PrimitiveTopology,
+    pub push_constant_ranges: Vec<PushConstantRange>,
+    pub descriptor_set_layouts: Vec<u64>,
+    pub enable_blending: bool,           // ← seul état configurable
+}
+```
+
+Tout le reste est hardcodé dans le renderer Vulkan (`create_pipeline()`).
+
 ---
 
-## 10. Priorité d'implémentation
+## 12. Proposition d'implémentation pour Galaxy3D
+
+### Architecture : structs par bloc avec `Default`
+
+Chaque bloc d'état est représenté par une struct dédiée, avec des valeurs par défaut
+sensées. Ainsi, le code existant reste simple et les nouveaux paramètres sont
+opt-in.
+
+```rust
+// ===== RASTERIZATION STATE =====
+
+pub struct RasterizationState {
+    pub cull_mode: CullMode,           // Default: Back
+    pub front_face: FrontFace,         // Default: CounterClockwise
+    pub polygon_mode: PolygonMode,     // Default: Fill
+    pub depth_bias: Option<DepthBias>, // Default: None (désactivé)
+}
+
+// ===== DEPTH/STENCIL STATE =====
+
+pub struct DepthStencilState {
+    pub depth_test_enable: bool,       // Default: true
+    pub depth_write_enable: bool,      // Default: true
+    pub depth_compare_op: CompareOp,   // Default: Less
+    pub stencil_test_enable: bool,     // Default: false
+    pub front: StencilOpState,         // Default: Keep/Keep/Keep/Always
+    pub back: StencilOpState,          // Default: Keep/Keep/Keep/Always
+}
+
+// ===== COLOR BLEND STATE =====
+
+pub struct ColorBlendState {
+    pub blend_enable: bool,            // Default: false (opaque)
+    pub src_color_factor: BlendFactor, // Default: SrcAlpha
+    pub dst_color_factor: BlendFactor, // Default: OneMinusSrcAlpha
+    pub color_blend_op: BlendOp,       // Default: Add
+    pub src_alpha_factor: BlendFactor, // Default: One
+    pub dst_alpha_factor: BlendFactor, // Default: Zero
+    pub alpha_blend_op: BlendOp,       // Default: Add
+    pub color_write_mask: ColorWriteMask, // Default: RGBA
+}
+
+// ===== MULTISAMPLE STATE =====
+
+pub struct MultisampleState {
+    pub sample_count: SampleCount,     // Default: 1 (pas de MSAA)
+    pub alpha_to_coverage: bool,       // Default: false
+}
+```
+
+### Le `PipelineDesc` cible
+
+```rust
+pub struct PipelineDesc {
+    // --- Existant (inchangé) ---
+    pub vertex_shader: Arc<dyn Shader>,
+    pub fragment_shader: Arc<dyn Shader>,
+    pub vertex_layout: VertexLayout,
+    pub topology: PrimitiveTopology,
+    pub push_constant_ranges: Vec<PushConstantRange>,
+    pub descriptor_set_layouts: Vec<u64>,
+
+    // --- Nouveau (remplace enable_blending) ---
+    pub rasterization: RasterizationState,    // cull, front face, polygon mode, depth bias
+    pub depth_stencil: DepthStencilState,     // depth test/write, stencil
+    pub color_blend: ColorBlendState,         // blending, color write mask
+    pub multisample: MultisampleState,        // MSAA, alpha to coverage
+}
+```
+
+`enable_blending: bool` disparaît, remplacé par `color_blend.blend_enable` et tous
+les facteurs/opérations associés.
+
+### Utilisation avec `..Default::default()`
+
+Grâce aux `impl Default`, la syntaxe Rust permet de ne spécifier que ce qui change :
+
+```rust
+// Pipeline opaque classique (toutes les valeurs par défaut sont parfaites)
+rasterization: RasterizationState::default(),   // cull=Back, Fill, CCW
+depth_stencil: DepthStencilState::default(),    // depth ON, write ON, Less
+color_blend: ColorBlendState::default(),        // blend OFF, write RGBA
+multisample: MultisampleState::default(),       // 1 sample
+
+// Pipeline transparent (un seul champ change par bloc)
+depth_stencil: DepthStencilState {
+    depth_write_enable: false,                  // seul changement
+    ..Default::default()
+},
+color_blend: ColorBlendState {
+    blend_enable: true,                         // les factors sont déjà en alpha blend
+    ..Default::default()
+},
+
+// Pipeline additif (particules feu)
+color_blend: ColorBlendState {
+    blend_enable: true,
+    src_color_factor: BlendFactor::One,
+    dst_color_factor: BlendFactor::One,
+    ..Default::default()
+},
+
+// Pipeline outline passe 1 (cull front + stencil)
+rasterization: RasterizationState {
+    cull_mode: CullMode::Front,
+    ..Default::default()
+},
+depth_stencil: DepthStencilState {
+    stencil_test_enable: true,
+    front: StencilOpState {
+        compare_op: CompareOp::NotEqual,
+        reference: 1,
+        ..Default::default()
+    },
+    ..Default::default()
+},
+```
+
+### Impact sur `resource::PipelinePassDesc`
+
+Aucun changement nécessaire au niveau resource. Le `PipelinePassDesc` wrapper
+simplement le `render::PipelineDesc`, qui contient déjà tout :
+
+```rust
+pub struct PipelinePassDesc {
+    pub pipeline: RenderPipelineDesc,  // inchangé, contient les nouveaux blocs
+}
+```
+
+---
+
+## 13. Approche progressive d'implémentation
+
+### Étape 1 — Fixed-function states (maintenant)
+
+Ajouter les enums, structs et `Default` dans `render::pipeline.rs`, modifier
+`PipelineDesc`, adapter le renderer Vulkan pour utiliser les vraies valeurs au lieu
+du hardcodé. Viewport et Scissor restent les seuls dynamic states (déjà le cas).
+
+| Tâche | Détail |
+|-------|--------|
+| Ajouter les types | Enums (CullMode, CompareOp, BlendFactor...) + Structs (RasterizationState...) |
+| Modifier `PipelineDesc` | Remplacer `enable_blending` par les 4 blocs d'état |
+| Adapter le renderer Vulkan | `create_pipeline()` utilise les valeurs du desc au lieu du hardcodé |
+| Mettre à jour les tests + démo | Migration vers la nouvelle API |
+
+### Étape 2 — Dynamic states basiques (plus tard, Vulkan 1.0)
+
+Ajouter les dynamic states les plus utiles qui ne nécessitent que Vulkan 1.0 :
+
+| Dynamic State | Commande dans CommandList | Pourquoi |
+|--------------|--------------------------|---------|
+| Stencil Reference | `set_stencil_reference()` | Changer la valeur de référence stencil entre les draw calls |
+| Stencil Masks | `set_stencil_compare_mask()`, `set_stencil_write_mask()` | Flexibilité du stencil |
+| Depth Bias Values | `set_depth_bias()` | Ajuster le bias selon la scène (shadow maps) |
+| Blend Constants | `set_blend_constants()` | Pour le ConstantColor blend factor |
+
+### Étape 3 — Extended dynamic states (bien plus tard, Vulkan 1.3)
+
+Quand l'optimisation par réduction du nombre de pipelines deviendra un besoin :
+
+| Dynamic State | Pourquoi |
+|--------------|---------|
+| CullMode | Éviter un pipeline séparé juste pour changer le culling |
+| DepthTestEnable / DepthWriteEnable | Opaque vs transparent avec le même pipeline |
+| DepthCompareOp | Changer Less/LessOrEqual/Equal dynamiquement |
+| StencilTestEnable / StencilOp | Activer le stencil ponctuellement |
+
+---
+
+## 14. Priorité d'implémentation des états
 
 Voici l'ordre recommandé pour ajouter ces états, du plus urgent au moins urgent :
 
@@ -773,4 +1188,4 @@ Voici l'ordre recommandé pour ajouter ces états, du plus urgent au moins urgen
 ---
 
 > **Note :** Ce document décrit l'état cible. L'implémentation se fera progressivement
-> en commençant par les priorités les plus hautes.
+> selon l'approche décrite en section 13.

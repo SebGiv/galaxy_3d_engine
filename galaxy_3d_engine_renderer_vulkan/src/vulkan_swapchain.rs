@@ -150,7 +150,10 @@ impl Swapchain {
                     device.create_image_view(&create_info, None)
                 })
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(|e| Error::InitializationFailed(format!("Failed to create image views: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create swapchain image views: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to create image views: {:?}", e))
+                })?;
 
             // Create render targets
             let render_targets: Vec<Arc<dyn RendererRenderTarget>> = swapchain_image_views
@@ -177,14 +180,20 @@ impl Swapchain {
             for _ in 0..MAX_FRAMES_IN_FLIGHT {
                 image_available_semaphores.push(
                     device.create_semaphore(&semaphore_create_info, None)
-                        .map_err(|e| Error::InitializationFailed(format!("Failed to create semaphore: {:?}", e)))?
+                        .map_err(|e| {
+                            engine_error!("galaxy3d::vulkan", "Failed to create image-available semaphore: {:?}", e);
+                            Error::InitializationFailed(format!("Failed to create semaphore: {:?}", e))
+                        })?
                 );
             }
 
             for _ in 0..image_count {
                 render_finished_semaphores.push(
                     device.create_semaphore(&semaphore_create_info, None)
-                        .map_err(|e| Error::InitializationFailed(format!("Failed to create semaphore: {:?}", e)))?
+                        .map_err(|e| {
+                            engine_error!("galaxy3d::vulkan", "Failed to create render-finished semaphore: {:?}", e);
+                            Error::InitializationFailed(format!("Failed to create semaphore: {:?}", e))
+                        })?
                 );
             }
 
@@ -250,8 +259,10 @@ impl RendererSwapchain for Swapchain {
                 )
                 .map_err(|e| {
                     if e == vk::Result::ERROR_OUT_OF_DATE_KHR {
+                        engine_error!("galaxy3d::vulkan", "Swapchain out of date during acquire");
                         Error::BackendError("Swapchain out of date".to_string())
                     } else {
+                        engine_error!("galaxy3d::vulkan", "Failed to acquire next swapchain image: {:?}", e);
                         Error::BackendError(format!("Failed to acquire next image: {:?}", e))
                     }
                 })?;
@@ -280,9 +291,13 @@ impl RendererSwapchain for Swapchain {
                     }
                     Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                         self.current_frame = (self.current_frame + 1) % self.max_frames_in_flight;
+                        engine_error!("galaxy3d::vulkan", "Swapchain out of date during present");
                         Err(Error::BackendError("Swapchain out of date".to_string()))
                     }
-                    Err(e) => Err(Error::BackendError(format!("Failed to present: {:?}", e))),
+                    Err(e) => {
+                        engine_error!("galaxy3d::vulkan", "Failed to present swapchain image: {:?}", e);
+                        Err(Error::BackendError(format!("Failed to present: {:?}", e)))
+                    }
                 }
         }
     }
@@ -291,7 +306,10 @@ impl RendererSwapchain for Swapchain {
         unsafe {
             // Wait for device to be idle
             self.device.device_wait_idle()
-                .map_err(|e| Error::BackendError(format!("Failed to wait idle: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to wait idle before swapchain recreate: {:?}", e);
+                    Error::BackendError(format!("Failed to wait idle: {:?}", e))
+                })?;
 
             // Destroy old image views
             for image_view in &self.swapchain_image_views {
@@ -303,7 +321,10 @@ impl RendererSwapchain for Swapchain {
             // Query surface capabilities with new window size
             let surface_capabilities = self.surface_loader
                 .get_physical_device_surface_capabilities(self.physical_device, self.surface)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to get surface capabilities during swapchain recreate: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e))
+                })?;
 
             // Choose extent
             let extent = if surface_capabilities.current_extent.width != u32::MAX {
@@ -347,7 +368,10 @@ impl RendererSwapchain for Swapchain {
 
             let swapchain = self.swapchain_loader
                 .create_swapchain(&swapchain_create_info, None)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to recreate swapchain: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to recreate swapchain: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to recreate swapchain: {:?}", e))
+                })?;
 
             // Destroy old swapchain
             self.swapchain_loader.destroy_swapchain(old_swapchain, None);
@@ -357,7 +381,10 @@ impl RendererSwapchain for Swapchain {
             // Get new swapchain images
             self.swapchain_images = self.swapchain_loader
                 .get_swapchain_images(swapchain)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to get swapchain images: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to get swapchain images during recreate: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to get swapchain images: {:?}", e))
+                })?;
 
             // Recreate image views
             for &image in &self.swapchain_images {
@@ -380,7 +407,10 @@ impl RendererSwapchain for Swapchain {
                     });
 
                 let image_view = self.device.create_image_view(&create_info, None)
-                    .map_err(|e| Error::InitializationFailed(format!("Failed to create image view: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to create image view during swapchain recreate: {:?}", e);
+                        Error::InitializationFailed(format!("Failed to create image view: {:?}", e))
+                    })?;
                 self.swapchain_image_views.push(image_view);
             }
 

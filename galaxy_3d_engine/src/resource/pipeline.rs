@@ -64,6 +64,8 @@ impl Pipeline {
         let mut seen_names = std::collections::HashSet::new();
         for variant_desc in &desc.variants {
             if !seen_names.insert(&variant_desc.name) {
+                crate::engine_error!("galaxy3d::Pipeline",
+                    "Duplicate variant name '{}'", variant_desc.name);
                 return Err(Error::BackendError(format!(
                     "Duplicate variant name '{}'", variant_desc.name
                 )));
@@ -73,6 +75,8 @@ impl Pipeline {
         // ========== VALIDATION 2: Each variant must have at least one pass ==========
         for variant_desc in &desc.variants {
             if variant_desc.passes.is_empty() {
+                crate::engine_error!("galaxy3d::Pipeline",
+                    "Variant '{}' must have at least one pass", variant_desc.name);
                 return Err(Error::BackendError(format!(
                     "Variant '{}' must have at least one pass", variant_desc.name
                 )));
@@ -144,6 +148,8 @@ impl Pipeline {
     pub fn add_variant(&mut self, desc: PipelineVariantDesc) -> Result<u32> {
         // Check for duplicate name
         if self.variant_names.contains_key(&desc.name) {
+            crate::engine_error!("galaxy3d::Pipeline",
+                "Variant '{}' already exists", desc.name);
             return Err(Error::BackendError(format!(
                 "Variant '{}' already exists", desc.name
             )));
@@ -151,6 +157,8 @@ impl Pipeline {
 
         // Validate at least one pass
         if desc.passes.is_empty() {
+            crate::engine_error!("galaxy3d::Pipeline",
+                "Variant '{}' must have at least one pass", desc.name);
             return Err(Error::BackendError(format!(
                 "Variant '{}' must have at least one pass", desc.name
             )));

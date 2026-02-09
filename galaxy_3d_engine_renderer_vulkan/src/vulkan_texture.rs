@@ -3,7 +3,7 @@
 use galaxy_3d_engine::galaxy3d::{Result, Error};
 use galaxy_3d_engine::galaxy3d::render::Texture as RendererTexture;
 use galaxy_3d_engine::galaxy3d::render::TextureInfo;
-use galaxy_3d_engine::engine_error;
+use galaxy_3d_engine::{engine_error, engine_warn};
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 use std::sync::Arc;
@@ -118,7 +118,10 @@ impl RendererTexture for Texture {
 
             // Copy data to staging buffer
             let mapped_ptr = staging_allocation.mapped_ptr()
-                .ok_or_else(|| Error::BackendError("Staging buffer is not mapped".to_string()))?
+                .ok_or_else(|| {
+                    engine_error!("galaxy3d::vulkan", "Texture update: staging buffer is not mapped");
+                    Error::BackendError("Staging buffer is not mapped".to_string())
+                })?
                 .as_ptr() as *mut u8;
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_ptr, data.len());
 
@@ -253,7 +256,10 @@ impl RendererTexture for Texture {
             device.free_command_buffers(command_pool, &[command_buffer]);
             device.destroy_buffer(staging_buffer, None);
             self.ctx.allocator.lock().unwrap().free(staging_allocation)
-                .map_err(|_e| Error::BackendError("Failed to free staging allocation".to_string()))?;
+                .map_err(|_e| {
+                    engine_warn!("galaxy3d::vulkan", "Texture update: failed to free staging allocation");
+                    Error::BackendError("Failed to free staging allocation".to_string())
+                })?;
 
             Ok(())
         }

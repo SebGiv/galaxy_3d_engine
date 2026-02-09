@@ -15,21 +15,6 @@ use chrono::{DateTime, Local};
 ///
 /// Implement this trait to create custom loggers (file logging, network logging, etc.)
 ///
-/// # Example
-///
-/// ```no_run
-/// use galaxy_3d_engine::galaxy3d::log::{Logger, LogEntry};
-///
-/// struct FileLogger {
-///     file: std::fs::File,
-/// }
-///
-/// impl Logger for FileLogger {
-///     fn log(&self, entry: &LogEntry) {
-///         // Write to file...
-///     }
-/// }
-/// ```
 pub trait Logger: Send + Sync {
     /// Log an entry
     ///
@@ -141,12 +126,6 @@ impl Logger for DefaultLogger {
 ///
 /// **INTERNAL USE ONLY** - This macro is for engine internals.
 /// Users should implement the `Logger` trait and use their own logging system.
-///
-/// # Example
-///
-/// ```no_run
-/// engine_trace!("galaxy3d::Engine", "Entering function foo()");
-/// ```
 #[doc(hidden)]
 #[macro_export]
 macro_rules! engine_trace {
@@ -163,12 +142,6 @@ macro_rules! engine_trace {
 ///
 /// **INTERNAL USE ONLY** - This macro is for engine internals.
 /// Users should implement the `Logger` trait and use their own logging system.
-///
-/// # Example
-///
-/// ```no_run
-/// engine_debug!("galaxy3d::Engine", "Initialized with {} subsystems", count);
-/// ```
 #[doc(hidden)]
 #[macro_export]
 macro_rules! engine_debug {
@@ -185,12 +158,6 @@ macro_rules! engine_debug {
 ///
 /// **INTERNAL USE ONLY** - This macro is for engine internals.
 /// Users should implement the `Logger` trait and use their own logging system.
-///
-/// # Example
-///
-/// ```no_run
-/// engine_info!("galaxy3d::Engine", "Renderer initialized successfully");
-/// ```
 #[doc(hidden)]
 #[macro_export]
 macro_rules! engine_info {
@@ -207,12 +174,6 @@ macro_rules! engine_info {
 ///
 /// **INTERNAL USE ONLY** - This macro is for engine internals.
 /// Users should implement the `Logger` trait and use their own logging system.
-///
-/// # Example
-///
-/// ```no_run
-/// engine_warn!("galaxy3d::Engine", "Performance warning: {} FPS", fps);
-/// ```
 #[doc(hidden)]
 #[macro_export]
 macro_rules! engine_warn {
@@ -229,12 +190,6 @@ macro_rules! engine_warn {
 ///
 /// **INTERNAL USE ONLY** - This macro is for engine internals.
 /// Users should implement the `Logger` trait and use their own logging system.
-///
-/// # Example
-///
-/// ```no_run
-/// engine_error!("galaxy3d::Engine", "Failed to initialize: {}", error);
-/// ```
 #[doc(hidden)]
 #[macro_export]
 macro_rules! engine_error {

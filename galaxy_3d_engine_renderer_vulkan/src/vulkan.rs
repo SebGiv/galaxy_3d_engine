@@ -14,6 +14,8 @@ use galaxy_3d_engine::galaxy3d::render::{
     RendererStats, VertexInputRate,
     Config, DebugSeverity, TextureUsage,
     MipmapMode, ManualMipmapData,
+    CullMode, FrontFace, PolygonMode, CompareOp, StencilOp, StencilOpState,
+    BlendFactor, BlendOp, ColorWriteMask, SampleCount,
 };
 use ash::vk;
 use ash::vk::Handle;
@@ -160,7 +162,10 @@ impl VulkanRenderer {
         unsafe {
             // Create Vulkan Entry
             let entry = ash::Entry::load()
-                .map_err(|e| Error::InitializationFailed(format!("Failed to load Vulkan library: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to load Vulkan library: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to load Vulkan library: {:?}", e))
+                })?;
 
             // Application Info
             let app_info = vk::ApplicationInfo::default()
@@ -172,9 +177,15 @@ impl VulkanRenderer {
 
             // Get required extensions
             let display_handle = window.display_handle()
-                .map_err(|e| Error::InitializationFailed(format!("Failed to get display handle: {}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to get display handle: {}", e);
+                    Error::InitializationFailed(format!("Failed to get display handle: {}", e))
+                })?;
             let mut extension_names = ash_window::enumerate_required_extensions(display_handle.as_raw())
-                .map_err(|e| Error::InitializationFailed(format!("Failed to get required extensions: {}", e)))?
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to get required extensions: {}", e);
+                    Error::InitializationFailed(format!("Failed to get required extensions: {}", e))
+                })?
                 .to_vec();
 
             // Add debug utils extension if validation is enabled
@@ -196,7 +207,10 @@ impl VulkanRenderer {
 
             let instance = entry
                 .create_instance(&create_info, None)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to create instance: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create Vulkan instance: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to create instance: {:?}", e))
+                })?;
 
             // Setup debug messenger if validation is enabled
             let (debug_utils_loader, debug_messenger) = if config.enable_validation {
@@ -241,7 +255,10 @@ impl VulkanRenderer {
 
                 let messenger = debug_utils
                     .create_debug_utils_messenger(&debug_info, None)
-                    .map_err(|e| Error::InitializationFailed(format!("Failed to create debug messenger: {:?}", e)))?;
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to create debug messenger: {:?}", e);
+                        Error::InitializationFailed(format!("Failed to create debug messenger: {:?}", e))
+                    })?;
 
                 (Some(debug_utils), Some(messenger))
             } else {
@@ -250,7 +267,10 @@ impl VulkanRenderer {
 
             // Create Surface (temporary for queue selection)
             let window_handle = window.window_handle()
-                .map_err(|e| Error::InitializationFailed(format!("Failed to get window handle: {}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to get window handle: {}", e);
+                    Error::InitializationFailed(format!("Failed to get window handle: {}", e))
+                })?;
             let surface = ash_window::create_surface(
                 &entry,
                 &instance,
@@ -258,19 +278,28 @@ impl VulkanRenderer {
                 window_handle.as_raw(),
                 None,
             )
-            .map_err(|e| Error::InitializationFailed(format!("Failed to create surface: {:?}", e)))?;
+            .map_err(|e| {
+                engine_error!("galaxy3d::vulkan", "Failed to create surface: {:?}", e);
+                Error::InitializationFailed(format!("Failed to create surface: {:?}", e))
+            })?;
 
             let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
 
             // Pick Physical Device
             let physical_devices = instance
                 .enumerate_physical_devices()
-                .map_err(|e| Error::InitializationFailed(format!("Failed to enumerate physical devices: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to enumerate physical devices: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to enumerate physical devices: {:?}", e))
+                })?;
 
             let physical_device = physical_devices
                 .into_iter()
                 .next()
-                .ok_or_else(|| Error::InitializationFailed("No Vulkan-capable GPU found".to_string()))?;
+                .ok_or_else(|| {
+                    engine_error!("galaxy3d::vulkan", "No Vulkan-capable GPU found");
+                    Error::InitializationFailed("No Vulkan-capable GPU found".to_string())
+                })?;
 
             // Find Queue Families
             let queue_families = instance.get_physical_device_queue_family_properties(physical_device);
@@ -280,7 +309,10 @@ impl VulkanRenderer {
                 .enumerate()
                 .find(|(_, qf)| qf.queue_flags.contains(vk::QueueFlags::GRAPHICS))
                 .map(|(i, _)| i as u32)
-                .ok_or_else(|| Error::InitializationFailed("No graphics queue family found".to_string()))?;
+                .ok_or_else(|| {
+                    engine_error!("galaxy3d::vulkan", "No graphics queue family found");
+                    Error::InitializationFailed("No graphics queue family found".to_string())
+                })?;
 
             let present_family_index = (0..queue_families.len() as u32)
                 .find(|&i| {
@@ -288,7 +320,10 @@ impl VulkanRenderer {
                         .get_physical_device_surface_support(physical_device, i, surface)
                         .unwrap_or(false)
                 })
-                .ok_or_else(|| Error::InitializationFailed("No present queue family found".to_string()))?;
+                .ok_or_else(|| {
+                    engine_error!("galaxy3d::vulkan", "No present queue family found");
+                    Error::InitializationFailed("No present queue family found".to_string())
+                })?;
 
             // Destroy temporary surface
             surface_loader.destroy_surface(surface, None);
@@ -321,7 +356,10 @@ impl VulkanRenderer {
             let device = Arc::new(
                 instance
                     .create_device(physical_device, &device_create_info, None)
-                    .map_err(|e| Error::InitializationFailed(format!("Failed to create device: {:?}", e)))?,
+                    .map_err(|e| {
+                        engine_error!("galaxy3d::vulkan", "Failed to create logical device: {:?}", e);
+                        Error::InitializationFailed(format!("Failed to create device: {:?}", e))
+                    })?,
             );
 
             let graphics_queue = device.get_device_queue(graphics_family_index, 0);
@@ -336,7 +374,10 @@ impl VulkanRenderer {
                 buffer_device_address: false,
                 allocation_sizes: Default::default(),
             })
-            .map_err(|e| Error::InitializationFailed(format!("Failed to create allocator: {:?}", e)))?;
+            .map_err(|e| {
+                engine_error!("galaxy3d::vulkan", "Failed to create GPU allocator: {:?}", e);
+                Error::InitializationFailed(format!("Failed to create allocator: {:?}", e))
+            })?;
 
             // Create submit fences (2 for double buffering)
             const MAX_SUBMITS_IN_FLIGHT: usize = 2;
@@ -347,7 +388,10 @@ impl VulkanRenderer {
             for _ in 0..MAX_SUBMITS_IN_FLIGHT {
                 submit_fences.push(
                     device.create_fence(&fence_create_info, None)
-                        .map_err(|e| Error::InitializationFailed(format!("Failed to create fence: {:?}", e)))?
+                        .map_err(|e| {
+                            engine_error!("galaxy3d::vulkan", "Failed to create submit fence: {:?}", e);
+                            Error::InitializationFailed(format!("Failed to create fence: {:?}", e))
+                        })?
                 );
             }
 
@@ -362,7 +406,10 @@ impl VulkanRenderer {
                 .max_sets(1000);
 
             let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_create_info, None)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to create descriptor pool: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create descriptor pool: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to create descriptor pool: {:?}", e))
+                })?;
 
             // Create texture sampler with linear filtering and repeat addressing
             let sampler_create_info = vk::SamplerCreateInfo::default()
@@ -383,7 +430,10 @@ impl VulkanRenderer {
                 .max_lod(vk::LOD_CLAMP_NONE);  // Allow all mipmap levels (1000.0)
 
             let texture_sampler = device.create_sampler(&sampler_create_info, None)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to create sampler: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create texture sampler: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to create sampler: {:?}", e))
+                })?;
 
             // Create descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader
             let sampler_binding = vk::DescriptorSetLayoutBinding::default()
@@ -396,7 +446,10 @@ impl VulkanRenderer {
                 .bindings(std::slice::from_ref(&sampler_binding));
 
             let descriptor_set_layout = device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to create descriptor set layout: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create descriptor set layout: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to create descriptor set layout: {:?}", e))
+                })?;
 
             // Create upload command pool (TRANSIENT + RESET for reusable one-shot uploads)
             let upload_pool_create_info = vk::CommandPoolCreateInfo::default()
@@ -404,7 +457,10 @@ impl VulkanRenderer {
                 .flags(vk::CommandPoolCreateFlags::TRANSIENT | vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
 
             let upload_command_pool = device.create_command_pool(&upload_pool_create_info, None)
-                .map_err(|e| Error::InitializationFailed(format!("Failed to create upload command pool: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create upload command pool: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to create upload command pool: {:?}", e))
+                })?;
 
             // Create shared GPU context for all resources
             // GpuContext owns device, instance, and debug messenger destruction
@@ -509,6 +565,115 @@ impl VulkanRenderer {
         }
     }
 
+    // ===== Pipeline state conversions =====
+
+    fn cull_mode_to_vk(&self, mode: CullMode) -> vk::CullModeFlags {
+        match mode {
+            CullMode::None => vk::CullModeFlags::NONE,
+            CullMode::Front => vk::CullModeFlags::FRONT,
+            CullMode::Back => vk::CullModeFlags::BACK,
+        }
+    }
+
+    fn front_face_to_vk(&self, face: FrontFace) -> vk::FrontFace {
+        match face {
+            FrontFace::CounterClockwise => vk::FrontFace::COUNTER_CLOCKWISE,
+            FrontFace::Clockwise => vk::FrontFace::CLOCKWISE,
+        }
+    }
+
+    fn polygon_mode_to_vk(&self, mode: PolygonMode) -> vk::PolygonMode {
+        match mode {
+            PolygonMode::Fill => vk::PolygonMode::FILL,
+            PolygonMode::Line => vk::PolygonMode::LINE,
+            PolygonMode::Point => vk::PolygonMode::POINT,
+        }
+    }
+
+    fn compare_op_to_vk(&self, op: CompareOp) -> vk::CompareOp {
+        match op {
+            CompareOp::Never => vk::CompareOp::NEVER,
+            CompareOp::Less => vk::CompareOp::LESS,
+            CompareOp::Equal => vk::CompareOp::EQUAL,
+            CompareOp::LessOrEqual => vk::CompareOp::LESS_OR_EQUAL,
+            CompareOp::Greater => vk::CompareOp::GREATER,
+            CompareOp::NotEqual => vk::CompareOp::NOT_EQUAL,
+            CompareOp::GreaterOrEqual => vk::CompareOp::GREATER_OR_EQUAL,
+            CompareOp::Always => vk::CompareOp::ALWAYS,
+        }
+    }
+
+    fn stencil_op_to_vk(&self, op: StencilOp) -> vk::StencilOp {
+        match op {
+            StencilOp::Keep => vk::StencilOp::KEEP,
+            StencilOp::Zero => vk::StencilOp::ZERO,
+            StencilOp::Replace => vk::StencilOp::REPLACE,
+            StencilOp::IncrementAndClamp => vk::StencilOp::INCREMENT_AND_CLAMP,
+            StencilOp::DecrementAndClamp => vk::StencilOp::DECREMENT_AND_CLAMP,
+            StencilOp::Invert => vk::StencilOp::INVERT,
+            StencilOp::IncrementAndWrap => vk::StencilOp::INCREMENT_AND_WRAP,
+            StencilOp::DecrementAndWrap => vk::StencilOp::DECREMENT_AND_WRAP,
+        }
+    }
+
+    fn stencil_op_state_to_vk(&self, state: &StencilOpState) -> vk::StencilOpState {
+        vk::StencilOpState {
+            fail_op: self.stencil_op_to_vk(state.fail_op),
+            pass_op: self.stencil_op_to_vk(state.pass_op),
+            depth_fail_op: self.stencil_op_to_vk(state.depth_fail_op),
+            compare_op: self.compare_op_to_vk(state.compare_op),
+            compare_mask: state.compare_mask,
+            write_mask: state.write_mask,
+            reference: state.reference,
+        }
+    }
+
+    fn blend_factor_to_vk(&self, factor: BlendFactor) -> vk::BlendFactor {
+        match factor {
+            BlendFactor::Zero => vk::BlendFactor::ZERO,
+            BlendFactor::One => vk::BlendFactor::ONE,
+            BlendFactor::SrcColor => vk::BlendFactor::SRC_COLOR,
+            BlendFactor::OneMinusSrcColor => vk::BlendFactor::ONE_MINUS_SRC_COLOR,
+            BlendFactor::DstColor => vk::BlendFactor::DST_COLOR,
+            BlendFactor::OneMinusDstColor => vk::BlendFactor::ONE_MINUS_DST_COLOR,
+            BlendFactor::SrcAlpha => vk::BlendFactor::SRC_ALPHA,
+            BlendFactor::OneMinusSrcAlpha => vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            BlendFactor::DstAlpha => vk::BlendFactor::DST_ALPHA,
+            BlendFactor::OneMinusDstAlpha => vk::BlendFactor::ONE_MINUS_DST_ALPHA,
+            BlendFactor::ConstantColor => vk::BlendFactor::CONSTANT_COLOR,
+            BlendFactor::OneMinusConstantColor => vk::BlendFactor::ONE_MINUS_CONSTANT_COLOR,
+            BlendFactor::SrcAlphaSaturate => vk::BlendFactor::SRC_ALPHA_SATURATE,
+        }
+    }
+
+    fn blend_op_to_vk(&self, op: BlendOp) -> vk::BlendOp {
+        match op {
+            BlendOp::Add => vk::BlendOp::ADD,
+            BlendOp::Subtract => vk::BlendOp::SUBTRACT,
+            BlendOp::ReverseSubtract => vk::BlendOp::REVERSE_SUBTRACT,
+            BlendOp::Min => vk::BlendOp::MIN,
+            BlendOp::Max => vk::BlendOp::MAX,
+        }
+    }
+
+    fn sample_count_to_vk(&self, count: SampleCount) -> vk::SampleCountFlags {
+        match count {
+            SampleCount::S1 => vk::SampleCountFlags::TYPE_1,
+            SampleCount::S2 => vk::SampleCountFlags::TYPE_2,
+            SampleCount::S4 => vk::SampleCountFlags::TYPE_4,
+            SampleCount::S8 => vk::SampleCountFlags::TYPE_8,
+        }
+    }
+
+    fn color_write_mask_to_vk(&self, mask: &ColorWriteMask) -> vk::ColorComponentFlags {
+        let mut flags = vk::ColorComponentFlags::empty();
+        if mask.r { flags |= vk::ColorComponentFlags::R; }
+        if mask.g { flags |= vk::ColorComponentFlags::G; }
+        if mask.b { flags |= vk::ColorComponentFlags::B; }
+        if mask.a { flags |= vk::ColorComponentFlags::A; }
+        flags
+    }
+
     /// Convert LoadOp to Vulkan
     fn load_op_to_vk(&self, load_op: LoadOp) -> vk::AttachmentLoadOp {
         match load_op {
@@ -552,9 +717,15 @@ impl VulkanRenderer {
 
         // Create surface
         let display_handle = window.display_handle()
-            .map_err(|e| Error::InitializationFailed(format!("Failed to get display handle: {}", e)))?;
+            .map_err(|e| {
+                engine_error!("galaxy3d::vulkan", "Failed to get display handle for swapchain: {}", e);
+                Error::InitializationFailed(format!("Failed to get display handle: {}", e))
+            })?;
         let window_handle = window.window_handle()
-            .map_err(|e| Error::InitializationFailed(format!("Failed to get window handle: {}", e)))?;
+            .map_err(|e| {
+                engine_error!("galaxy3d::vulkan", "Failed to get window handle for swapchain: {}", e);
+                Error::InitializationFailed(format!("Failed to get window handle: {}", e))
+            })?;
 
         let surface = unsafe {
             ash_window::create_surface(
@@ -564,7 +735,10 @@ impl VulkanRenderer {
                 window_handle.as_raw(),
                 None,
             )
-            .map_err(|e| Error::InitializationFailed(format!("Failed to create surface: {:?}", e)))?
+            .map_err(|e| {
+                engine_error!("galaxy3d::vulkan", "Failed to create surface for swapchain: {:?}", e);
+                Error::InitializationFailed(format!("Failed to create surface: {:?}", e))
+            })?
         };
 
         let surface_loader = ash::khr::surface::Instance::new(&self._entry, &self._instance);
@@ -622,7 +796,10 @@ impl VulkanRenderer {
                 .set_layouts(&layouts);
 
             let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
-                .map_err(|e| Error::BackendError(format!("Failed to allocate descriptor set: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to allocate descriptor set for texture: {:?}", e);
+                    Error::BackendError(format!("Failed to allocate descriptor set: {:?}", e))
+                })?;
 
             let descriptor_set = descriptor_sets[0];
 
@@ -846,7 +1023,10 @@ impl Renderer for VulkanRenderer {
                 .dependencies(std::slice::from_ref(&dependency));
 
             let render_pass = self.device.create_render_pass(&render_pass_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create render pass: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create render pass: {:?}", e);
+                    Error::BackendError(format!("Failed to create render pass: {:?}", e))
+                })?;
 
             Ok(Arc::new(RenderPass {
                 render_pass,
@@ -1077,7 +1257,10 @@ impl Renderer for VulkanRenderer {
 
                     // Copy data to staging buffer
                     let mapped_ptr = staging_allocation.mapped_ptr()
-                        .ok_or_else(|| Error::BackendError("Staging buffer is not mapped".to_string()))?
+                        .ok_or_else(|| {
+                            engine_error!("galaxy3d::vulkan", "Staging buffer is not mapped for layer {}", layer_index);
+                            Error::BackendError("Staging buffer is not mapped".to_string())
+                        })?
                         .as_ptr() as *mut u8;
                     std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_ptr, data.len());
 
@@ -1294,7 +1477,10 @@ impl Renderer for VulkanRenderer {
 
                                     // Copy data to staging buffer
                                     let mapped_ptr = staging_allocation.mapped_ptr()
-                                        .ok_or_else(|| Error::BackendError("Staging buffer is not mapped".to_string()))?
+                                        .ok_or_else(|| {
+                                            engine_error!("galaxy3d::vulkan", "Staging buffer is not mapped for mip level {}", mip_level);
+                                            Error::BackendError("Staging buffer is not mapped".to_string())
+                                        })?
                                         .as_ptr() as *mut u8;
                                     std::ptr::copy_nonoverlapping(mip_data.as_ptr(), mapped_ptr, mip_data.len());
 
@@ -1382,7 +1568,10 @@ impl Renderer for VulkanRenderer {
 
                                         // Copy data to staging buffer
                                         let mapped_ptr = staging_allocation.mapped_ptr()
-                                            .ok_or_else(|| Error::BackendError("Staging buffer is not mapped".to_string()))?
+                                            .ok_or_else(|| {
+                                                engine_error!("galaxy3d::vulkan", "Staging buffer is not mapped for layer {} mip {}", layer_data.layer, mip_level);
+                                                Error::BackendError("Staging buffer is not mapped".to_string())
+                                            })?
                                             .as_ptr() as *mut u8;
                                         std::ptr::copy_nonoverlapping(mip_data.as_ptr(), mapped_ptr, mip_data.len());
 
@@ -1503,7 +1692,10 @@ impl Renderer for VulkanRenderer {
                 for (staging_buf, staging_alloc) in staging_buffers {
                     self.device.destroy_buffer(staging_buf, None);
                     self.allocator.lock().unwrap().free(staging_alloc)
-                        .map_err(|_e| Error::BackendError("Failed to free staging buffer allocation".to_string()))?;
+                        .map_err(|_e| {
+                            engine_warn!("galaxy3d::vulkan", "Failed to free staging buffer allocation during texture upload");
+                            Error::BackendError("Failed to free staging buffer allocation".to_string())
+                        })?;
                 }
             } else {
                 // No data to upload — transition directly to SHADER_READ_ONLY_OPTIMAL
@@ -1803,36 +1995,57 @@ impl Renderer for VulkanRenderer {
                 .scissors(&scissors);
 
             // Rasterization state
-            let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
-                .depth_clamp_enable(false)
-                .rasterizer_discard_enable(false)
-                .polygon_mode(vk::PolygonMode::FILL)
-                .line_width(1.0)
-                .cull_mode(vk::CullModeFlags::NONE)
-                .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-                .depth_bias_enable(false);
+            let rasterization_state = {
+                let mut info = vk::PipelineRasterizationStateCreateInfo::default()
+                    .depth_clamp_enable(false)
+                    .rasterizer_discard_enable(false)
+                    .polygon_mode(self.polygon_mode_to_vk(desc.rasterization.polygon_mode))
+                    .line_width(1.0)
+                    .cull_mode(self.cull_mode_to_vk(desc.rasterization.cull_mode))
+                    .front_face(self.front_face_to_vk(desc.rasterization.front_face));
+                if let Some(bias) = desc.rasterization.depth_bias {
+                    info = info
+                        .depth_bias_enable(true)
+                        .depth_bias_constant_factor(bias.constant_factor)
+                        .depth_bias_slope_factor(bias.slope_factor)
+                        .depth_bias_clamp(bias.clamp);
+                } else {
+                    info = info.depth_bias_enable(false);
+                }
+                info
+            };
+
+            // Depth/stencil state
+            let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
+                .depth_test_enable(desc.depth_stencil.depth_test_enable)
+                .depth_write_enable(desc.depth_stencil.depth_write_enable)
+                .depth_compare_op(self.compare_op_to_vk(desc.depth_stencil.depth_compare_op))
+                .depth_bounds_test_enable(false)
+                .stencil_test_enable(desc.depth_stencil.stencil_test_enable)
+                .front(self.stencil_op_state_to_vk(&desc.depth_stencil.front))
+                .back(self.stencil_op_state_to_vk(&desc.depth_stencil.back));
 
             // Multisample state
             let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
                 .sample_shading_enable(false)
-                .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+                .rasterization_samples(self.sample_count_to_vk(desc.multisample.sample_count))
+                .alpha_to_coverage_enable(desc.multisample.alpha_to_coverage);
 
             // Color blend state
-            let color_blend_attachment = if desc.enable_blending {
-                // Alpha blending: source * src_alpha + destination * (1 - src_alpha)
-                vk::PipelineColorBlendAttachmentState::default()
-                    .color_write_mask(vk::ColorComponentFlags::RGBA)
-                    .blend_enable(true)
-                    .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-                    .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-                    .color_blend_op(vk::BlendOp::ADD)
-                    .src_alpha_blend_factor(vk::BlendFactor::ONE)
-                    .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
-                    .alpha_blend_op(vk::BlendOp::ADD)
-            } else {
-                vk::PipelineColorBlendAttachmentState::default()
-                    .color_write_mask(vk::ColorComponentFlags::RGBA)
-                    .blend_enable(false)
+            let color_blend_attachment = {
+                let mut attachment = vk::PipelineColorBlendAttachmentState::default()
+                    .color_write_mask(self.color_write_mask_to_vk(&desc.color_blend.color_write_mask))
+                    .blend_enable(desc.color_blend.blend_enable);
+                if desc.color_blend.blend_enable {
+                    attachment = attachment
+                        .src_color_blend_factor(self.blend_factor_to_vk(desc.color_blend.src_color_factor))
+                        .dst_color_blend_factor(self.blend_factor_to_vk(desc.color_blend.dst_color_factor))
+                        .color_blend_op(self.blend_op_to_vk(desc.color_blend.color_blend_op))
+                        .src_alpha_blend_factor(self.blend_factor_to_vk(desc.color_blend.src_alpha_factor))
+                        .dst_alpha_blend_factor(self.blend_factor_to_vk(desc.color_blend.dst_alpha_factor))
+                        .alpha_blend_op(self.blend_op_to_vk(desc.color_blend.alpha_blend_op));
+                }
+                attachment
             };
 
             let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
@@ -1895,6 +2108,7 @@ impl Renderer for VulkanRenderer {
                 .input_assembly_state(&input_assembly_state)
                 .viewport_state(&viewport_state)
                 .rasterization_state(&rasterization_state)
+                .depth_stencil_state(&depth_stencil_state)
                 .multisample_state(&multisample_state)
                 .color_blend_state(&color_blend_state)
                 .dynamic_state(&dynamic_state)
@@ -1934,12 +2148,18 @@ impl Renderer for VulkanRenderer {
                     true,
                     u64::MAX,
                 )
-                .map_err(|e| Error::BackendError(format!("Failed to wait for fence: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "submit: failed to wait for fence: {:?}", e);
+                    Error::BackendError(format!("Failed to wait for fence: {:?}", e))
+                })?;
 
             // Reset fence
             self.device
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| Error::BackendError(format!("Failed to reset fence: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "submit: failed to reset fence: {:?}", e);
+                    Error::BackendError(format!("Failed to reset fence: {:?}", e))
+                })?;
 
             // Collect command buffers
             let command_buffers: Vec<vk::CommandBuffer> = commands
@@ -1960,7 +2180,10 @@ impl Renderer for VulkanRenderer {
                     &[submit_info],
                     self.submit_fences[self.current_submit_fence],
                 )
-                .map_err(|e| Error::BackendError(format!("Failed to submit queue: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "submit: failed to submit queue: {:?}", e);
+                    Error::BackendError(format!("Failed to submit queue: {:?}", e))
+                })?;
 
             Ok(())
         }
@@ -1982,7 +2205,10 @@ impl Renderer for VulkanRenderer {
                 .set_layouts(&layouts);
 
             let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
-                .map_err(|e| Error::BackendError(format!("Failed to allocate descriptor set: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to allocate descriptor set for texture (trait): {:?}", e);
+                    Error::BackendError(format!("Failed to allocate descriptor set: {:?}", e))
+                })?;
 
             let descriptor_set = descriptor_sets[0];
 
@@ -2086,7 +2312,10 @@ impl Renderer for VulkanRenderer {
         unsafe {
             self.device
                 .device_wait_idle()
-                .map_err(|e| Error::BackendError(format!("Failed to wait idle: {:?}", e)))
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to wait idle: {:?}", e);
+                    Error::BackendError(format!("Failed to wait idle: {:?}", e))
+                })
         }
     }
 

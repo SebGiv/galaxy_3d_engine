@@ -49,7 +49,10 @@ impl RendererBuffer for Buffer {
                 // Map memory and copy data
                 let mapped_ptr = allocation
                     .mapped_ptr()
-                    .ok_or_else(|| Error::BackendError("Buffer is not CPU-accessible".to_string()))?
+                    .ok_or_else(|| {
+                        engine_error!("galaxy3d::vulkan", "Buffer update failed: buffer is not CPU-accessible");
+                        Error::BackendError("Buffer is not CPU-accessible".to_string())
+                    })?
                     .as_ptr() as *mut u8;
 
                 // Copy data

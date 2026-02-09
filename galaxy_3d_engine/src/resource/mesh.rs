@@ -27,6 +27,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::{Error, Result};
+use crate::engine_error;
 use crate::renderer::{
     Buffer,
     BufferDesc,
@@ -292,6 +293,7 @@ impl Mesh {
 
         // Validate stride
         if vertex_stride == 0 {
+            engine_error!("galaxy3d::Mesh", "Vertex layout has no bindings or stride is 0");
             return Err(Error::BackendError(
                 "Vertex layout has no bindings or stride is 0".to_string()
             ));
@@ -299,6 +301,8 @@ impl Mesh {
 
         // Validate vertex data size
         if desc.vertex_data.len() % vertex_stride != 0 {
+            engine_error!("galaxy3d::Mesh", "Vertex data size {} is not a multiple of stride {}",
+                desc.vertex_data.len(), vertex_stride);
             return Err(Error::BackendError(format!(
                 "Vertex data size {} is not a multiple of stride {}",
                 desc.vertex_data.len(), vertex_stride
@@ -324,6 +328,8 @@ impl Mesh {
 
             // Validate index data size
             if index_data.len() % index_size != 0 {
+                engine_error!("galaxy3d::Mesh", "Index data size {} is not a multiple of index type size {}",
+                    index_data.len(), index_size);
                 return Err(Error::BackendError(format!(
                     "Index data size {} is not a multiple of index type size {}",
                     index_data.len(), index_size
@@ -464,6 +470,7 @@ impl Mesh {
     /// Validates all submesh offsets against buffer sizes.
     pub fn add_mesh_entry(&mut self, desc: MeshEntryDesc) -> Result<usize> {
         if self.entry_names.contains_key(&desc.name) {
+            engine_error!("galaxy3d::Mesh", "MeshEntry '{}' already exists in Mesh '{}'", desc.name, self.name);
             return Err(Error::BackendError(format!(
                 "MeshEntry '{}' already exists in Mesh '{}'", desc.name, self.name
             )));
@@ -489,9 +496,12 @@ impl Mesh {
         }
 
         let entry = self.mesh_entries.get_mut(entry_id)
-            .ok_or_else(|| Error::BackendError(format!(
-                "MeshEntry id {} not found in Mesh '{}'", entry_id, self.name
-            )))?;
+            .ok_or_else(|| {
+                engine_error!("galaxy3d::Mesh", "MeshEntry id {} not found in Mesh '{}'", entry_id, self.name);
+                Error::BackendError(format!(
+                    "MeshEntry id {} not found in Mesh '{}'", entry_id, self.name
+                ))
+            })?;
 
         entry.ensure_lod(desc.lod_index);
 
@@ -500,6 +510,7 @@ impl Mesh {
 
         for submesh_desc in desc.submeshes {
             if lod.contains_submesh(&submesh_desc.name) {
+                engine_error!("galaxy3d::Mesh", "SubMesh '{}' already exists in LOD {}", submesh_desc.name, desc.lod_index);
                 return Err(Error::BackendError(format!(
                     "SubMesh '{}' already exists in LOD {}", submesh_desc.name, desc.lod_index
                 )));
@@ -530,18 +541,26 @@ impl Mesh {
         self.validate_submesh_desc(&desc)?;
 
         let entry = self.mesh_entries.get_mut(entry_id)
-            .ok_or_else(|| Error::BackendError(format!(
-                "MeshEntry id {} not found in Mesh '{}'", entry_id, self.name
-            )))?;
+            .ok_or_else(|| {
+                engine_error!("galaxy3d::Mesh", "MeshEntry id {} not found in Mesh '{}'", entry_id, self.name);
+                Error::BackendError(format!(
+                    "MeshEntry id {} not found in Mesh '{}'", entry_id, self.name
+                ))
+            })?;
 
         entry.ensure_lod(lod_index);
 
         let lod = entry.lod_mut(lod_index)
-            .ok_or_else(|| Error::BackendError(format!(
-                "LOD {} not found in MeshEntry id {}", lod_index, entry_id
-            )))?;
+            .ok_or_else(|| {
+                engine_error!("galaxy3d::Mesh", "LOD {} not found in MeshEntry id {}", lod_index, entry_id);
+                Error::BackendError(format!(
+                    "LOD {} not found in MeshEntry id {}", lod_index, entry_id
+                ))
+            })?;
 
         if lod.contains_submesh(&desc.name) {
+            engine_error!("galaxy3d::Mesh", "SubMesh '{}' already exists in LOD {} of MeshEntry id {}",
+                desc.name, lod_index, entry_id);
             return Err(Error::BackendError(format!(
                 "SubMesh '{}' already exists in LOD {} of MeshEntry id {}",
                 desc.name, lod_index, entry_id
@@ -567,11 +586,16 @@ impl Mesh {
         // Validate vertex range
         let vertex_end = desc.vertex_offset
             .checked_add(desc.vertex_count)
-            .ok_or_else(|| Error::BackendError(
-                format!("Vertex range overflow in submesh '{}'", desc.name)
-            ))?;
+            .ok_or_else(|| {
+                engine_error!("galaxy3d::Mesh", "Vertex range overflow in submesh '{}'", desc.name);
+                Error::BackendError(
+                    format!("Vertex range overflow in submesh '{}'", desc.name)
+                )
+            })?;
 
         if vertex_end > self.total_vertex_count {
+            engine_error!("galaxy3d::Mesh", "SubMesh '{}' vertex range [{}, {}) exceeds total_vertex_count {}",
+                desc.name, desc.vertex_offset, vertex_end, self.total_vertex_count);
             return Err(Error::BackendError(format!(
                 "SubMesh '{}' vertex range [{}, {}) exceeds total_vertex_count {}",
                 desc.name, desc.vertex_offset, vertex_end, self.total_vertex_count
@@ -582,11 +606,16 @@ impl Mesh {
         if self.is_indexed() {
             let index_end = desc.index_offset
                 .checked_add(desc.index_count)
-                .ok_or_else(|| Error::BackendError(
-                    format!("Index range overflow in submesh '{}'", desc.name)
-                ))?;
+                .ok_or_else(|| {
+                    engine_error!("galaxy3d::Mesh", "Index range overflow in submesh '{}'", desc.name);
+                    Error::BackendError(
+                        format!("Index range overflow in submesh '{}'", desc.name)
+                    )
+                })?;
 
             if index_end > self.total_index_count {
+                engine_error!("galaxy3d::Mesh", "SubMesh '{}' index range [{}, {}) exceeds total_index_count {}",
+                    desc.name, desc.index_offset, index_end, self.total_index_count);
                 return Err(Error::BackendError(format!(
                     "SubMesh '{}' index range [{}, {}) exceeds total_index_count {}",
                     desc.name, desc.index_offset, index_end, self.total_index_count
@@ -608,6 +637,7 @@ impl Mesh {
             self.validate_submesh_desc(&submesh_desc)?;
 
             if lod.contains_submesh(&submesh_desc.name) {
+                engine_error!("galaxy3d::Mesh", "SubMesh '{}' already exists in LOD {}", submesh_desc.name, desc.lod_index);
                 return Err(Error::BackendError(format!(
                     "SubMesh '{}' already exists in LOD {}", submesh_desc.name, desc.lod_index
                 )));

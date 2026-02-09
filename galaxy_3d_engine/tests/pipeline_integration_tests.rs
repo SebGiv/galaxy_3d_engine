@@ -66,8 +66,9 @@ fn create_variant(
     vertex_shader: std::sync::Arc<dyn galaxy_3d_engine::galaxy3d::render::Shader>,
     fragment_shader: std::sync::Arc<dyn galaxy_3d_engine::galaxy3d::render::Shader>,
     topology: PrimitiveTopology,
-    enable_blending: bool,
+    blend_enable: bool,
 ) -> PipelineVariantDesc {
+    use galaxy_3d_engine::galaxy3d::render::ColorBlendState;
     PipelineVariantDesc {
         name: name.to_string(),
         passes: vec![PipelinePassDesc {
@@ -78,7 +79,13 @@ fn create_variant(
                 topology,
                 push_constant_ranges: vec![],
                 descriptor_set_layouts: vec![],
-                enable_blending,
+                rasterization: Default::default(),
+                depth_stencil: Default::default(),
+                color_blend: ColorBlendState {
+                    blend_enable,
+                    ..Default::default()
+                },
+                multisample: Default::default(),
             },
         }],
     }

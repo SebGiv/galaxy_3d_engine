@@ -67,7 +67,10 @@ fn create_mock_render_pipeline_desc() -> RenderPipelineDesc {
         topology: PrimitiveTopology::TriangleList,
         push_constant_ranges: vec![],
         descriptor_set_layouts: vec![],
-        enable_blending: false,
+        rasterization: Default::default(),
+        depth_stencil: Default::default(),
+        color_blend: Default::default(),
+        multisample: Default::default(),
     }
 }
 

@@ -48,17 +48,6 @@ pub mod galaxy3d {
 }
 
 /// Register the Vulkan backend with the plugin system
-///
-/// # Example
-///
-/// ```no_run
-/// use galaxy_3d_engine_renderer_vulkan::VulkanRenderer;
-/// use galaxy_3d_engine::RendererConfig;
-/// use winit::window::Window;
-///
-/// // Create renderer directly
-/// let renderer = VulkanRenderer::new(&window, RendererConfig::default())?;
-/// ```
 pub fn register() {
     // TODO: Implement plugin registration
     // galaxy_3d_engine::register_renderer_plugin("vulkan", create_vulkan_renderer);

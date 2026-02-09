@@ -45,72 +45,9 @@ impl ResourceManager {
     /// * `name` - Unique name for this texture resource
     /// * `desc` - Texture descriptor with renderer, texture settings, and layers
     ///
-    /// # Examples
-    ///
-    /// Simple texture:
-    /// ```ignore
-    /// let texture = resource_manager.create_texture(
-    ///     "player".to_string(),
-    ///     TextureDesc {
-    ///         renderer: renderer.clone(),
-    ///         texture: render::TextureDesc {
-    ///             width: 256,
-    ///             height: 256,
-    ///             format: TextureFormat::Rgba8,
-    ///             usage: TextureUsage::SAMPLED,
-    ///             array_layers: 1,  // Simple texture
-    ///             data: Some(TextureData::Single(pixel_data)),
-    ///             mipmap: MipmapMode::Generate { max_levels: None },
-    ///         },
-    ///         layers: vec![
-    ///             LayerDesc {
-    ///                 name: "player".to_string(),
-    ///                 layer_index: 0,
-    ///                 data: None,  // Already in texture.data
-    ///                 regions: vec![],  // No atlas
-    ///             }
-    ///         ],
-    ///     },
-    /// )?;
-    /// ```
-    ///
-    /// Indexed texture with atlas:
-    /// ```ignore
-    /// let texture = resource_manager.create_texture(
-    ///     "sprites".to_string(),
-    ///     TextureDesc {
-    ///         renderer: renderer.clone(),
-    ///         texture: render::TextureDesc {
-    ///             width: 1024,
-    ///             height: 1024,
-    ///             format: TextureFormat::Rgba8,
-    ///             usage: TextureUsage::SAMPLED,
-    ///             array_layers: 2,  // Indexed texture
-    ///             data: None,  // Will be provided per layer
-    ///             mipmap: MipmapMode::None,
-    ///         },
-    ///         layers: vec![
-    ///             LayerDesc {
-    ///                 name: "layer0".to_string(),
-    ///                 layer_index: 0,
-    ///                 data: Some(layer0_pixels),
-    ///                 regions: vec![
-    ///                     AtlasRegionDesc {
-    ///                         name: "player".to_string(),
-    ///                         region: AtlasRegion { x: 0, y: 0, width: 64, height: 64 },
-    ///                     },
-    ///                     AtlasRegionDesc {
-    ///                         name: "enemy".to_string(),
-    ///                         region: AtlasRegion { x: 64, y: 0, width: 64, height: 64 },
-    ///                     },
-    ///                 ],
-    ///             },
-    ///         ],
-    ///     },
-    /// )?;
-    /// ```
     pub fn create_texture(&mut self, name: String, desc: TextureDesc) -> Result<Arc<Texture>> {
         if self.textures.contains_key(&name) {
+            crate::engine_warn!("galaxy3d::ResourceManager", "Texture '{}' already exists", name);
             return Err(Error::BackendError(format!(
                 "Texture '{}' already exists in ResourceManager", name
             )));
@@ -175,14 +112,20 @@ impl ResourceManager {
         desc: LayerDesc,
     ) -> Result<u32> {
         let arc = self.textures.get_mut(texture_name)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Texture '{}' not found in ResourceManager", texture_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Texture '{}' not found", texture_name);
+                Error::BackendError(format!(
+                    "Texture '{}' not found in ResourceManager", texture_name
+                ))
+            })?;
 
         let texture = Arc::get_mut(arc)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Cannot mutate texture '{}': other references exist", texture_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate texture '{}': other references exist", texture_name);
+                Error::BackendError(format!(
+                    "Cannot mutate texture '{}': other references exist", texture_name
+                ))
+            })?;
 
         texture.add_layer(desc)
     }
@@ -206,14 +149,20 @@ impl ResourceManager {
         desc: AtlasRegionDesc,
     ) -> Result<u32> {
         let arc = self.textures.get_mut(texture_name)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Texture '{}' not found in ResourceManager", texture_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Texture '{}' not found", texture_name);
+                Error::BackendError(format!(
+                    "Texture '{}' not found in ResourceManager", texture_name
+                ))
+            })?;
 
         let texture = Arc::get_mut(arc)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Cannot mutate texture '{}': other references exist", texture_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate texture '{}': other references exist", texture_name);
+                Error::BackendError(format!(
+                    "Cannot mutate texture '{}': other references exist", texture_name
+                ))
+            })?;
 
         texture.add_region(layer_name, desc)
     }
@@ -230,42 +179,9 @@ impl ResourceManager {
     /// * `name` - Unique name for this mesh resource (group name)
     /// * `desc` - Mesh description with renderer, vertex/index data and entries
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mesh = resource_manager.create_mesh(
-    ///     "characters".to_string(),
-    ///     MeshDesc {
-    ///         renderer: renderer.clone(),
-    ///         vertex_data: vertex_bytes,
-    ///         index_data: Some(index_bytes),
-    ///         vertex_layout: layout,
-    ///         index_type: IndexType::U16,
-    ///         meshes: vec![
-    ///             MeshEntryDesc {
-    ///                 name: "hero".to_string(),
-    ///                 lods: vec![
-    ///                     MeshLODDesc {
-    ///                         lod_index: 0,
-    ///                         submeshes: vec![
-    ///                             SubMeshDesc {
-    ///                                 name: "body".to_string(),
-    ///                                 vertex_offset: 0,
-    ///                                 vertex_count: 5000,
-    ///                                 index_offset: 0,
-    ///                                 index_count: 15000,
-    ///                                 topology: PrimitiveTopology::TriangleList,
-    ///                             },
-    ///                         ],
-    ///                     },
-    ///                 ],
-    ///             },
-    ///         ],
-    ///     },
-    /// )?;
-    /// ```
     pub fn create_mesh(&mut self, name: String, desc: MeshDesc) -> Result<Arc<Mesh>> {
         if self.meshes.contains_key(&name) {
+            crate::engine_warn!("galaxy3d::ResourceManager", "Mesh '{}' already exists", name);
             return Err(Error::BackendError(format!(
                 "Mesh '{}' already exists in ResourceManager", name
             )));
@@ -329,14 +245,20 @@ impl ResourceManager {
     /// - Submesh validation fails (offsets exceed buffer sizes)
     pub fn add_mesh_entry(&mut self, mesh_name: &str, desc: MeshEntryDesc) -> Result<usize> {
         let arc = self.meshes.get_mut(mesh_name)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Mesh '{}' not found in ResourceManager", mesh_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Mesh '{}' not found", mesh_name);
+                Error::BackendError(format!(
+                    "Mesh '{}' not found in ResourceManager", mesh_name
+                ))
+            })?;
 
         let mesh = Arc::get_mut(arc)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Cannot mutate Mesh '{}': other references exist", mesh_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate Mesh '{}': other references exist", mesh_name);
+                Error::BackendError(format!(
+                    "Cannot mutate Mesh '{}': other references exist", mesh_name
+                ))
+            })?;
 
         mesh.add_mesh_entry(desc)
     }
@@ -364,14 +286,20 @@ impl ResourceManager {
         desc: MeshLODDesc,
     ) -> Result<usize> {
         let arc = self.meshes.get_mut(mesh_name)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Mesh '{}' not found in ResourceManager", mesh_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Mesh '{}' not found", mesh_name);
+                Error::BackendError(format!(
+                    "Mesh '{}' not found in ResourceManager", mesh_name
+                ))
+            })?;
 
         let mesh = Arc::get_mut(arc)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Cannot mutate Mesh '{}': other references exist", mesh_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate Mesh '{}': other references exist", mesh_name);
+                Error::BackendError(format!(
+                    "Cannot mutate Mesh '{}': other references exist", mesh_name
+                ))
+            })?;
 
         mesh.add_mesh_lod(entry_id, desc)
     }
@@ -401,14 +329,20 @@ impl ResourceManager {
         desc: SubMeshDesc,
     ) -> Result<usize> {
         let arc = self.meshes.get_mut(mesh_name)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Mesh '{}' not found in ResourceManager", mesh_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Mesh '{}' not found", mesh_name);
+                Error::BackendError(format!(
+                    "Mesh '{}' not found in ResourceManager", mesh_name
+                ))
+            })?;
 
         let mesh = Arc::get_mut(arc)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Cannot mutate Mesh '{}': other references exist", mesh_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate Mesh '{}': other references exist", mesh_name);
+                Error::BackendError(format!(
+                    "Cannot mutate Mesh '{}': other references exist", mesh_name
+                ))
+            })?;
 
         mesh.add_submesh(entry_id, lod_index, desc)
     }
@@ -425,28 +359,9 @@ impl ResourceManager {
     /// * `name` - Unique name for this pipeline resource
     /// * `desc` - Pipeline descriptor with renderer and variant configurations
     ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let pipeline = resource_manager.create_pipeline(
-    ///     "mesh".to_string(),
-    ///     PipelineDesc {
-    ///         renderer: renderer.clone(),
-    ///         variants: vec![
-    ///             PipelineVariantDesc {
-    ///                 name: "static".to_string(),
-    ///                 pipeline: render::PipelineDesc {
-    ///                     vertex_shader: vs,
-    ///                     fragment_shader: fs,
-    ///                     // ... other pipeline settings
-    ///                 },
-    ///             },
-    ///         ],
-    ///     },
-    /// )?;
-    /// ```
     pub fn create_pipeline(&mut self, name: String, desc: PipelineDesc) -> Result<Arc<Pipeline>> {
         if self.pipelines.contains_key(&name) {
+            crate::engine_warn!("galaxy3d::ResourceManager", "Pipeline '{}' already exists", name);
             return Err(Error::BackendError(format!(
                 "Pipeline '{}' already exists in ResourceManager", name
             )));
@@ -509,14 +424,20 @@ impl ResourceManager {
         desc: PipelineVariantDesc,
     ) -> Result<u32> {
         let arc = self.pipelines.get_mut(pipeline_name)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Pipeline '{}' not found in ResourceManager", pipeline_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Pipeline '{}' not found", pipeline_name);
+                Error::BackendError(format!(
+                    "Pipeline '{}' not found in ResourceManager", pipeline_name
+                ))
+            })?;
 
         let pipeline = Arc::get_mut(arc)
-            .ok_or_else(|| Error::BackendError(format!(
-                "Cannot mutate Pipeline '{}': other references exist", pipeline_name
-            )))?;
+            .ok_or_else(|| {
+                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate Pipeline '{}': other references exist", pipeline_name);
+                Error::BackendError(format!(
+                    "Cannot mutate Pipeline '{}': other references exist", pipeline_name
+                ))
+            })?;
 
         pipeline.add_variant(desc)
     }

@@ -104,6 +104,7 @@ impl CommandList {
         pipeline_layout: vk::PipelineLayout,
     ) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "bind_descriptor_sets: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
@@ -125,6 +126,7 @@ impl CommandList {
 impl RendererCommandList for CommandList {
     fn begin(&mut self) -> Result<()> {
         if self.is_recording {
+            engine_error!("galaxy3d::vulkan", "begin: command list already recording");
             return Err(Error::BackendError("Command list already recording".to_string()));
         }
 
@@ -135,7 +137,10 @@ impl RendererCommandList for CommandList {
                     self.command_buffer,
                     vk::CommandBufferResetFlags::empty(),
                 )
-                .map_err(|e| Error::BackendError(format!("Failed to reset command buffer: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to reset command buffer: {:?}", e);
+                    Error::BackendError(format!("Failed to reset command buffer: {:?}", e))
+                })?;
 
             // Begin command buffer
             let begin_info = vk::CommandBufferBeginInfo::default()
@@ -143,7 +148,10 @@ impl RendererCommandList for CommandList {
 
             self.device
                 .begin_command_buffer(self.command_buffer, &begin_info)
-                .map_err(|e| Error::BackendError(format!("Failed to begin command buffer: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to begin command buffer: {:?}", e);
+                    Error::BackendError(format!("Failed to begin command buffer: {:?}", e))
+                })?;
 
             self.is_recording = true;
             self.in_render_pass = false;
@@ -160,17 +168,22 @@ impl RendererCommandList for CommandList {
 
     fn end(&mut self) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "end: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
         if self.in_render_pass {
+            engine_error!("galaxy3d::vulkan", "end: render pass not ended before ending command list");
             return Err(Error::BackendError("Render pass not ended before ending command list".to_string()));
         }
 
         unsafe {
             self.device
                 .end_command_buffer(self.command_buffer)
-                .map_err(|e| Error::BackendError(format!("Failed to end command buffer: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to end command buffer: {:?}", e);
+                    Error::BackendError(format!("Failed to end command buffer: {:?}", e))
+                })?;
 
             self.is_recording = false;
 
@@ -185,10 +198,12 @@ impl RendererCommandList for CommandList {
         clear_values: &[ClearValue],
     ) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "begin_render_pass: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
         if self.in_render_pass {
+            engine_error!("galaxy3d::vulkan", "begin_render_pass: already inside a render pass");
             return Err(Error::BackendError("Already inside a render pass".to_string()));
         }
 
@@ -229,7 +244,10 @@ impl RendererCommandList for CommandList {
                 .layers(1);
 
             let framebuffer = self.device.create_framebuffer(&framebuffer_info, None)
-                .map_err(|e| Error::BackendError(format!("Failed to create framebuffer: {:?}", e)))?;
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create framebuffer: {:?}", e);
+                    Error::BackendError(format!("Failed to create framebuffer: {:?}", e))
+                })?;
 
             // Store framebuffer for destruction in begin() or Drop
             self.framebuffers.push(framebuffer);
@@ -261,10 +279,12 @@ impl RendererCommandList for CommandList {
 
     fn end_render_pass(&mut self) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "end_render_pass: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
         if !self.in_render_pass {
+            engine_error!("galaxy3d::vulkan", "end_render_pass: not inside a render pass");
             return Err(Error::BackendError("Not inside a render pass".to_string()));
         }
 
@@ -279,15 +299,17 @@ impl RendererCommandList for CommandList {
 
     fn set_viewport(&mut self, viewport: Viewport) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "set_viewport: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
         unsafe {
+            // Viewport Y-flip: Vulkan framebuffer is Y-down, but the engine uses Y-up
             let vk_viewport = vk::Viewport::default()
                 .x(viewport.x)
-                .y(viewport.y)
+                .y(viewport.y + viewport.height)
                 .width(viewport.width)
-                .height(viewport.height)
+                .height(-viewport.height)
                 .min_depth(viewport.min_depth)
                 .max_depth(viewport.max_depth);
 
@@ -299,6 +321,7 @@ impl RendererCommandList for CommandList {
 
     fn set_scissor(&mut self, scissor: Rect2D) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "set_scissor: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
@@ -315,6 +338,7 @@ impl RendererCommandList for CommandList {
 
     fn bind_pipeline(&mut self, pipeline: &Arc<dyn RendererPipeline>) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "bind_pipeline: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
@@ -338,10 +362,12 @@ impl RendererCommandList for CommandList {
 
     fn push_constants(&mut self, stages: &[ShaderStage], offset: u32, data: &[u8]) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "push_constants: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
         let layout = self.bound_pipeline_layout.ok_or_else(|| {
+            engine_error!("galaxy3d::vulkan", "push_constants: no pipeline bound");
             Error::BackendError("No pipeline bound for push constants".to_string())
         })?;
 
@@ -370,6 +396,7 @@ impl RendererCommandList for CommandList {
 
     fn bind_vertex_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "bind_vertex_buffer: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
@@ -391,6 +418,7 @@ impl RendererCommandList for CommandList {
 
     fn bind_index_buffer(&mut self, buffer: &Arc<dyn RendererBuffer>, offset: u64, index_type: IndexType) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "bind_index_buffer: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
@@ -418,10 +446,12 @@ impl RendererCommandList for CommandList {
 
     fn draw(&mut self, vertex_count: u32, first_vertex: u32) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "draw: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
         if !self.in_render_pass {
+            engine_error!("galaxy3d::vulkan", "draw: not inside a render pass");
             return Err(Error::BackendError("Not inside a render pass".to_string()));
         }
 
@@ -440,10 +470,12 @@ impl RendererCommandList for CommandList {
 
     fn draw_indexed(&mut self, index_count: u32, first_index: u32, vertex_offset: i32) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "draw_indexed: command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
         if !self.in_render_pass {
+            engine_error!("galaxy3d::vulkan", "draw_indexed: not inside a render pass");
             return Err(Error::BackendError("Not inside a render pass".to_string()));
         }
 
@@ -467,6 +499,7 @@ impl RendererCommandList for CommandList {
         descriptor_sets: &[&Arc<dyn RendererDescriptorSet>],
     ) -> Result<()> {
         if !self.is_recording {
+            engine_error!("galaxy3d::vulkan", "bind_descriptor_sets (trait): command list not recording");
             return Err(Error::BackendError("Command list not recording".to_string()));
         }
 
