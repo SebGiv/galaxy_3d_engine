@@ -7,6 +7,7 @@ pub mod texture;
 pub mod geometry;
 pub mod pipeline;
 pub mod material;
+pub mod mesh;
 
 pub use resource_manager::ResourceManager;
 pub use texture::{
@@ -26,4 +27,10 @@ pub use material::{
     Material, MaterialTextureSlot,
     MaterialDesc, MaterialTextureSlotDesc,
     LayerRef, RegionRef, ParamValue,
+};
+pub use mesh::{
+    Mesh, MeshLOD, SubMesh,
+    MeshDesc, MeshLODDesc, SubMeshDesc,
+    GeometryMeshRef, GeometrySubMeshRef,
+    mesh_desc_from_name_mapping,
 };

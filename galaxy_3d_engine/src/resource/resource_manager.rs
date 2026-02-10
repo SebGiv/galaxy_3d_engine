@@ -19,12 +19,16 @@ use crate::resource::pipeline::{
 use crate::resource::material::{
     Material, MaterialDesc,
 };
+use crate::resource::mesh::{
+    Mesh, MeshDesc,
+};
 
 pub struct ResourceManager {
     textures: HashMap<String, Arc<Texture>>,
     geometries: HashMap<String, Arc<Geometry>>,
     pipelines: HashMap<String, Arc<Pipeline>>,
     materials: HashMap<String, Arc<Material>>,
+    meshes: HashMap<String, Arc<Mesh>>,
 }
 
 impl ResourceManager {
@@ -35,6 +39,7 @@ impl ResourceManager {
             geometries: HashMap::new(),
             pipelines: HashMap::new(),
             materials: HashMap::new(),
+            meshes: HashMap::new(),
         }
     }
 
@@ -433,6 +438,61 @@ impl ResourceManager {
     /// Get the number of registered materials
     pub fn material_count(&self) -> usize {
         self.materials.len()
+    }
+
+    // ===== MESH CREATION =====
+
+    /// Create a mesh resource and register it
+    ///
+    /// A mesh combines a GeometryMesh with Materials per submesh per LOD,
+    /// forming a renderable object. No GPU resources beyond those already
+    /// created for Geometry/Material are needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for this mesh resource
+    /// * `desc` - Mesh descriptor with geometry, mesh reference, and LOD material assignments
+    ///
+    pub fn create_mesh(&mut self, name: String, desc: MeshDesc) -> Result<Arc<Mesh>> {
+        if self.meshes.contains_key(&name) {
+            crate::engine_bail_warn!("galaxy3d::ResourceManager", "Mesh '{}' already exists", name);
+        }
+
+        let mesh = Mesh::from_desc(desc)?;
+        let lod_count = mesh.lod_count();
+
+        let mesh_arc = Arc::new(mesh);
+        self.meshes.insert(name.clone(), Arc::clone(&mesh_arc));
+
+        crate::engine_info!("galaxy3d::ResourceManager",
+            "Created Mesh resource '{}' ({} LOD{})",
+            name, lod_count, if lod_count != 1 { "s" } else { "" });
+
+        Ok(mesh_arc)
+    }
+
+    // ===== MESH ACCESS =====
+
+    /// Get a mesh by name
+    pub fn mesh(&self, name: &str) -> Option<&Arc<Mesh>> {
+        self.meshes.get(name)
+    }
+
+    /// Remove a mesh by name
+    ///
+    /// Returns `true` if the mesh was found and removed.
+    pub fn remove_mesh(&mut self, name: &str) -> bool {
+        if self.meshes.remove(name).is_some() {
+            crate::engine_info!("galaxy3d::ResourceManager", "Removed Mesh resource '{}'", name);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the number of registered meshes
+    pub fn mesh_count(&self) -> usize {
+        self.meshes.len()
     }
 }
 

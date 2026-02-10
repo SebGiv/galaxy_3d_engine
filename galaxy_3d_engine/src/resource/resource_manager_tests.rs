@@ -9,7 +9,10 @@ use crate::renderer::{
     MipmapMode, TextureData, VertexLayout, VertexBinding, VertexAttribute,
     VertexInputRate,
 };
-use crate::resource::{AtlasRegion, AtlasRegionDesc, LayerDesc, PipelinePassDesc};
+use crate::resource::{
+    AtlasRegion, AtlasRegionDesc, LayerDesc, PipelinePassDesc,
+    MeshLODDesc, SubMeshDesc, GeometryMeshRef, GeometrySubMeshRef,
+};
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
@@ -165,6 +168,56 @@ fn create_test_pipeline_desc(
     }
 }
 
+/// Create a simple material descriptor for testing (no textures, no params)
+fn create_test_material_desc(pipeline: &Arc<Pipeline>) -> MaterialDesc {
+    MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![],
+        params: vec![],
+    }
+}
+
+/// Create a simple mesh descriptor for testing
+///
+/// Requires a geometry with at least one mesh (index 0) with one LOD (index 0)
+/// and one submesh (index 0).
+fn create_test_mesh_desc(
+    geometry: &Arc<Geometry>,
+    material: &Arc<Material>,
+) -> MeshDesc {
+    MeshDesc {
+        geometry: geometry.clone(),
+        geometry_mesh: GeometryMeshRef::Index(0),
+        lods: vec![MeshLODDesc {
+            lod_index: 0,
+            submeshes: vec![SubMeshDesc {
+                submesh: GeometrySubMeshRef::Index(0),
+                material: material.clone(),
+            }],
+        }],
+    }
+}
+
+/// Create prerequisites for mesh testing (geometry + pipeline + material)
+///
+/// Returns (geometry, material) Arcs for use in MeshDesc.
+fn create_mesh_prerequisites(
+    rm: &mut ResourceManager,
+    renderer: &Arc<Mutex<dyn crate::renderer::Renderer>>,
+    suffix: &str,
+) -> (Arc<Geometry>, Arc<Material>) {
+    let geom_desc = create_test_geometry_desc(renderer.clone(), suffix);
+    let geometry = rm.create_geometry(format!("geom_{}", suffix), geom_desc).unwrap();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), suffix);
+    let pipeline = rm.create_pipeline(format!("pipe_{}", suffix), pipe_desc).unwrap();
+
+    let mat_desc = create_test_material_desc(&pipeline);
+    let material = rm.create_material(format!("mat_{}", suffix), mat_desc).unwrap();
+
+    (geometry, material)
+}
+
 // ============================================================================
 // Tests: ResourceManager Creation
 // ============================================================================
@@ -175,6 +228,8 @@ fn test_resource_manager_new() {
     assert_eq!(rm.texture_count(), 0);
     assert_eq!(rm.geometry_count(), 0);
     assert_eq!(rm.pipeline_count(), 0);
+    assert_eq!(rm.material_count(), 0);
+    assert_eq!(rm.mesh_count(), 0);
 }
 
 // ============================================================================
@@ -518,6 +573,220 @@ fn test_pipeline_count() {
 }
 
 // ============================================================================
+// Tests: Material Management
+// ============================================================================
+
+#[test]
+fn test_create_material() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat_desc = create_test_material_desc(&pipeline);
+    let material = rm.create_material("body".to_string(), mat_desc).unwrap();
+
+    assert_eq!(rm.material_count(), 1);
+    assert_eq!(material.texture_slot_count(), 0);
+    assert_eq!(material.param_count(), 0);
+}
+
+#[test]
+fn test_get_material() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat_desc = create_test_material_desc(&pipeline);
+    rm.create_material("body".to_string(), mat_desc).unwrap();
+
+    let material = rm.material("body");
+    assert!(material.is_some());
+}
+
+#[test]
+fn test_get_material_not_found() {
+    let rm = ResourceManager::new();
+    let material = rm.material("nonexistent");
+    assert!(material.is_none());
+}
+
+#[test]
+fn test_remove_material() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat_desc = create_test_material_desc(&pipeline);
+    rm.create_material("body".to_string(), mat_desc).unwrap();
+
+    assert_eq!(rm.material_count(), 1);
+
+    let removed = rm.remove_material("body");
+    assert!(removed);
+    assert_eq!(rm.material_count(), 0);
+}
+
+#[test]
+fn test_remove_material_not_found() {
+    let mut rm = ResourceManager::new();
+    let removed = rm.remove_material("nonexistent");
+    assert!(!removed);
+}
+
+#[test]
+fn test_duplicate_material_fails() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat_desc1 = create_test_material_desc(&pipeline);
+    rm.create_material("body".to_string(), mat_desc1).unwrap();
+
+    let mat_desc2 = create_test_material_desc(&pipeline);
+    let result = rm.create_material("body".to_string(), mat_desc2);
+
+    assert!(result.is_err());
+    assert_eq!(rm.material_count(), 1);
+}
+
+#[test]
+fn test_material_count() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    assert_eq!(rm.material_count(), 0);
+
+    let mat_desc1 = create_test_material_desc(&pipeline);
+    rm.create_material("mat1".to_string(), mat_desc1).unwrap();
+    assert_eq!(rm.material_count(), 1);
+
+    let mat_desc2 = create_test_material_desc(&pipeline);
+    rm.create_material("mat2".to_string(), mat_desc2).unwrap();
+    assert_eq!(rm.material_count(), 2);
+
+    rm.remove_material("mat1");
+    assert_eq!(rm.material_count(), 1);
+
+    rm.remove_material("mat2");
+    assert_eq!(rm.material_count(), 0);
+}
+
+// ============================================================================
+// Tests: Mesh Management
+// ============================================================================
+
+#[test]
+fn test_create_mesh() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+
+    let mesh_desc = create_test_mesh_desc(&geometry, &material);
+    let mesh = rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
+
+    assert_eq!(rm.mesh_count(), 1);
+    assert_eq!(mesh.lod_count(), 1);
+}
+
+#[test]
+fn test_get_mesh() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+
+    let mesh_desc = create_test_mesh_desc(&geometry, &material);
+    rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
+
+    let mesh = rm.mesh("hero");
+    assert!(mesh.is_some());
+}
+
+#[test]
+fn test_get_mesh_not_found() {
+    let rm = ResourceManager::new();
+    let mesh = rm.mesh("nonexistent");
+    assert!(mesh.is_none());
+}
+
+#[test]
+fn test_remove_mesh() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+
+    let mesh_desc = create_test_mesh_desc(&geometry, &material);
+    rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
+
+    assert_eq!(rm.mesh_count(), 1);
+
+    let removed = rm.remove_mesh("hero");
+    assert!(removed);
+    assert_eq!(rm.mesh_count(), 0);
+}
+
+#[test]
+fn test_remove_mesh_not_found() {
+    let mut rm = ResourceManager::new();
+    let removed = rm.remove_mesh("nonexistent");
+    assert!(!removed);
+}
+
+#[test]
+fn test_duplicate_mesh_fails() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+
+    let mesh_desc1 = create_test_mesh_desc(&geometry, &material);
+    rm.create_mesh("hero".to_string(), mesh_desc1).unwrap();
+
+    let mesh_desc2 = create_test_mesh_desc(&geometry, &material);
+    let result = rm.create_mesh("hero".to_string(), mesh_desc2);
+
+    assert!(result.is_err());
+    assert_eq!(rm.mesh_count(), 1);
+}
+
+#[test]
+fn test_mesh_count() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+
+    assert_eq!(rm.mesh_count(), 0);
+
+    let mesh_desc1 = create_test_mesh_desc(&geometry, &material);
+    rm.create_mesh("mesh1".to_string(), mesh_desc1).unwrap();
+    assert_eq!(rm.mesh_count(), 1);
+
+    let mesh_desc2 = create_test_mesh_desc(&geometry, &material);
+    rm.create_mesh("mesh2".to_string(), mesh_desc2).unwrap();
+    assert_eq!(rm.mesh_count(), 2);
+
+    rm.remove_mesh("mesh1");
+    assert_eq!(rm.mesh_count(), 1);
+
+    rm.remove_mesh("mesh2");
+    assert_eq!(rm.mesh_count(), 0);
+}
+
+// ============================================================================
 // Tests: Mixed Resource Management
 // ============================================================================
 
@@ -532,16 +801,26 @@ fn test_mixed_resources() {
     let pipeline_desc = create_test_pipeline_desc(renderer.clone(), "pipeline");
 
     rm.create_texture("texture".to_string(), texture_desc).unwrap();
-    rm.create_geometry("geom".to_string(), geom_desc).unwrap();
-    rm.create_pipeline("pipeline".to_string(), pipeline_desc).unwrap();
+    let geometry = rm.create_geometry("geom".to_string(), geom_desc).unwrap();
+    let pipeline = rm.create_pipeline("pipeline".to_string(), pipeline_desc).unwrap();
+
+    let mat_desc = create_test_material_desc(&pipeline);
+    let material = rm.create_material("material".to_string(), mat_desc).unwrap();
+
+    let mesh_desc = create_test_mesh_desc(&geometry, &material);
+    rm.create_mesh("mesh".to_string(), mesh_desc).unwrap();
 
     assert_eq!(rm.texture_count(), 1);
     assert_eq!(rm.geometry_count(), 1);
     assert_eq!(rm.pipeline_count(), 1);
+    assert_eq!(rm.material_count(), 1);
+    assert_eq!(rm.mesh_count(), 1);
 
     assert!(rm.texture("texture").is_some());
     assert!(rm.geometry("geom").is_some());
     assert!(rm.pipeline("pipeline").is_some());
+    assert!(rm.material("material").is_some());
+    assert!(rm.mesh("mesh").is_some());
 }
 
 #[test]
@@ -549,7 +828,7 @@ fn test_clear_all_resources() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    // Create multiple resources
+    // Create multiple base resources
     for i in 0..3 {
         let texture_desc = create_test_texture_desc(renderer.clone(), &format!("texture{}", i), 256, 256);
         let geom_desc = create_test_geometry_desc(renderer.clone(), &format!("geom{}", i));
@@ -560,12 +839,28 @@ fn test_clear_all_resources() {
         rm.create_pipeline(format!("pipeline{}", i), pipeline_desc).unwrap();
     }
 
+    // Create materials and meshes (need references to existing resources)
+    for i in 0..3 {
+        let pipeline = rm.pipeline(&format!("pipeline{}", i)).unwrap().clone();
+        let geometry = rm.geometry(&format!("geom{}", i)).unwrap().clone();
+
+        let mat_desc = create_test_material_desc(&pipeline);
+        let material = rm.create_material(format!("material{}", i), mat_desc).unwrap();
+
+        let mesh_desc = create_test_mesh_desc(&geometry, &material);
+        rm.create_mesh(format!("mesh{}", i), mesh_desc).unwrap();
+    }
+
     assert_eq!(rm.texture_count(), 3);
     assert_eq!(rm.geometry_count(), 3);
     assert_eq!(rm.pipeline_count(), 3);
+    assert_eq!(rm.material_count(), 3);
+    assert_eq!(rm.mesh_count(), 3);
 
-    // Remove all
+    // Remove all (meshes first, then materials, then base resources)
     for i in 0..3 {
+        rm.remove_mesh(&format!("mesh{}", i));
+        rm.remove_material(&format!("material{}", i));
         rm.remove_texture(&format!("texture{}", i));
         rm.remove_geometry(&format!("geom{}", i));
         rm.remove_pipeline(&format!("pipeline{}", i));
@@ -574,6 +869,8 @@ fn test_clear_all_resources() {
     assert_eq!(rm.texture_count(), 0);
     assert_eq!(rm.geometry_count(), 0);
     assert_eq!(rm.pipeline_count(), 0);
+    assert_eq!(rm.material_count(), 0);
+    assert_eq!(rm.mesh_count(), 0);
 }
 
 // ============================================================================
