@@ -291,12 +291,10 @@ impl RendererSwapchain for Swapchain {
                     }
                     Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                         self.current_frame = (self.current_frame + 1) % self.max_frames_in_flight;
-                        engine_error!("galaxy3d::vulkan", "Swapchain out of date during present");
-                        Err(Error::BackendError("Swapchain out of date".to_string()))
+                        Err(engine_err!("galaxy3d::vulkan", "Swapchain out of date during present"))
                     }
                     Err(e) => {
-                        engine_error!("galaxy3d::vulkan", "Failed to present swapchain image: {:?}", e);
-                        Err(Error::BackendError(format!("Failed to present: {:?}", e)))
+                        Err(engine_err!("galaxy3d::vulkan", "Failed to present swapchain image: {:?}", e))
                     }
                 }
         }

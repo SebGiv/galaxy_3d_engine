@@ -25,6 +25,7 @@ mod engine;
 pub mod log;
 pub mod renderer;
 pub mod resource;
+pub mod scene;
 
 // Main galaxy3d namespace module
 pub mod galaxy3d {
@@ -51,6 +52,11 @@ pub mod galaxy3d {
     // Resource sub-module
     pub mod resource {
         pub use crate::resource::*;
+    }
+
+    // Scene sub-module
+    pub mod scene {
+        pub use crate::scene::*;
     }
 }
 

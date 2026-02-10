@@ -9,6 +9,7 @@ use std::sync::{OnceLock, RwLock, Arc, Mutex};
 use std::time::SystemTime;
 use crate::renderer::Renderer;
 use crate::resource::ResourceManager;
+use crate::scene::SceneManager;
 use crate::error::{Result, Error};
 use crate::log::{Logger, LogEntry, LogSeverity, DefaultLogger};
 
@@ -26,6 +27,8 @@ struct EngineState {
     renderers: RwLock<HashMap<String, Arc<Mutex<dyn Renderer>>>>,
     /// Resource manager singleton
     resource_manager: RwLock<Option<Arc<Mutex<ResourceManager>>>>,
+    /// Scene manager singleton
+    scene_manager: RwLock<Option<Arc<Mutex<SceneManager>>>>,
 }
 
 impl EngineState {
@@ -34,6 +37,7 @@ impl EngineState {
         Self {
             renderers: RwLock::new(HashMap::new()),
             resource_manager: RwLock::new(None),
+            scene_manager: RwLock::new(None),
         }
     }
 }
@@ -84,6 +88,10 @@ impl Engine {
     /// After calling this, you must call `initialize()` again before creating new subsystems.
     pub fn shutdown() {
         if let Some(state) = ENGINE_STATE.get() {
+            // Clear scene manager BEFORE resource manager (scenes reference resources)
+            if let Ok(mut sm) = state.scene_manager.write() {
+                *sm = None;
+            }
             // Clear resource manager BEFORE renderers (resources reference GPU objects)
             if let Ok(mut rm) = state.resource_manager.write() {
                 *rm = None;
@@ -321,10 +329,106 @@ impl Engine {
         Ok(())
     }
 
+    // ===== SCENE MANAGER API =====
+
+    /// Create and register the scene manager singleton
+    ///
+    /// Creates a new SceneManager and registers it as a global singleton.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The engine is not initialized
+    /// - A scene manager already exists
+    ///
+    pub fn create_scene_manager() -> Result<()> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
+            ))?;
+
+        let mut lock = state.scene_manager.write()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("SceneManager lock poisoned".to_string())
+            ))?;
+
+        if lock.is_some() {
+            return Err(Self::log_and_return_error(
+                Error::InitializationFailed("SceneManager already exists. Call Engine::destroy_scene_manager() first.".to_string())
+            ));
+        }
+
+        *lock = Some(Arc::new(Mutex::new(SceneManager::new())));
+
+        crate::engine_info!("galaxy3d::Engine", "SceneManager singleton created successfully");
+
+        Ok(())
+    }
+
+    /// Get the scene manager singleton
+    ///
+    /// Provides global access to the scene manager after it has been created.
+    ///
+    /// # Returns
+    ///
+    /// A shared pointer to the SceneManager wrapped in a Mutex for thread-safe access
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The engine is not initialized
+    /// - The scene manager has not been created
+    ///
+    pub fn scene_manager() -> Result<Arc<Mutex<SceneManager>>> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
+            ))?;
+
+        let lock = state.scene_manager.read()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("SceneManager lock poisoned".to_string())
+            ))?;
+
+        lock.clone()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("SceneManager not created. Call Engine::create_scene_manager() first.".to_string())
+            ))
+    }
+
+    /// Destroy the scene manager singleton
+    ///
+    /// Removes the scene manager singleton, allowing a new one to be created.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the engine is not initialized
+    ///
+    pub fn destroy_scene_manager() -> Result<()> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized".to_string())
+            ))?;
+
+        let mut lock = state.scene_manager.write()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("SceneManager lock poisoned".to_string())
+            ))?;
+
+        *lock = None;
+
+        crate::engine_info!("galaxy3d::Engine", "SceneManager singleton destroyed");
+
+        Ok(())
+    }
+
     /// Reset all singletons for testing (only available in test builds)
     #[cfg(test)]
     pub fn reset_for_testing() {
         if let Some(state) = ENGINE_STATE.get() {
+            if let Ok(mut sm) = state.scene_manager.write() {
+                *sm = None;
+            }
             if let Ok(mut rm) = state.resource_manager.write() {
                 *rm = None;
             }
