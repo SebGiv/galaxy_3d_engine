@@ -144,6 +144,28 @@ Pour développer/coder, **s'inspirer et s'aider** des documents dans le dossier 
 
 ---
 
+### Règle 7 - Logging Obligatoire des Erreurs
+
+**Justification** : Garantir que chaque chemin d'erreur dans le code produit un log traçable, sans exception.
+
+**TOUJOURS** utiliser les macros de logging structurel pour les erreurs :
+
+| Macro | Usage |
+|-------|-------|
+| `engine_bail!(tag, msg)` | Log ERROR + `return Err(BackendError(...))` |
+| `engine_bail_warn!(tag, msg)` | Log WARN + `return Err(BackendError(...))` |
+| `engine_err!(tag, msg)` | Log ERROR + retourne `Error::BackendError(...)` (closures) |
+| `engine_warn_err!(tag, msg)` | Log WARN + retourne `Error::BackendError(...)` (closures) |
+
+**INTERDIT** :
+- `return Err(Error::BackendError(...))` sans log → utiliser `engine_bail!`
+- `Error::BackendError(...)` dans une closure sans log → utiliser `engine_err!`
+- `engine_error!` + `return Err(...)` en deux lignes séparées → utiliser `engine_bail!`
+
+**Exception** : `Error::InitializationFailed` et `Error::OutOfMemory` qui ont leur propre sémantique.
+
+---
+
 ## Référence Rapide
 
 | Situation | Action | Attente |
@@ -155,6 +177,7 @@ Pour développer/coder, **s'inspirer et s'aider** des documents dans le dossier 
 | Push seul | Push (si commits faits) | `push` |
 | Doute quelconque | Relire CLAUDE.md | - |
 | Écrire du code | Tout en anglais | - |
+| Chemin d'erreur | Utiliser `engine_bail!`/`engine_err!` | - |
 | Communiquer | Toujours en français | - |
 
 ---
@@ -176,6 +199,7 @@ Pour développer/coder, **s'inspirer et s'aider** des documents dans le dossier 
 - [ ] Fonctions/variables/structs en anglais
 - [ ] Commentaires pertinents en anglais
 - [ ] Documentation (///  //!) en anglais
+- [ ] Erreurs via `engine_bail!`/`engine_err!` (jamais de `Err(Error::...)` nu)
 
 ---
 

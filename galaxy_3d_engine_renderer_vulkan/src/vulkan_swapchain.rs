@@ -2,7 +2,7 @@
 
 use galaxy_3d_engine::galaxy3d::{Result, Error};
 use galaxy_3d_engine::galaxy3d::render::{Swapchain as RendererSwapchain, RenderTarget as RendererRenderTarget, TextureFormat};
-use galaxy_3d_engine::engine_error;
+use galaxy_3d_engine::{engine_error, engine_err};
 use ash::vk;
 use std::sync::Arc;
 
@@ -306,10 +306,7 @@ impl RendererSwapchain for Swapchain {
         unsafe {
             // Wait for device to be idle
             self.device.device_wait_idle()
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "Failed to wait idle before swapchain recreate: {:?}", e);
-                    Error::BackendError(format!("Failed to wait idle: {:?}", e))
-                })?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to wait idle before swapchain recreate: {:?}", e))?;
 
             // Destroy old image views
             for image_view in &self.swapchain_image_views {

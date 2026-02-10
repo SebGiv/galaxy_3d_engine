@@ -3,7 +3,7 @@
 use galaxy_3d_engine::galaxy3d::{Result, Error};
 use galaxy_3d_engine::galaxy3d::render::Texture as RendererTexture;
 use galaxy_3d_engine::galaxy3d::render::TextureInfo;
-use galaxy_3d_engine::{engine_error, engine_warn};
+use galaxy_3d_engine::{engine_error, engine_bail, engine_err, engine_warn_err};
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 use std::sync::Arc;
@@ -51,18 +51,12 @@ impl RendererTexture for Texture {
     fn update(&self, layer: u32, mip_level: u32, data: &[u8]) -> Result<()> {
         // Validate layer index
         if layer >= self.info.array_layers {
-            engine_error!("galaxy3d::vulkan", "update: layer {} out of range (array_layers = {})", layer, self.info.array_layers);
-            return Err(Error::BackendError(format!(
-                "Layer index {} out of range (array_layers = {})", layer, self.info.array_layers
-            )));
+            engine_bail!("galaxy3d::vulkan", "update: layer {} out of range (array_layers = {})", layer, self.info.array_layers);
         }
 
         // Validate mip level
         if mip_level >= self.info.mip_levels {
-            engine_error!("galaxy3d::vulkan", "update: mip_level {} out of range (mip_levels = {})", mip_level, self.info.mip_levels);
-            return Err(Error::BackendError(format!(
-                "Mip level {} out of range (mip_levels = {})", mip_level, self.info.mip_levels
-            )));
+            engine_bail!("galaxy3d::vulkan", "update: mip_level {} out of range (mip_levels = {})", mip_level, self.info.mip_levels);
         }
 
         // Calculate expected size for this mip level
@@ -71,12 +65,8 @@ impl RendererTexture for Texture {
         let expected_size = (mip_width * mip_height * self.info.format.bytes_per_pixel()) as usize;
 
         if data.len() != expected_size {
-            engine_error!("galaxy3d::vulkan", "update: data size {} doesn't match expected {} for mip level {} ({}x{})",
+            engine_bail!("galaxy3d::vulkan", "update: data size {} doesn't match expected {} for mip level {} ({}x{})",
                 data.len(), expected_size, mip_level, mip_width, mip_height);
-            return Err(Error::BackendError(format!(
-                "Data size {} doesn't match expected {} for mip level {} ({}x{})",
-                data.len(), expected_size, mip_level, mip_width, mip_height
-            )));
         }
 
         unsafe {
@@ -90,10 +80,7 @@ impl RendererTexture for Texture {
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
             let staging_buffer = device.create_buffer(&staging_buffer_create_info, None)
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "update: failed to create staging buffer: {:?}", e);
-                    Error::BackendError(format!("Failed to create staging buffer: {:?}", e))
-                })?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to create staging buffer: {:?}", e))?;
 
             let staging_requirements = device.get_buffer_memory_requirements(staging_buffer);
 
@@ -111,17 +98,11 @@ impl RendererTexture for Texture {
                 })?;
 
             device.bind_buffer_memory(staging_buffer, staging_allocation.memory(), staging_allocation.offset())
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "update: failed to bind staging buffer memory: {:?}", e);
-                    Error::BackendError(format!("Failed to bind staging buffer memory: {:?}", e))
-                })?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to bind staging buffer memory: {:?}", e))?;
 
             // Copy data to staging buffer
             let mapped_ptr = staging_allocation.mapped_ptr()
-                .ok_or_else(|| {
-                    engine_error!("galaxy3d::vulkan", "Texture update: staging buffer is not mapped");
-                    Error::BackendError("Staging buffer is not mapped".to_string())
-                })?
+                .ok_or_else(|| engine_err!("galaxy3d::vulkan", "Texture update: staging buffer is not mapped"))?
                 .as_ptr() as *mut u8;
             std::ptr::copy_nonoverlapping(data.as_ptr(), mapped_ptr, data.len());
 
@@ -134,20 +115,14 @@ impl RendererTexture for Texture {
                 .command_buffer_count(1);
 
             let command_buffers = device.allocate_command_buffers(&command_buffer_allocate_info)
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "update: failed to allocate command buffer: {:?}", e);
-                    Error::BackendError(format!("Failed to allocate command buffer: {:?}", e))
-                })?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to allocate command buffer: {:?}", e))?;
             let command_buffer = command_buffers[0];
 
             let begin_info = vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
             device.begin_command_buffer(command_buffer, &begin_info)
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "update: failed to begin command buffer: {:?}", e);
-                    Error::BackendError(format!("Failed to begin command buffer: {:?}", e))
-                })?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to begin command buffer: {:?}", e))?;
 
             // Transition single layer/mip: SHADER_READ_ONLY → TRANSFER_DST
             let barrier_to_transfer = vk::ImageMemoryBarrier::default()
@@ -231,35 +206,23 @@ impl RendererTexture for Texture {
 
             // End recording, submit, and wait
             device.end_command_buffer(command_buffer)
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "update: failed to end command buffer: {:?}", e);
-                    Error::BackendError(format!("Failed to end command buffer: {:?}", e))
-                })?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to end command buffer: {:?}", e))?;
 
             let command_buffers_submit = [command_buffer];
             let submit_info = vk::SubmitInfo::default()
                 .command_buffers(&command_buffers_submit);
 
             device.queue_submit(self.ctx.graphics_queue, &[submit_info], vk::Fence::null())
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "update: failed to submit commands: {:?}", e);
-                    Error::BackendError(format!("Failed to submit command buffer: {:?}", e))
-                })?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to submit commands: {:?}", e))?;
 
             device.queue_wait_idle(self.ctx.graphics_queue)
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "update: failed to wait for completion: {:?}", e);
-                    Error::BackendError(format!("Failed to wait for queue idle: {:?}", e))
-                })?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to wait for completion: {:?}", e))?;
 
             // Clean up staging buffer (command buffer will be reset automatically)
             device.free_command_buffers(command_pool, &[command_buffer]);
             device.destroy_buffer(staging_buffer, None);
             self.ctx.allocator.lock().unwrap().free(staging_allocation)
-                .map_err(|_e| {
-                    engine_warn!("galaxy3d::vulkan", "Texture update: failed to free staging allocation");
-                    Error::BackendError("Failed to free staging allocation".to_string())
-                })?;
+                .map_err(|_e| engine_warn_err!("galaxy3d::vulkan", "Texture update: failed to free staging allocation"))?;
 
             Ok(())
         }

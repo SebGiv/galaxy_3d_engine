@@ -2,10 +2,9 @@
 
 use galaxy_3d_engine::galaxy3d::{
     Result,
-    Error,
     render::Buffer as RendererBuffer,
 };
-use galaxy_3d_engine::engine_error;
+use galaxy_3d_engine::{engine_bail, engine_err};
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
 use std::sync::Arc;
@@ -49,10 +48,7 @@ impl RendererBuffer for Buffer {
                 // Map memory and copy data
                 let mapped_ptr = allocation
                     .mapped_ptr()
-                    .ok_or_else(|| {
-                        engine_error!("galaxy3d::vulkan", "Buffer update failed: buffer is not CPU-accessible");
-                        Error::BackendError("Buffer is not CPU-accessible".to_string())
-                    })?
+                    .ok_or_else(|| engine_err!("galaxy3d::vulkan", "Buffer update failed: buffer is not CPU-accessible"))?
                     .as_ptr() as *mut u8;
 
                 // Copy data
@@ -64,8 +60,7 @@ impl RendererBuffer for Buffer {
 
                 Ok(())
             } else {
-                engine_error!("galaxy3d::vulkan", "Buffer update failed: no GPU allocation");
-                Err(Error::BackendError("Buffer has no allocation".to_string()))
+                engine_bail!("galaxy3d::vulkan", "Buffer update failed: no GPU allocation");
             }
         }
     }

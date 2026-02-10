@@ -5,8 +5,8 @@
 
 mod gpu_test_utils;
 
-use galaxy_3d_engine::galaxy3d::resource::{ResourceManager, TextureDesc, MeshDesc};
-use galaxy_3d_engine::galaxy3d::resource::{LayerDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc};
+use galaxy_3d_engine::galaxy3d::resource::{ResourceManager, TextureDesc, GeometryDesc};
+use galaxy_3d_engine::galaxy3d::resource::{LayerDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc};
 use galaxy_3d_engine::galaxy3d::render::{
     TextureDesc as RenderTextureDesc, TextureFormat, TextureUsage, MipmapMode,
     BufferFormat, VertexLayout, VertexBinding, VertexAttribute, VertexInputRate,
@@ -62,7 +62,7 @@ fn test_integration_create_texture_with_vulkan() {
 #[test]
 #[ignore] // Requires GPU
 #[serial]
-fn test_integration_create_mesh_with_vulkan() {
+fn test_integration_create_geometry_with_vulkan() {
     // Get shared Vulkan renderer
     let renderer_arc = get_test_renderer();
 
@@ -105,22 +105,22 @@ fn test_integration_create_mesh_with_vulkan() {
         ],
     };
 
-    // Create mesh descriptor
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    // Create geometry descriptor
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer_arc.clone(),
         vertex_data,
         index_data: Some(index_data),
         vertex_layout,
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "quad".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "main".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 4,
@@ -135,17 +135,17 @@ fn test_integration_create_mesh_with_vulkan() {
         ],
     };
 
-    // Create mesh
-    let _mesh = rm.create_mesh("test_mesh".to_string(), desc).unwrap();
+    // Create geometry
+    let _geom = rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
     // Verify
-    assert_eq!(rm.mesh_count(), 1);
-    assert!(rm.mesh("test_mesh").is_some());
+    assert_eq!(rm.geometry_count(), 1);
+    assert!(rm.geometry("test_geom").is_some());
 
-    let mesh_ref = rm.mesh("test_mesh").unwrap();
-    assert_eq!(mesh_ref.total_vertex_count(), 4);
-    assert_eq!(mesh_ref.total_index_count(), 6);
-    assert!(mesh_ref.is_indexed());
+    let geom_ref = rm.geometry("test_geom").unwrap();
+    assert_eq!(geom_ref.total_vertex_count(), 4);
+    assert_eq!(geom_ref.total_index_count(), 6);
+    assert!(geom_ref.is_indexed());
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn test_integration_multiple_resources() {
 #[test]
 #[ignore] // Requires GPU
 #[serial]
-fn test_integration_mesh_with_multiple_lods() {
+fn test_integration_geometry_with_multiple_lods() {
     // Get shared Vulkan renderer
     let renderer_arc = get_test_renderer();
 
@@ -249,23 +249,23 @@ fn test_integration_mesh_with_multiple_lods() {
         ],
     };
 
-    // Create mesh descriptor with 3 LODs
-    let desc = MeshDesc {
-        name: "lod_mesh".to_string(),
+    // Create geometry descriptor with 3 LODs
+    let desc = GeometryDesc {
+        name: "lod_geom".to_string(),
         renderer: renderer_arc.clone(),
         vertex_data,
         index_data: Some(index_data),
         vertex_layout,
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "main_mesh".to_string(),
                 lods: vec![
                     // LOD 0 (highest detail)
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "lod0".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 12,
@@ -276,10 +276,10 @@ fn test_integration_mesh_with_multiple_lods() {
                         ],
                     },
                     // LOD 1 (medium detail)
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 1,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "lod1".to_string(),
                                 vertex_offset: 12,
                                 vertex_count: 8,
@@ -290,10 +290,10 @@ fn test_integration_mesh_with_multiple_lods() {
                         ],
                     },
                     // LOD 2 (lowest detail)
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 2,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "lod2".to_string(),
                                 vertex_offset: 20,
                                 vertex_count: 4,
@@ -308,26 +308,26 @@ fn test_integration_mesh_with_multiple_lods() {
         ],
     };
 
-    // Create mesh
-    let _mesh = rm.create_mesh("lod_mesh".to_string(), desc).unwrap();
+    // Create geometry
+    let _geom = rm.create_geometry("lod_geom".to_string(), desc).unwrap();
 
-    // Verify mesh structure
-    let mesh_ref = rm.mesh("lod_mesh").unwrap();
-    assert_eq!(mesh_ref.mesh_entry_count(), 1);
+    // Verify geometry structure
+    let geom_ref = rm.geometry("lod_geom").unwrap();
+    assert_eq!(geom_ref.mesh_count(), 1);
 
-    let mesh_entry = mesh_ref.mesh_entry(0).unwrap();
-    assert_eq!(mesh_entry.lod_count(), 3);
+    let mesh = geom_ref.mesh(0).unwrap();
+    assert_eq!(mesh.lod_count(), 3);
 
     // Verify each LOD
-    assert!(mesh_entry.lod(0).is_some());
-    assert!(mesh_entry.lod(1).is_some());
-    assert!(mesh_entry.lod(2).is_some());
+    assert!(mesh.lod(0).is_some());
+    assert!(mesh.lod(1).is_some());
+    assert!(mesh.lod(2).is_some());
 }
 
 #[test]
 #[ignore] // Requires GPU
 #[serial]
-fn test_integration_mesh_with_multiple_submeshes() {
+fn test_integration_geometry_with_multiple_submeshes() {
     // Get shared Vulkan renderer
     let renderer_arc = get_test_renderer();
 
@@ -369,8 +369,8 @@ fn test_integration_mesh_with_multiple_submeshes() {
         ],
     };
 
-    // Create mesh descriptor with multiple submeshes
-    let desc = MeshDesc {
+    // Create geometry descriptor with multiple submeshes
+    let desc = GeometryDesc {
         name: "multi_submesh".to_string(),
         renderer: renderer_arc.clone(),
         vertex_data,
@@ -378,13 +378,13 @@ fn test_integration_mesh_with_multiple_submeshes() {
         vertex_layout,
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "character".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "head".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 4,
@@ -392,7 +392,7 @@ fn test_integration_mesh_with_multiple_submeshes() {
                                 index_count: 4,
                                 topology: PrimitiveTopology::TriangleList,
                             },
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 4,
                                 vertex_count: 4,
@@ -400,7 +400,7 @@ fn test_integration_mesh_with_multiple_submeshes() {
                                 index_count: 4,
                                 topology: PrimitiveTopology::TriangleList,
                             },
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "legs".to_string(),
                                 vertex_offset: 8,
                                 vertex_count: 4,
@@ -415,13 +415,13 @@ fn test_integration_mesh_with_multiple_submeshes() {
         ],
     };
 
-    // Create mesh
-    let _mesh = rm.create_mesh("character_mesh".to_string(), desc).unwrap();
+    // Create geometry
+    let _geom = rm.create_geometry("character_geom".to_string(), desc).unwrap();
 
-    // Verify mesh structure
-    let mesh_ref = rm.mesh("character_mesh").unwrap();
-    let mesh_entry = mesh_ref.mesh_entry(0).unwrap();
-    let lod = mesh_entry.lod(0).unwrap();
+    // Verify geometry structure
+    let geom_ref = rm.geometry("character_geom").unwrap();
+    let mesh = geom_ref.mesh(0).unwrap();
+    let lod = mesh.lod(0).unwrap();
 
     assert_eq!(lod.submesh_count(), 3);
     assert!(lod.submesh_by_name("head").is_some());
@@ -467,7 +467,7 @@ fn test_integration_many_resources_stress_test() {
     // Verify all textures were created
     assert_eq!(rm.texture_count(), 50);
 
-    // Create many meshes (20 meshes)
+    // Create many geometries (20 geometries)
     for i in 0..20 {
         let vertices: Vec<f32> = vec![-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5];
         let vertex_data: Vec<u8> = vertices.iter()
@@ -497,21 +497,21 @@ fn test_integration_many_resources_stress_test() {
             ],
         };
 
-        let desc = MeshDesc {
-            name: format!("mesh_{}", i),
+        let desc = GeometryDesc {
+            name: format!("geom_{}", i),
             renderer: renderer_arc.clone(),
             vertex_data,
             index_data: Some(index_data),
             vertex_layout,
             index_type: IndexType::U16,
             meshes: vec![
-                MeshEntryDesc {
+                GeometryMeshDesc {
                     name: "quad".to_string(),
                     lods: vec![
-                        MeshLODDesc {
+                        GeometryLODDesc {
                             lod_index: 0,
                             submeshes: vec![
-                                SubMeshDesc {
+                                GeometrySubMeshDesc {
                                     name: "main".to_string(),
                                     vertex_offset: 0,
                                     vertex_count: 4,
@@ -526,17 +526,17 @@ fn test_integration_many_resources_stress_test() {
             ],
         };
 
-        rm.create_mesh(format!("mesh_{}", i), desc).unwrap();
+        rm.create_geometry(format!("geom_{}", i), desc).unwrap();
     }
 
-    // Verify all meshes were created
-    assert_eq!(rm.mesh_count(), 20);
+    // Verify all geometries were created
+    assert_eq!(rm.geometry_count(), 20);
 
     // Verify we can access all resources
     for i in 0..50 {
         assert!(rm.texture(&format!("texture_{}", i)).is_some());
     }
     for i in 0..20 {
-        assert!(rm.mesh(&format!("mesh_{}", i)).is_some());
+        assert!(rm.geometry(&format!("geom_{}", i)).is_some());
     }
 }

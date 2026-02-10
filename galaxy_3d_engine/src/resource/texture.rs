@@ -11,8 +11,8 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use crate::error::{Error, Result};
-use crate::engine_error;
+use crate::error::Result;
+use crate::{engine_bail, engine_err};
 use crate::renderer::{
     Texture as RendererTexture,
     DescriptorSet,
@@ -95,22 +95,14 @@ impl Texture {
         if is_simple {
             // Simple texture MUST have exactly 1 layer
             if desc.layers.len() != 1 {
-                engine_error!("galaxy3d::Texture", "Simple texture (array_layers=1) must have exactly 1 layer, got {}",
+                engine_bail!("galaxy3d::Texture", "Simple texture (array_layers=1) must have exactly 1 layer, got {}",
                     desc.layers.len());
-                return Err(Error::BackendError(format!(
-                    "Simple texture (array_layers=1) must have exactly 1 layer, got {}",
-                    desc.layers.len()
-                )));
             }
 
             // Layer index must be 0
             if desc.layers[0].layer_index != 0 {
-                engine_error!("galaxy3d::Texture", "Simple texture layer must have index 0, got {}",
+                engine_bail!("galaxy3d::Texture", "Simple texture layer must have index 0, got {}",
                     desc.layers[0].layer_index);
-                return Err(Error::BackendError(format!(
-                    "Simple texture layer must have index 0, got {}",
-                    desc.layers[0].layer_index
-                )));
             }
         }
 
@@ -122,12 +114,8 @@ impl Texture {
         // ========== VALIDATION 3: Layer index bounds ==========
         for layer_desc in &desc.layers {
             if layer_desc.layer_index >= array_layers {
-                engine_error!("galaxy3d::Texture", "Layer '{}' has index {} but array_layers = {}",
+                engine_bail!("galaxy3d::Texture", "Layer '{}' has index {} but array_layers = {}",
                     layer_desc.name, layer_desc.layer_index, array_layers);
-                return Err(Error::BackendError(format!(
-                    "Layer '{}' has index {} but array_layers = {}",
-                    layer_desc.name, layer_desc.layer_index, array_layers
-                )));
             }
         }
 
@@ -135,10 +123,7 @@ impl Texture {
         let mut seen_names = std::collections::HashSet::new();
         for layer_desc in &desc.layers {
             if !seen_names.insert(&layer_desc.name) {
-                engine_error!("galaxy3d::Texture", "Duplicate layer name '{}'", layer_desc.name);
-                return Err(Error::BackendError(format!(
-                    "Duplicate layer name '{}'", layer_desc.name
-                )));
+                engine_bail!("galaxy3d::Texture", "Duplicate layer name '{}'", layer_desc.name);
             }
         }
 
@@ -146,10 +131,7 @@ impl Texture {
         let mut seen_indices = std::collections::HashSet::new();
         for layer_desc in &desc.layers {
             if !seen_indices.insert(layer_desc.layer_index) {
-                engine_error!("galaxy3d::Texture", "Duplicate layer index {}", layer_desc.layer_index);
-                return Err(Error::BackendError(format!(
-                    "Duplicate layer index {}", layer_desc.layer_index
-                )));
+                engine_bail!("galaxy3d::Texture", "Duplicate layer index {}", layer_desc.layer_index);
             }
         }
 
@@ -163,34 +145,19 @@ impl Texture {
 
                 // Check if region is within texture bounds
                 if region.x + region.width > texture_width {
-                    engine_error!("galaxy3d::Texture", "Region '{}' in layer '{}' exceeds texture width: {}+{} > {}",
+                    engine_bail!("galaxy3d::Texture", "Region '{}' in layer '{}' exceeds texture width: {}+{} > {}",
                         region_desc.name, layer_desc.name, region.x, region.width, texture_width);
-                    return Err(Error::BackendError(format!(
-                        "Region '{}' in layer '{}' exceeds texture width: {}+{} > {}",
-                        region_desc.name, layer_desc.name,
-                        region.x, region.width, texture_width
-                    )));
                 }
 
                 if region.y + region.height > texture_height {
-                    engine_error!("galaxy3d::Texture", "Region '{}' in layer '{}' exceeds texture height: {}+{} > {}",
+                    engine_bail!("galaxy3d::Texture", "Region '{}' in layer '{}' exceeds texture height: {}+{} > {}",
                         region_desc.name, layer_desc.name, region.y, region.height, texture_height);
-                    return Err(Error::BackendError(format!(
-                        "Region '{}' in layer '{}' exceeds texture height: {}+{} > {}",
-                        region_desc.name, layer_desc.name,
-                        region.y, region.height, texture_height
-                    )));
                 }
 
                 // Check non-zero dimensions
                 if region.width == 0 || region.height == 0 {
-                    engine_error!("galaxy3d::Texture", "Region '{}' in layer '{}' has zero dimension: {}x{}",
+                    engine_bail!("galaxy3d::Texture", "Region '{}' in layer '{}' has zero dimension: {}x{}",
                         region_desc.name, layer_desc.name, region.width, region.height);
-                    return Err(Error::BackendError(format!(
-                        "Region '{}' in layer '{}' has zero dimension: {}x{}",
-                        region_desc.name, layer_desc.name,
-                        region.width, region.height
-                    )));
                 }
             }
         }
@@ -200,12 +167,8 @@ impl Texture {
             let mut seen_region_names = std::collections::HashSet::new();
             for region_desc in &layer_desc.regions {
                 if !seen_region_names.insert(&region_desc.name) {
-                    engine_error!("galaxy3d::Texture", "Duplicate region name '{}' in layer '{}'",
+                    engine_bail!("galaxy3d::Texture", "Duplicate region name '{}' in layer '{}'",
                         region_desc.name, layer_desc.name);
-                    return Err(Error::BackendError(format!(
-                        "Duplicate region name '{}' in layer '{}'",
-                        region_desc.name, layer_desc.name
-                    )));
                 }
             }
         }
@@ -216,12 +179,8 @@ impl Texture {
             if let ManualMipmapData::Layers(ref mipmap_layers) = manual_data {
                 for mipmap_layer in mipmap_layers {
                     if mipmap_layer.layer >= array_layers {
-                        engine_error!("galaxy3d::Texture", "Manual mipmap references layer {} but array_layers = {}",
+                        engine_bail!("galaxy3d::Texture", "Manual mipmap references layer {} but array_layers = {}",
                             mipmap_layer.layer, array_layers);
-                        return Err(Error::BackendError(format!(
-                            "Manual mipmap references layer {} but array_layers = {}",
-                            mipmap_layer.layer, array_layers
-                        )));
                     }
                 }
             }
@@ -238,12 +197,8 @@ impl Texture {
                 );
 
                 if data.len() != expected_size {
-                    engine_error!("galaxy3d::Texture", "Layer '{}' data size mismatch: expected {} bytes, got {}",
+                    engine_bail!("galaxy3d::Texture", "Layer '{}' data size mismatch: expected {} bytes, got {}",
                         layer_desc.name, expected_size, data.len());
-                    return Err(Error::BackendError(format!(
-                        "Layer '{}' data size mismatch: expected {} bytes, got {}",
-                        layer_desc.name, expected_size, data.len()
-                    )));
                 }
             }
         }
@@ -361,40 +316,26 @@ impl Texture {
     /// Add a new layer (indexed textures only)
     pub fn add_layer(&mut self, desc: LayerDesc) -> Result<u32> {
         if !self.is_indexed() {
-            engine_error!("galaxy3d::Texture", "Cannot add layer to simple texture (array_layers=1)");
-            return Err(Error::BackendError(
-                "Cannot add layer to simple texture (array_layers=1)".to_string()
-            ));
+            engine_bail!("galaxy3d::Texture", "Cannot add layer to simple texture (array_layers=1)");
         }
 
         let array_layers = self.renderer_texture.info().array_layers;
 
         // Validate layer index
         if desc.layer_index >= array_layers {
-            engine_error!("galaxy3d::Texture", "Layer index {} >= array_layers {}", desc.layer_index, array_layers);
-            return Err(Error::BackendError(format!(
-                "Layer index {} >= array_layers {}",
-                desc.layer_index, array_layers
-            )));
+            engine_bail!("galaxy3d::Texture", "Layer index {} >= array_layers {}", desc.layer_index, array_layers);
         }
 
         // Check for duplicate name
         if self.layer_names.contains_key(&desc.name) {
-            engine_error!("galaxy3d::Texture", "Layer '{}' already exists", desc.name);
-            return Err(Error::BackendError(format!(
-                "Layer '{}' already exists", desc.name
-            )));
+            engine_bail!("galaxy3d::Texture", "Layer '{}' already exists", desc.name);
         }
 
         // Check for duplicate index
         for existing_layer in &self.layers {
             if existing_layer.layer_index == desc.layer_index {
-                engine_error!("galaxy3d::Texture", "Layer index {} already used by layer '{}'",
+                engine_bail!("galaxy3d::Texture", "Layer index {} already used by layer '{}'",
                     desc.layer_index, existing_layer.name);
-                return Err(Error::BackendError(format!(
-                    "Layer index {} already used by layer '{}'",
-                    desc.layer_index, existing_layer.name
-                )));
             }
         }
 
@@ -412,10 +353,7 @@ impl Texture {
             let info = self.renderer_texture.info();
             if region_desc.region.x + region_desc.region.width > info.width ||
                region_desc.region.y + region_desc.region.height > info.height {
-                engine_error!("galaxy3d::Texture", "Region '{}' exceeds texture bounds", region_desc.name);
-                return Err(Error::BackendError(format!(
-                    "Region '{}' exceeds texture bounds", region_desc.name
-                )));
+                engine_bail!("galaxy3d::Texture", "Region '{}' exceeds texture bounds", region_desc.name);
             }
 
             regions.push(region_desc.region);
@@ -439,10 +377,7 @@ impl Texture {
     /// Add region to an existing layer
     pub fn add_region(&mut self, layer_name: &str, desc: AtlasRegionDesc) -> Result<u32> {
         let layer_vec_index = *self.layer_names.get(layer_name)
-            .ok_or_else(|| {
-                engine_error!("galaxy3d::Texture", "Layer '{}' not found", layer_name);
-                Error::BackendError(format!("Layer '{}' not found", layer_name))
-            })?;
+            .ok_or_else(|| engine_err!("galaxy3d::Texture", "Layer '{}' not found", layer_name))?;
 
         let layer = &mut self.layers[layer_vec_index];
         layer.add_region(desc, &self.renderer_texture.info())
@@ -519,37 +454,23 @@ impl TextureLayer {
     pub(crate) fn add_region(&mut self, desc: AtlasRegionDesc, texture_info: &TextureInfo) -> Result<u32> {
         // Check duplicate name
         if self.region_names.contains_key(&desc.name) {
-            engine_error!("galaxy3d::Texture", "Region '{}' already exists in layer '{}'", desc.name, self.name);
-            return Err(Error::BackendError(format!(
-                "Region '{}' already exists in layer '{}'", desc.name, self.name
-            )));
+            engine_bail!("galaxy3d::Texture", "Region '{}' already exists in layer '{}'", desc.name, self.name);
         }
 
         // Validate bounds
         if desc.region.x + desc.region.width > texture_info.width {
-            engine_error!("galaxy3d::Texture", "Region '{}' exceeds texture width: {}+{} > {}",
+            engine_bail!("galaxy3d::Texture", "Region '{}' exceeds texture width: {}+{} > {}",
                 desc.name, desc.region.x, desc.region.width, texture_info.width);
-            return Err(Error::BackendError(format!(
-                "Region '{}' exceeds texture width: {}+{} > {}",
-                desc.name, desc.region.x, desc.region.width, texture_info.width
-            )));
         }
 
         if desc.region.y + desc.region.height > texture_info.height {
-            engine_error!("galaxy3d::Texture", "Region '{}' exceeds texture height: {}+{} > {}",
+            engine_bail!("galaxy3d::Texture", "Region '{}' exceeds texture height: {}+{} > {}",
                 desc.name, desc.region.y, desc.region.height, texture_info.height);
-            return Err(Error::BackendError(format!(
-                "Region '{}' exceeds texture height: {}+{} > {}",
-                desc.name, desc.region.y, desc.region.height, texture_info.height
-            )));
         }
 
         // Check non-zero dimensions
         if desc.region.width == 0 || desc.region.height == 0 {
-            engine_error!("galaxy3d::Texture", "Region '{}' has zero dimension", desc.name);
-            return Err(Error::BackendError(format!(
-                "Region '{}' has zero dimension", desc.name
-            )));
+            engine_bail!("galaxy3d::Texture", "Region '{}' has zero dimension", desc.name);
         }
 
         let index = self.regions.len();

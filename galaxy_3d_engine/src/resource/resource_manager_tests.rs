@@ -48,11 +48,11 @@ fn create_test_texture_desc(
     }
 }
 
-/// Create a simple mesh descriptor for testing
-fn create_test_mesh_desc(
+/// Create a simple geometry descriptor for testing
+fn create_test_geometry_desc(
     renderer: Arc<Mutex<dyn crate::renderer::Renderer>>,
     name: &str,
-) -> MeshDesc {
+) -> GeometryDesc {
     // Simple quad: 4 vertices (Position2D + UV), 6 indices
     let vertex_data = vec![
         // Position (x, y) + UV (u, v)
@@ -98,18 +98,18 @@ fn create_test_mesh_desc(
         ],
     };
 
-    MeshDesc {
+    GeometryDesc {
         name: name.to_string(),
         renderer,
         vertex_data: vertex_bytes,
         index_data: Some(index_bytes),
         vertex_layout,
         index_type: IndexType::U16,
-        meshes: vec![MeshEntryDesc {
+        meshes: vec![GeometryMeshDesc {
             name: name.to_string(),
-            lods: vec![MeshLODDesc {
+            lods: vec![GeometryLODDesc {
                 lod_index: 0,
-                submeshes: vec![SubMeshDesc {
+                submeshes: vec![GeometrySubMeshDesc {
                     name: "default".to_string(),
                     vertex_offset: 0,
                     vertex_count: 4,
@@ -173,7 +173,7 @@ fn create_test_pipeline_desc(
 fn test_resource_manager_new() {
     let rm = ResourceManager::new();
     assert_eq!(rm.texture_count(), 0);
-    assert_eq!(rm.mesh_count(), 0);
+    assert_eq!(rm.geometry_count(), 0);
     assert_eq!(rm.pipeline_count(), 0);
 }
 
@@ -292,116 +292,116 @@ fn test_texture_count() {
 }
 
 // ============================================================================
-// Tests: Mesh Management
+// Tests: Geometry Management
 // ============================================================================
 
 #[test]
-fn test_create_mesh() {
+fn test_create_geometry() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    let desc = create_test_mesh_desc(renderer.clone(), "test_mesh");
-    let mesh = rm.create_mesh("test_mesh".to_string(), desc).unwrap();
+    let desc = create_test_geometry_desc(renderer.clone(), "test_geom");
+    let geom = rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
-    assert_eq!(rm.mesh_count(), 1);
-    assert_eq!(mesh.mesh_entry_count(), 1);
+    assert_eq!(rm.geometry_count(), 1);
+    assert_eq!(geom.mesh_count(), 1);
 }
 
 #[test]
-fn test_get_mesh() {
+fn test_get_geometry() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    let desc = create_test_mesh_desc(renderer.clone(), "test_mesh");
-    rm.create_mesh("test_mesh".to_string(), desc).unwrap();
+    let desc = create_test_geometry_desc(renderer.clone(), "test_geom");
+    rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
-    let mesh = rm.mesh("test_mesh");
-    assert!(mesh.is_some());
+    let geom = rm.geometry("test_geom");
+    assert!(geom.is_some());
 }
 
 #[test]
-fn test_get_mesh_not_found() {
+fn test_get_geometry_not_found() {
     let rm = ResourceManager::new();
-    let mesh = rm.mesh("nonexistent");
-    assert!(mesh.is_none());
+    let geom = rm.geometry("nonexistent");
+    assert!(geom.is_none());
 }
 
 #[test]
-fn test_remove_mesh() {
+fn test_remove_geometry() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    let desc = create_test_mesh_desc(renderer.clone(), "test_mesh");
-    rm.create_mesh("test_mesh".to_string(), desc).unwrap();
+    let desc = create_test_geometry_desc(renderer.clone(), "test_geom");
+    rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
-    assert_eq!(rm.mesh_count(), 1);
+    assert_eq!(rm.geometry_count(), 1);
 
-    let removed = rm.remove_mesh("test_mesh");
+    let removed = rm.remove_geometry("test_geom");
     assert!(removed);
-    assert_eq!(rm.mesh_count(), 0);
+    assert_eq!(rm.geometry_count(), 0);
 }
 
 #[test]
-fn test_remove_mesh_not_found() {
+fn test_remove_geometry_not_found() {
     let mut rm = ResourceManager::new();
-    let removed = rm.remove_mesh("nonexistent");
+    let removed = rm.remove_geometry("nonexistent");
     assert!(!removed);
 }
 
 #[test]
-fn test_duplicate_mesh_fails() {
+fn test_duplicate_geometry_fails() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    let desc1 = create_test_mesh_desc(renderer.clone(), "test_mesh");
-    rm.create_mesh("test_mesh".to_string(), desc1).unwrap();
+    let desc1 = create_test_geometry_desc(renderer.clone(), "test_geom");
+    rm.create_geometry("test_geom".to_string(), desc1).unwrap();
 
-    let desc2 = create_test_mesh_desc(renderer.clone(), "test_mesh");
-    let result = rm.create_mesh("test_mesh".to_string(), desc2);
+    let desc2 = create_test_geometry_desc(renderer.clone(), "test_geom");
+    let result = rm.create_geometry("test_geom".to_string(), desc2);
 
     assert!(result.is_err());
-    assert_eq!(rm.mesh_count(), 1);
+    assert_eq!(rm.geometry_count(), 1);
 }
 
 #[test]
-fn test_multiple_meshes() {
+fn test_multiple_geometries() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    let desc1 = create_test_mesh_desc(renderer.clone(), "mesh1");
-    let desc2 = create_test_mesh_desc(renderer.clone(), "mesh2");
-    let desc3 = create_test_mesh_desc(renderer.clone(), "mesh3");
+    let desc1 = create_test_geometry_desc(renderer.clone(), "geom1");
+    let desc2 = create_test_geometry_desc(renderer.clone(), "geom2");
+    let desc3 = create_test_geometry_desc(renderer.clone(), "geom3");
 
-    rm.create_mesh("mesh1".to_string(), desc1).unwrap();
-    rm.create_mesh("mesh2".to_string(), desc2).unwrap();
-    rm.create_mesh("mesh3".to_string(), desc3).unwrap();
+    rm.create_geometry("geom1".to_string(), desc1).unwrap();
+    rm.create_geometry("geom2".to_string(), desc2).unwrap();
+    rm.create_geometry("geom3".to_string(), desc3).unwrap();
 
-    assert_eq!(rm.mesh_count(), 3);
-    assert!(rm.mesh("mesh1").is_some());
-    assert!(rm.mesh("mesh2").is_some());
-    assert!(rm.mesh("mesh3").is_some());
+    assert_eq!(rm.geometry_count(), 3);
+    assert!(rm.geometry("geom1").is_some());
+    assert!(rm.geometry("geom2").is_some());
+    assert!(rm.geometry("geom3").is_some());
 }
 
 #[test]
-fn test_mesh_count() {
+fn test_geometry_count() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    assert_eq!(rm.mesh_count(), 0);
+    assert_eq!(rm.geometry_count(), 0);
 
-    let desc1 = create_test_mesh_desc(renderer.clone(), "mesh1");
-    rm.create_mesh("mesh1".to_string(), desc1).unwrap();
-    assert_eq!(rm.mesh_count(), 1);
+    let desc1 = create_test_geometry_desc(renderer.clone(), "geom1");
+    rm.create_geometry("geom1".to_string(), desc1).unwrap();
+    assert_eq!(rm.geometry_count(), 1);
 
-    let desc2 = create_test_mesh_desc(renderer.clone(), "mesh2");
-    rm.create_mesh("mesh2".to_string(), desc2).unwrap();
-    assert_eq!(rm.mesh_count(), 2);
+    let desc2 = create_test_geometry_desc(renderer.clone(), "geom2");
+    rm.create_geometry("geom2".to_string(), desc2).unwrap();
+    assert_eq!(rm.geometry_count(), 2);
 
-    rm.remove_mesh("mesh1");
-    assert_eq!(rm.mesh_count(), 1);
+    rm.remove_geometry("geom1");
+    assert_eq!(rm.geometry_count(), 1);
 
-    rm.remove_mesh("mesh2");
-    assert_eq!(rm.mesh_count(), 0);
+    rm.remove_geometry("geom2");
+    assert_eq!(rm.geometry_count(), 0);
 }
 
 // ============================================================================
@@ -528,19 +528,19 @@ fn test_mixed_resources() {
 
     // Create one of each resource type
     let texture_desc = create_test_texture_desc(renderer.clone(), "texture", 256, 256);
-    let mesh_desc = create_test_mesh_desc(renderer.clone(), "mesh");
+    let geom_desc = create_test_geometry_desc(renderer.clone(), "geom");
     let pipeline_desc = create_test_pipeline_desc(renderer.clone(), "pipeline");
 
     rm.create_texture("texture".to_string(), texture_desc).unwrap();
-    rm.create_mesh("mesh".to_string(), mesh_desc).unwrap();
+    rm.create_geometry("geom".to_string(), geom_desc).unwrap();
     rm.create_pipeline("pipeline".to_string(), pipeline_desc).unwrap();
 
     assert_eq!(rm.texture_count(), 1);
-    assert_eq!(rm.mesh_count(), 1);
+    assert_eq!(rm.geometry_count(), 1);
     assert_eq!(rm.pipeline_count(), 1);
 
     assert!(rm.texture("texture").is_some());
-    assert!(rm.mesh("mesh").is_some());
+    assert!(rm.geometry("geom").is_some());
     assert!(rm.pipeline("pipeline").is_some());
 }
 
@@ -552,27 +552,27 @@ fn test_clear_all_resources() {
     // Create multiple resources
     for i in 0..3 {
         let texture_desc = create_test_texture_desc(renderer.clone(), &format!("texture{}", i), 256, 256);
-        let mesh_desc = create_test_mesh_desc(renderer.clone(), &format!("mesh{}", i));
+        let geom_desc = create_test_geometry_desc(renderer.clone(), &format!("geom{}", i));
         let pipeline_desc = create_test_pipeline_desc(renderer.clone(), &format!("pipeline{}", i));
 
         rm.create_texture(format!("texture{}", i), texture_desc).unwrap();
-        rm.create_mesh(format!("mesh{}", i), mesh_desc).unwrap();
+        rm.create_geometry(format!("geom{}", i), geom_desc).unwrap();
         rm.create_pipeline(format!("pipeline{}", i), pipeline_desc).unwrap();
     }
 
     assert_eq!(rm.texture_count(), 3);
-    assert_eq!(rm.mesh_count(), 3);
+    assert_eq!(rm.geometry_count(), 3);
     assert_eq!(rm.pipeline_count(), 3);
 
     // Remove all
     for i in 0..3 {
         rm.remove_texture(&format!("texture{}", i));
-        rm.remove_mesh(&format!("mesh{}", i));
+        rm.remove_geometry(&format!("geom{}", i));
         rm.remove_pipeline(&format!("pipeline{}", i));
     }
 
     assert_eq!(rm.texture_count(), 0);
-    assert_eq!(rm.mesh_count(), 0);
+    assert_eq!(rm.geometry_count(), 0);
     assert_eq!(rm.pipeline_count(), 0);
 }
 
@@ -586,8 +586,8 @@ fn test_mock_renderer_tracks_buffers() {
     let mock = Arc::new(Mutex::new(MockRenderer::new()));
     let renderer: Arc<Mutex<dyn crate::renderer::Renderer>> = mock.clone();
 
-    let desc = create_test_mesh_desc(renderer.clone(), "test_mesh");
-    rm.create_mesh("test_mesh".to_string(), desc).unwrap();
+    let desc = create_test_geometry_desc(renderer.clone(), "test_geom");
+    rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
     // Verify buffers were created
     let created_buffers = mock.lock().unwrap().get_created_buffers();
@@ -756,13 +756,13 @@ fn test_add_texture_region_to_nonexistent_texture() {
 }
 
 #[test]
-fn test_add_mesh_entry_to_existing_mesh() {
+fn test_add_geometry_mesh_to_existing_geometry() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    // Create a mesh with no initial entries
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    // Create a geometry with no initial meshes
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: vec![0u8; 32], // 4 vertices * 8 bytes
         index_data: Some(vec![0u8; 12]), // 6 indices * 2 bytes
@@ -780,19 +780,19 @@ fn test_add_mesh_entry_to_existing_mesh() {
             }],
         },
         index_type: IndexType::U16,
-        meshes: vec![], // No initial entries
+        meshes: vec![], // No initial meshes
     };
 
-    rm.create_mesh("mesh".to_string(), desc).unwrap();
+    rm.create_geometry("geom".to_string(), desc).unwrap();
 
-    // Add a mesh entry
-    let entry = MeshEntryDesc {
+    // Add a mesh
+    let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
         lods: vec![
-            MeshLODDesc {
+            GeometryLODDesc {
                 lod_index: 0,
                 submeshes: vec![
-                    SubMeshDesc {
+                    GeometrySubMeshDesc {
                         name: "body".to_string(),
                         vertex_offset: 0,
                         vertex_count: 4,
@@ -805,35 +805,35 @@ fn test_add_mesh_entry_to_existing_mesh() {
         ],
     };
 
-    let result = rm.add_mesh_entry("mesh", entry);
+    let result = rm.add_geometry_mesh("geom", mesh_desc);
     assert!(result.is_ok());
 
-    // Verify entry was added
-    let mesh = rm.mesh("mesh").unwrap();
-    assert_eq!(mesh.mesh_entry_count(), 1);
+    // Verify mesh was added
+    let geom = rm.geometry("geom").unwrap();
+    assert_eq!(geom.mesh_count(), 1);
 }
 
 #[test]
-fn test_add_mesh_entry_to_nonexistent_mesh() {
+fn test_add_geometry_mesh_to_nonexistent_geometry() {
     let mut rm = ResourceManager::new();
 
-    let entry = MeshEntryDesc {
+    let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
         lods: vec![],
     };
 
-    let result = rm.add_mesh_entry("nonexistent", entry);
+    let result = rm.add_geometry_mesh("nonexistent", mesh_desc);
     assert!(result.is_err());
 }
 
 #[test]
-fn test_add_mesh_lod() {
+fn test_add_geometry_lod() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    // Create a mesh with one entry
-    let desc = MeshDesc {
-        name: "mesh".to_string(),
+    // Create a geometry with one mesh
+    let desc = GeometryDesc {
+        name: "geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: vec![0u8; 64], // 8 vertices * 8 bytes
         index_data: Some(vec![0u8; 24]), // 12 indices * 2 bytes
@@ -852,13 +852,13 @@ fn test_add_mesh_lod() {
         },
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 4,
@@ -873,13 +873,13 @@ fn test_add_mesh_lod() {
         ],
     };
 
-    rm.create_mesh("mesh".to_string(), desc).unwrap();
+    rm.create_geometry("geom".to_string(), desc).unwrap();
 
-    // Add a LOD to the mesh entry
-    let lod = MeshLODDesc {
+    // Add a LOD to the mesh
+    let lod = GeometryLODDesc {
         lod_index: 1,
         submeshes: vec![
-            SubMeshDesc {
+            GeometrySubMeshDesc {
                 name: "body_lod1".to_string(),
                 vertex_offset: 4,
                 vertex_count: 4,
@@ -890,36 +890,36 @@ fn test_add_mesh_lod() {
         ],
     };
 
-    let result = rm.add_mesh_lod("mesh", 0, lod);
+    let result = rm.add_geometry_lod("geom", 0, lod);
     assert!(result.is_ok());
 
     // Verify LOD was added
-    let mesh = rm.mesh("mesh").unwrap();
-    let entry = mesh.mesh_entry(0).unwrap();
-    assert_eq!(entry.lod_count(), 2);
+    let geom = rm.geometry("geom").unwrap();
+    let mesh = geom.mesh(0).unwrap();
+    assert_eq!(mesh.lod_count(), 2);
 }
 
 #[test]
-fn test_add_mesh_lod_to_nonexistent_mesh() {
+fn test_add_geometry_lod_to_nonexistent_geometry() {
     let mut rm = ResourceManager::new();
 
-    let lod = MeshLODDesc {
+    let lod = GeometryLODDesc {
         lod_index: 0,
         submeshes: vec![],
     };
 
-    let result = rm.add_mesh_lod("nonexistent", 0, lod);
+    let result = rm.add_geometry_lod("nonexistent", 0, lod);
     assert!(result.is_err());
 }
 
 #[test]
-fn test_add_submesh() {
+fn test_add_geometry_submesh() {
     let mut rm = ResourceManager::new();
     let renderer = create_mock_renderer();
 
-    // Create a mesh with one entry and one LOD
-    let desc = MeshDesc {
-        name: "mesh".to_string(),
+    // Create a geometry with one mesh and one LOD
+    let desc = GeometryDesc {
+        name: "geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: vec![0u8; 64], // 8 vertices * 8 bytes
         index_data: Some(vec![0u8; 24]), // 12 indices * 2 bytes
@@ -938,13 +938,13 @@ fn test_add_submesh() {
         },
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 4,
@@ -959,10 +959,10 @@ fn test_add_submesh() {
         ],
     };
 
-    rm.create_mesh("mesh".to_string(), desc).unwrap();
+    rm.create_geometry("geom".to_string(), desc).unwrap();
 
     // Add a submesh to the LOD
-    let submesh = SubMeshDesc {
+    let submesh = GeometrySubMeshDesc {
         name: "armor".to_string(),
         vertex_offset: 4,
         vertex_count: 4,
@@ -971,21 +971,21 @@ fn test_add_submesh() {
         topology: PrimitiveTopology::TriangleList,
     };
 
-    let result = rm.add_submesh("mesh", 0, 0, submesh);
+    let result = rm.add_geometry_submesh("geom", 0, 0, submesh);
     assert!(result.is_ok());
 
     // Verify submesh was added
-    let mesh = rm.mesh("mesh").unwrap();
-    let entry = mesh.mesh_entry(0).unwrap();
-    let lod = entry.lod(0).unwrap();
+    let geom = rm.geometry("geom").unwrap();
+    let mesh = geom.mesh(0).unwrap();
+    let lod = mesh.lod(0).unwrap();
     assert_eq!(lod.submesh_count(), 2);
 }
 
 #[test]
-fn test_add_submesh_to_nonexistent_mesh() {
+fn test_add_geometry_submesh_to_nonexistent_geometry() {
     let mut rm = ResourceManager::new();
 
-    let submesh = SubMeshDesc {
+    let submesh = GeometrySubMeshDesc {
         name: "submesh".to_string(),
         vertex_offset: 0,
         vertex_count: 4,
@@ -994,7 +994,7 @@ fn test_add_submesh_to_nonexistent_mesh() {
         topology: PrimitiveTopology::TriangleList,
     };
 
-    let result = rm.add_submesh("nonexistent", 0, 0, submesh);
+    let result = rm.add_geometry_submesh("nonexistent", 0, 0, submesh);
     assert!(result.is_err());
 }
 

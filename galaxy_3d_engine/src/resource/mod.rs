@@ -4,8 +4,9 @@
 
 mod resource_manager;
 pub mod texture;
-pub mod mesh;
+pub mod geometry;
 pub mod pipeline;
+pub mod material;
 
 pub use resource_manager::ResourceManager;
 pub use texture::{
@@ -13,11 +14,16 @@ pub use texture::{
     AtlasRegion, AtlasRegionDesc,
     TextureDesc, LayerDesc,
 };
-pub use mesh::{
-    Mesh, MeshEntry, MeshLOD, SubMesh,
-    MeshDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc,
+pub use geometry::{
+    Geometry, GeometryMesh, GeometryLOD, GeometrySubMesh,
+    GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
 pub use pipeline::{
     Pipeline, PipelineVariant, PipelinePass,
     PipelineDesc, PipelineVariantDesc, PipelinePassDesc,
+};
+pub use material::{
+    Material, MaterialTextureSlot,
+    MaterialDesc, MaterialTextureSlotDesc,
+    LayerRef, RegionRef, ParamValue,
 };

@@ -1,26 +1,30 @@
 ////! Central resource manager for the engine.
 //!
-//! Stores and provides access to all engine resources (textures, meshes, etc.).
+//! Stores and provides access to all engine resources (textures, geometries, etc.).
 //! Resources will be added incrementally as the engine evolves.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::resource::texture::{
     Texture,
     TextureDesc, LayerDesc, AtlasRegionDesc,
 };
-use crate::resource::mesh::{
-    Mesh, MeshDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc,
+use crate::resource::geometry::{
+    Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
 use crate::resource::pipeline::{
     Pipeline, PipelineDesc, PipelineVariantDesc,
 };
+use crate::resource::material::{
+    Material, MaterialDesc,
+};
 
 pub struct ResourceManager {
     textures: HashMap<String, Arc<Texture>>,
-    meshes: HashMap<String, Arc<Mesh>>,
+    geometries: HashMap<String, Arc<Geometry>>,
     pipelines: HashMap<String, Arc<Pipeline>>,
+    materials: HashMap<String, Arc<Material>>,
 }
 
 impl ResourceManager {
@@ -28,8 +32,9 @@ impl ResourceManager {
     pub fn new() -> Self {
         Self {
             textures: HashMap::new(),
-            meshes: HashMap::new(),
+            geometries: HashMap::new(),
             pipelines: HashMap::new(),
+            materials: HashMap::new(),
         }
     }
 
@@ -47,10 +52,7 @@ impl ResourceManager {
     ///
     pub fn create_texture(&mut self, name: String, desc: TextureDesc) -> Result<Arc<Texture>> {
         if self.textures.contains_key(&name) {
-            crate::engine_warn!("galaxy3d::ResourceManager", "Texture '{}' already exists", name);
-            return Err(Error::BackendError(format!(
-                "Texture '{}' already exists in ResourceManager", name
-            )));
+            crate::engine_bail_warn!("galaxy3d::ResourceManager", "Texture '{}' already exists", name);
         }
 
         let texture = Texture::from_desc(desc)?;
@@ -112,20 +114,10 @@ impl ResourceManager {
         desc: LayerDesc,
     ) -> Result<u32> {
         let arc = self.textures.get_mut(texture_name)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Texture '{}' not found", texture_name);
-                Error::BackendError(format!(
-                    "Texture '{}' not found in ResourceManager", texture_name
-                ))
-            })?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Texture '{}' not found", texture_name))?;
 
         let texture = Arc::get_mut(arc)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate texture '{}': other references exist", texture_name);
-                Error::BackendError(format!(
-                    "Cannot mutate texture '{}': other references exist", texture_name
-                ))
-            })?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate texture '{}': other references exist", texture_name))?;
 
         texture.add_layer(desc)
     }
@@ -149,124 +141,101 @@ impl ResourceManager {
         desc: AtlasRegionDesc,
     ) -> Result<u32> {
         let arc = self.textures.get_mut(texture_name)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Texture '{}' not found", texture_name);
-                Error::BackendError(format!(
-                    "Texture '{}' not found in ResourceManager", texture_name
-                ))
-            })?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Texture '{}' not found", texture_name))?;
 
         let texture = Arc::get_mut(arc)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate texture '{}': other references exist", texture_name);
-                Error::BackendError(format!(
-                    "Cannot mutate texture '{}': other references exist", texture_name
-                ))
-            })?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate texture '{}': other references exist", texture_name))?;
 
         texture.add_region(layer_name, desc)
     }
 
-    // ===== MESH CREATION =====
+    // ===== GEOMETRY CREATION =====
 
-    /// Create a mesh resource and register it
+    /// Create a geometry resource and register it
     ///
     /// Internally creates the GPU vertex and index buffers from the provided data.
     /// Vertex and index counts are computed automatically from data length and layout.
     ///
     /// # Arguments
     ///
-    /// * `name` - Unique name for this mesh resource (group name)
-    /// * `desc` - Mesh description with renderer, vertex/index data and entries
+    /// * `name` - Unique name for this geometry resource (group name)
+    /// * `desc` - Geometry description with renderer, vertex/index data and meshes
     ///
-    pub fn create_mesh(&mut self, name: String, desc: MeshDesc) -> Result<Arc<Mesh>> {
-        if self.meshes.contains_key(&name) {
-            crate::engine_warn!("galaxy3d::ResourceManager", "Mesh '{}' already exists", name);
-            return Err(Error::BackendError(format!(
-                "Mesh '{}' already exists in ResourceManager", name
-            )));
+    pub fn create_geometry(&mut self, name: String, desc: GeometryDesc) -> Result<Arc<Geometry>> {
+        if self.geometries.contains_key(&name) {
+            crate::engine_bail_warn!("galaxy3d::ResourceManager", "Geometry '{}' already exists", name);
         }
 
-        let mesh = Mesh::from_desc(desc)?;
-        let entry_count = mesh.mesh_entry_count();
-        let total_vertex_count = mesh.total_vertex_count();
-        let total_index_count = mesh.total_index_count();
-        let mesh_arc = Arc::new(mesh);
-        self.meshes.insert(name.clone(), Arc::clone(&mesh_arc));
+        let geometry = Geometry::from_desc(desc)?;
+        let mesh_count = geometry.mesh_count();
+        let total_vertex_count = geometry.total_vertex_count();
+        let total_index_count = geometry.total_index_count();
+        let geometry_arc = Arc::new(geometry);
+        self.geometries.insert(name.clone(), Arc::clone(&geometry_arc));
 
         crate::engine_info!("galaxy3d::ResourceManager",
-            "Created Mesh resource '{}' ({} vertices, {} indices, {} entries)",
-            name, total_vertex_count, total_index_count, entry_count);
+            "Created Geometry resource '{}' ({} vertices, {} indices, {} meshes)",
+            name, total_vertex_count, total_index_count, mesh_count);
 
-        Ok(mesh_arc)
+        Ok(geometry_arc)
     }
 
-    // ===== MESH ACCESS =====
+    // ===== GEOMETRY ACCESS =====
 
-    /// Get a mesh by name
-    pub fn mesh(&self, name: &str) -> Option<&Arc<Mesh>> {
-        self.meshes.get(name)
+    /// Get a geometry by name
+    pub fn geometry(&self, name: &str) -> Option<&Arc<Geometry>> {
+        self.geometries.get(name)
     }
 
-    /// Remove a mesh by name
+    /// Remove a geometry by name
     ///
-    /// Returns `true` if the mesh was found and removed.
-    pub fn remove_mesh(&mut self, name: &str) -> bool {
-        if self.meshes.remove(name).is_some() {
-            crate::engine_info!("galaxy3d::ResourceManager", "Removed Mesh resource '{}'", name);
+    /// Returns `true` if the geometry was found and removed.
+    pub fn remove_geometry(&mut self, name: &str) -> bool {
+        if self.geometries.remove(name).is_some() {
+            crate::engine_info!("galaxy3d::ResourceManager", "Removed Geometry resource '{}'", name);
             true
         } else {
             false
         }
     }
 
-    /// Get the number of registered meshes
-    pub fn mesh_count(&self) -> usize {
-        self.meshes.len()
+    /// Get the number of registered geometries
+    pub fn geometry_count(&self) -> usize {
+        self.geometries.len()
     }
 
-    // ===== MESH MODIFICATION =====
+    // ===== GEOMETRY MODIFICATION =====
 
-    /// Add a mesh entry to an existing mesh resource
+    /// Add a mesh to an existing geometry resource
     ///
     /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the mesh Arc exist.
+    /// references to the geometry Arc exist.
     ///
     /// # Returns
     ///
-    /// The id (index) of the newly created mesh entry.
+    /// The id (index) of the newly created mesh.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The mesh does not exist
+    /// - The geometry does not exist
     /// - Other Arc references prevent mutable access
-    /// - A mesh entry with the same name already exists
+    /// - A mesh with the same name already exists
     /// - Submesh validation fails (offsets exceed buffer sizes)
-    pub fn add_mesh_entry(&mut self, mesh_name: &str, desc: MeshEntryDesc) -> Result<usize> {
-        let arc = self.meshes.get_mut(mesh_name)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Mesh '{}' not found", mesh_name);
-                Error::BackendError(format!(
-                    "Mesh '{}' not found in ResourceManager", mesh_name
-                ))
-            })?;
+    pub fn add_geometry_mesh(&mut self, geom_name: &str, desc: GeometryMeshDesc) -> Result<usize> {
+        let arc = self.geometries.get_mut(geom_name)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry '{}' not found", geom_name))?;
 
-        let mesh = Arc::get_mut(arc)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate Mesh '{}': other references exist", mesh_name);
-                Error::BackendError(format!(
-                    "Cannot mutate Mesh '{}': other references exist", mesh_name
-                ))
-            })?;
+        let geometry = Arc::get_mut(arc)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry '{}': other references exist", geom_name))?;
 
-        mesh.add_mesh_entry(desc)
+        geometry.add_mesh(desc)
     }
 
-    /// Add a LOD to an existing mesh entry
+    /// Add a LOD to an existing mesh
     ///
     /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the mesh Arc exist.
+    /// references to the geometry Arc exist.
     ///
     /// # Returns
     ///
@@ -275,39 +244,29 @@ impl ResourceManager {
     /// # Errors
     ///
     /// Returns an error if:
+    /// - The geometry does not exist
     /// - The mesh does not exist
-    /// - The mesh entry does not exist
     /// - Other Arc references prevent mutable access
     /// - Submesh validation fails
-    pub fn add_mesh_lod(
+    pub fn add_geometry_lod(
         &mut self,
-        mesh_name: &str,
-        entry_id: usize,
-        desc: MeshLODDesc,
+        geom_name: &str,
+        mesh_id: usize,
+        desc: GeometryLODDesc,
     ) -> Result<usize> {
-        let arc = self.meshes.get_mut(mesh_name)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Mesh '{}' not found", mesh_name);
-                Error::BackendError(format!(
-                    "Mesh '{}' not found in ResourceManager", mesh_name
-                ))
-            })?;
+        let arc = self.geometries.get_mut(geom_name)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry '{}' not found", geom_name))?;
 
-        let mesh = Arc::get_mut(arc)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate Mesh '{}': other references exist", mesh_name);
-                Error::BackendError(format!(
-                    "Cannot mutate Mesh '{}': other references exist", mesh_name
-                ))
-            })?;
+        let geometry = Arc::get_mut(arc)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry '{}': other references exist", geom_name))?;
 
-        mesh.add_mesh_lod(entry_id, desc)
+        geometry.add_lod(mesh_id, desc)
     }
 
     /// Add a submesh to an existing LOD
     ///
     /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the mesh Arc exist.
+    /// references to the geometry Arc exist.
     ///
     /// # Returns
     ///
@@ -316,35 +275,25 @@ impl ResourceManager {
     /// # Errors
     ///
     /// Returns an error if:
+    /// - The geometry does not exist
     /// - The mesh does not exist
-    /// - The mesh entry does not exist
     /// - Other Arc references prevent mutable access
     /// - A submesh with the same name already exists in the LOD
     /// - Submesh validation fails (offsets exceed buffer sizes)
-    pub fn add_submesh(
+    pub fn add_geometry_submesh(
         &mut self,
-        mesh_name: &str,
-        entry_id: usize,
+        geom_name: &str,
+        mesh_id: usize,
         lod_index: usize,
-        desc: SubMeshDesc,
+        desc: GeometrySubMeshDesc,
     ) -> Result<usize> {
-        let arc = self.meshes.get_mut(mesh_name)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Mesh '{}' not found", mesh_name);
-                Error::BackendError(format!(
-                    "Mesh '{}' not found in ResourceManager", mesh_name
-                ))
-            })?;
+        let arc = self.geometries.get_mut(geom_name)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry '{}' not found", geom_name))?;
 
-        let mesh = Arc::get_mut(arc)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate Mesh '{}': other references exist", mesh_name);
-                Error::BackendError(format!(
-                    "Cannot mutate Mesh '{}': other references exist", mesh_name
-                ))
-            })?;
+        let geometry = Arc::get_mut(arc)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry '{}': other references exist", geom_name))?;
 
-        mesh.add_submesh(entry_id, lod_index, desc)
+        geometry.add_submesh(mesh_id, lod_index, desc)
     }
 
     // ===== PIPELINE CREATION =====
@@ -361,10 +310,7 @@ impl ResourceManager {
     ///
     pub fn create_pipeline(&mut self, name: String, desc: PipelineDesc) -> Result<Arc<Pipeline>> {
         if self.pipelines.contains_key(&name) {
-            crate::engine_warn!("galaxy3d::ResourceManager", "Pipeline '{}' already exists", name);
-            return Err(Error::BackendError(format!(
-                "Pipeline '{}' already exists in ResourceManager", name
-            )));
+            crate::engine_bail_warn!("galaxy3d::ResourceManager", "Pipeline '{}' already exists", name);
         }
 
         let pipeline = Pipeline::from_desc(desc)?;
@@ -424,22 +370,69 @@ impl ResourceManager {
         desc: PipelineVariantDesc,
     ) -> Result<u32> {
         let arc = self.pipelines.get_mut(pipeline_name)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Pipeline '{}' not found", pipeline_name);
-                Error::BackendError(format!(
-                    "Pipeline '{}' not found in ResourceManager", pipeline_name
-                ))
-            })?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Pipeline '{}' not found", pipeline_name))?;
 
         let pipeline = Arc::get_mut(arc)
-            .ok_or_else(|| {
-                crate::engine_warn!("galaxy3d::ResourceManager", "Cannot mutate Pipeline '{}': other references exist", pipeline_name);
-                Error::BackendError(format!(
-                    "Cannot mutate Pipeline '{}': other references exist", pipeline_name
-                ))
-            })?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Pipeline '{}': other references exist", pipeline_name))?;
 
         pipeline.add_variant(desc)
+    }
+
+    // ===== MATERIAL CREATION =====
+
+    /// Create a material resource and register it
+    ///
+    /// A material is a pure data description: pipeline reference, texture slots,
+    /// and named parameters. No GPU resources are created at this level.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for this material resource
+    /// * `desc` - Material descriptor with pipeline, textures, and parameters
+    ///
+    pub fn create_material(&mut self, name: String, desc: MaterialDesc) -> Result<Arc<Material>> {
+        if self.materials.contains_key(&name) {
+            crate::engine_bail_warn!("galaxy3d::ResourceManager", "Material '{}' already exists", name);
+        }
+
+        let material = Material::from_desc(desc)?;
+        let texture_count = material.texture_slot_count();
+        let param_count = material.param_count();
+
+        let material_arc = Arc::new(material);
+        self.materials.insert(name.clone(), Arc::clone(&material_arc));
+
+        crate::engine_info!("galaxy3d::ResourceManager",
+            "Created Material resource '{}' ({} texture slot{}, {} param{})",
+            name,
+            texture_count, if texture_count != 1 { "s" } else { "" },
+            param_count, if param_count != 1 { "s" } else { "" });
+
+        Ok(material_arc)
+    }
+
+    // ===== MATERIAL ACCESS =====
+
+    /// Get a material by name
+    pub fn material(&self, name: &str) -> Option<&Arc<Material>> {
+        self.materials.get(name)
+    }
+
+    /// Remove a material by name
+    ///
+    /// Returns `true` if the material was found and removed.
+    pub fn remove_material(&mut self, name: &str) -> bool {
+        if self.materials.remove(name).is_some() {
+            crate::engine_info!("galaxy3d::ResourceManager", "Removed Material resource '{}'", name);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the number of registered materials
+    pub fn material_count(&self) -> usize {
+        self.materials.len()
     }
 }
 

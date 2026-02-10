@@ -204,6 +204,63 @@ macro_rules! engine_error {
     };
 }
 
+// ===== ERROR SHORTCUT MACROS =====
+//
+// These macros combine logging + error creation to prevent forgetting logs.
+// - engine_bail!      → engine_error! + return Err(BackendError)
+// - engine_bail_warn! → engine_warn!  + return Err(BackendError)
+// - engine_err!       → engine_error! + Error::BackendError (value, for closures)
+// - engine_warn_err!  → engine_warn!  + Error::BackendError (value, for closures)
+
+/// Log an ERROR and immediately return Err(BackendError)
+///
+/// Combines `engine_error!` + `return Err(Error::BackendError(...))` in one call.
+/// Eliminates message duplication and makes it impossible to forget the log.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! engine_bail {
+    ($source:expr, $($arg:tt)*) => {{
+        $crate::engine_error!($source, $($arg)*);
+        return Err($crate::galaxy3d::Error::BackendError(format!($($arg)*)));
+    }};
+}
+
+/// Log a WARN and immediately return Err(BackendError)
+///
+/// Combines `engine_warn!` + `return Err(Error::BackendError(...))` in one call.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! engine_bail_warn {
+    ($source:expr, $($arg:tt)*) => {{
+        $crate::engine_warn!($source, $($arg)*);
+        return Err($crate::galaxy3d::Error::BackendError(format!($($arg)*)));
+    }};
+}
+
+/// Log an ERROR and return Error::BackendError as a value (for closures)
+///
+/// Use in `.ok_or_else(|| engine_err!(...))` or `.map_err(|e| engine_err!(...))`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! engine_err {
+    ($source:expr, $($arg:tt)*) => {{
+        $crate::engine_error!($source, $($arg)*);
+        $crate::galaxy3d::Error::BackendError(format!($($arg)*))
+    }};
+}
+
+/// Log a WARN and return Error::BackendError as a value (for closures)
+///
+/// Use in `.ok_or_else(|| engine_warn_err!(...))` or `.map_err(|e| engine_warn_err!(...))`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! engine_warn_err {
+    ($source:expr, $($arg:tt)*) => {{
+        $crate::engine_warn!($source, $($arg)*);
+        $crate::galaxy3d::Error::BackendError(format!($($arg)*))
+    }};
+}
+
 #[cfg(test)]
 #[path = "log_tests.rs"]
 mod tests;

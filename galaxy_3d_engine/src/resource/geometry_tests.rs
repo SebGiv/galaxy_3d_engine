@@ -1,6 +1,6 @@
-/// Unit tests for mesh.rs
+/// Unit tests for geometry.rs
 ///
-/// Tests the Mesh, MeshEntry, MeshLOD, and SubMesh hierarchy without requiring GPU.
+/// Tests the Geometry, GeometryMesh, GeometryLOD, and GeometrySubMesh hierarchy without requiring GPU.
 /// Uses MockRenderer for testing.
 
 #[cfg(test)]
@@ -13,7 +13,7 @@ use crate::renderer::{
 };
 #[cfg(test)]
 use crate::resource::{
-    Mesh, MeshDesc, MeshEntryDesc, MeshLODDesc, SubMeshDesc, SubMesh,
+    Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc, GeometrySubMesh,
 };
 
 // ============================================================================
@@ -75,8 +75,8 @@ fn create_quad_index_data_u16() -> Vec<u8> {
 }
 
 /// Create a simple submesh descriptor
-fn create_simple_submesh_desc() -> SubMeshDesc {
-    SubMeshDesc {
+fn create_simple_submesh_desc() -> GeometrySubMeshDesc {
+    GeometrySubMeshDesc {
         name: "quad".to_string(),
         vertex_offset: 0,
         vertex_count: 4,
@@ -87,14 +87,14 @@ fn create_simple_submesh_desc() -> SubMeshDesc {
 }
 
 // ============================================================================
-// MESH CREATION TESTS
+// GEOMETRY CREATION TESTS
 // ============================================================================
 
 #[test]
-fn test_create_mesh_indexed() {
+fn test_create_geometry_indexed() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
@@ -103,20 +103,20 @@ fn test_create_mesh_indexed() {
         meshes: vec![],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    assert_eq!(mesh.name(), "test_mesh");
-    assert_eq!(mesh.total_vertex_count(), 4);
-    assert_eq!(mesh.total_index_count(), 6);
-    assert!(mesh.is_indexed());
-    assert_eq!(mesh.index_type(), IndexType::U16);
+    assert_eq!(geom.name(), "test_geom");
+    assert_eq!(geom.total_vertex_count(), 4);
+    assert_eq!(geom.total_index_count(), 6);
+    assert!(geom.is_indexed());
+    assert_eq!(geom.index_type(), IndexType::U16);
 }
 
 #[test]
-fn test_create_mesh_non_indexed() {
+fn test_create_geometry_non_indexed() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: None, // Non-indexed
@@ -125,30 +125,30 @@ fn test_create_mesh_non_indexed() {
         meshes: vec![],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    assert_eq!(mesh.name(), "test_mesh");
-    assert_eq!(mesh.total_vertex_count(), 4);
-    assert_eq!(mesh.total_index_count(), 0);
-    assert!(!mesh.is_indexed());
-    assert!(mesh.index_buffer().is_none());
+    assert_eq!(geom.name(), "test_geom");
+    assert_eq!(geom.total_vertex_count(), 4);
+    assert_eq!(geom.total_index_count(), 0);
+    assert!(!geom.is_indexed());
+    assert!(geom.index_buffer().is_none());
 }
 
 #[test]
-fn test_create_mesh_with_entry() {
+fn test_create_geometry_with_mesh() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![create_simple_submesh_desc()],
                     }
@@ -157,17 +157,17 @@ fn test_create_mesh_with_entry() {
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    assert_eq!(mesh.mesh_entry_count(), 1);
-    assert!(mesh.mesh_entry_by_name("hero").is_some());
+    assert_eq!(geom.mesh_count(), 1);
+    assert!(geom.mesh_by_name("hero").is_some());
 }
 
 #[test]
-fn test_create_mesh_invalid_vertex_stride() {
+fn test_create_geometry_invalid_vertex_stride() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: vec![1, 2, 3], // 3 bytes, not divisible by stride 8
         index_data: None,
@@ -176,15 +176,15 @@ fn test_create_mesh_invalid_vertex_stride() {
         meshes: vec![],
     };
 
-    let result = Mesh::from_desc(desc);
+    let result = Geometry::from_desc(desc);
     assert!(result.is_err());
 }
 
 #[test]
-fn test_create_mesh_invalid_index_stride() {
+fn test_create_geometry_invalid_index_stride() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(vec![1, 2, 3]), // 3 bytes, not divisible by u16 size (2)
@@ -193,19 +193,19 @@ fn test_create_mesh_invalid_index_stride() {
         meshes: vec![],
     };
 
-    let result = Mesh::from_desc(desc);
+    let result = Geometry::from_desc(desc);
     assert!(result.is_err());
 }
 
 // ============================================================================
-// MESH ENTRY TESTS
+// GEOMETRY MESH TESTS
 // ============================================================================
 
 #[test]
-fn test_add_mesh_entry() {
+fn test_add_mesh() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
@@ -214,105 +214,105 @@ fn test_add_mesh_entry() {
         meshes: vec![],
     };
 
-    let mut mesh = Mesh::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc).unwrap();
 
-    let entry_desc = MeshEntryDesc {
+    let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
         lods: vec![
-            MeshLODDesc {
+            GeometryLODDesc {
                 lod_index: 0,
                 submeshes: vec![create_simple_submesh_desc()],
             }
         ],
     };
 
-    let entry_id = mesh.add_mesh_entry(entry_desc).unwrap();
+    let mesh_id = geom.add_mesh(mesh_desc).unwrap();
 
-    assert_eq!(entry_id, 0);
-    assert_eq!(mesh.mesh_entry_count(), 1);
-    assert_eq!(mesh.mesh_entry_names(), vec!["hero"]);
+    assert_eq!(mesh_id, 0);
+    assert_eq!(geom.mesh_count(), 1);
+    assert_eq!(geom.mesh_names(), vec!["hero"]);
 }
 
 #[test]
-fn test_get_mesh_entry_by_name() {
+fn test_get_mesh_by_name() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![],
             }
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    let entry = mesh.mesh_entry_by_name("hero");
-    assert!(entry.is_some());
+    let mesh = geom.mesh_by_name("hero");
+    assert!(mesh.is_some());
 
-    let entry = mesh.mesh_entry_by_name("nonexistent");
-    assert!(entry.is_none());
+    let mesh = geom.mesh_by_name("nonexistent");
+    assert!(mesh.is_none());
 }
 
 #[test]
-fn test_get_mesh_entry_by_id() {
+fn test_get_mesh_by_id() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![],
             }
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    let entry_id = mesh.mesh_entry_id("hero");
-    assert_eq!(entry_id, Some(0));
+    let mesh_id = geom.mesh_id("hero");
+    assert_eq!(mesh_id, Some(0));
 
-    let entry = mesh.mesh_entry(0);
-    assert!(entry.is_some());
+    let mesh = geom.mesh(0);
+    assert!(mesh.is_some());
 }
 
 #[test]
-fn test_add_duplicate_mesh_entry() {
+fn test_add_duplicate_mesh() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![],
             }
         ],
     };
 
-    let mut mesh = Mesh::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc).unwrap();
 
-    let entry_desc = MeshEntryDesc {
+    let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(), // Duplicate
         lods: vec![],
     };
 
-    let result = mesh.add_mesh_entry(entry_desc);
+    let result = geom.add_mesh(mesh_desc);
     assert!(result.is_err());
 }
 
@@ -323,56 +323,56 @@ fn test_add_duplicate_mesh_entry() {
 #[test]
 fn test_add_lod() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![],
             }
         ],
     };
 
-    let mut mesh = Mesh::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc).unwrap();
 
-    let lod_desc = MeshLODDesc {
+    let lod_desc = GeometryLODDesc {
         lod_index: 0,
         submeshes: vec![create_simple_submesh_desc()],
     };
 
-    let entry_id = mesh.mesh_entry_id("hero").unwrap();
-    let lod_index = mesh.add_mesh_lod(entry_id, lod_desc).unwrap();
+    let mesh_id = geom.mesh_id("hero").unwrap();
+    let lod_index = geom.add_lod(mesh_id, lod_desc).unwrap();
 
     assert_eq!(lod_index, 0);
 
-    let entry = mesh.mesh_entry(entry_id).unwrap();
-    assert_eq!(entry.lod_count(), 1);
+    let mesh = geom.mesh(mesh_id).unwrap();
+    assert_eq!(mesh.lod_count(), 1);
 }
 
 #[test]
 fn test_multiple_lods() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![create_simple_submesh_desc()],
                     },
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 1,
                         submeshes: vec![create_simple_submesh_desc()],
                     },
@@ -381,12 +381,12 @@ fn test_multiple_lods() {
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    let entry = mesh.mesh_entry_by_name("hero").unwrap();
-    assert_eq!(entry.lod_count(), 2);
-    assert!(entry.lod(0).is_some());
-    assert!(entry.lod(1).is_some());
+    let mesh = geom.mesh_by_name("hero").unwrap();
+    assert_eq!(mesh.lod_count(), 2);
+    assert!(mesh.lod(0).is_some());
+    assert!(mesh.lod(1).is_some());
 }
 
 // ============================================================================
@@ -395,7 +395,7 @@ fn test_multiple_lods() {
 
 #[test]
 fn test_submesh_accessors() {
-    let submesh_desc = SubMeshDesc {
+    let submesh_desc = GeometrySubMeshDesc {
         name: "test".to_string(),
         vertex_offset: 10,
         vertex_count: 20,
@@ -405,22 +405,22 @@ fn test_submesh_accessors() {
     };
 
     let renderer = create_mock_renderer();
-    // Create mesh with enough vertices/indices to accommodate submesh
+    // Create geometry with enough vertices/indices to accommodate submesh
     let vertex_data = vec![0u8; 30 * 8]; // 30 vertices * 8 bytes stride
     let index_data = vec![0u8; 35 * 2]; // 35 indices * 2 bytes (u16)
 
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data,
         index_data: Some(index_data),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![submesh_desc],
                     }
@@ -429,9 +429,9 @@ fn test_submesh_accessors() {
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    let submesh = mesh.submesh_by_name("hero", 0, "test").unwrap();
+    let submesh = geom.submesh_by_name("hero", 0, "test").unwrap();
 
     assert_eq!(submesh.vertex_offset(), 10);
     assert_eq!(submesh.vertex_count(), 20);
@@ -443,18 +443,18 @@ fn test_submesh_accessors() {
 #[test]
 fn test_add_submesh() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![],
                     }
@@ -463,9 +463,9 @@ fn test_add_submesh() {
         ],
     };
 
-    let mut mesh = Mesh::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc).unwrap();
 
-    let submesh_desc = SubMeshDesc {
+    let submesh_desc = GeometrySubMeshDesc {
         name: "body".to_string(),
         vertex_offset: 0,
         vertex_count: 4,
@@ -474,21 +474,21 @@ fn test_add_submesh() {
         topology: PrimitiveTopology::TriangleList,
     };
 
-    let entry_id = mesh.mesh_entry_id("hero").unwrap();
-    let submesh_id = mesh.add_submesh(entry_id, 0, submesh_desc).unwrap();
+    let mesh_id = geom.mesh_id("hero").unwrap();
+    let submesh_id = geom.add_submesh(mesh_id, 0, submesh_desc).unwrap();
 
     assert_eq!(submesh_id, 0);
 
-    let entry = mesh.mesh_entry(entry_id).unwrap();
-    let lod = entry.lod(0).unwrap();
+    let mesh = geom.mesh(mesh_id).unwrap();
+    let lod = mesh.lod(0).unwrap();
     assert_eq!(lod.submesh_count(), 1);
 }
 
 #[test]
 fn test_submesh_validation_vertex_overflow() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(), // 4 vertices
         index_data: Some(create_quad_index_data_u16()),
@@ -497,15 +497,15 @@ fn test_submesh_validation_vertex_overflow() {
         meshes: vec![],
     };
 
-    let mut mesh = Mesh::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc).unwrap();
 
-    let entry_desc = MeshEntryDesc {
+    let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
         lods: vec![
-            MeshLODDesc {
+            GeometryLODDesc {
                 lod_index: 0,
                 submeshes: vec![
-                    SubMeshDesc {
+                    GeometrySubMeshDesc {
                         name: "invalid".to_string(),
                         vertex_offset: 0,
                         vertex_count: 10, // Exceeds total_vertex_count (4)
@@ -518,15 +518,15 @@ fn test_submesh_validation_vertex_overflow() {
         ],
     };
 
-    let result = mesh.add_mesh_entry(entry_desc);
+    let result = geom.add_mesh(mesh_desc);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_submesh_validation_index_overflow() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()), // 6 indices
@@ -535,15 +535,15 @@ fn test_submesh_validation_index_overflow() {
         meshes: vec![],
     };
 
-    let mut mesh = Mesh::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc).unwrap();
 
-    let entry_desc = MeshEntryDesc {
+    let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
         lods: vec![
-            MeshLODDesc {
+            GeometryLODDesc {
                 lod_index: 0,
                 submeshes: vec![
-                    SubMeshDesc {
+                    GeometrySubMeshDesc {
                         name: "invalid".to_string(),
                         vertex_offset: 0,
                         vertex_count: 4,
@@ -556,7 +556,7 @@ fn test_submesh_validation_index_overflow() {
         ],
     };
 
-    let result = mesh.add_mesh_entry(entry_desc);
+    let result = geom.add_mesh(mesh_desc);
     assert!(result.is_err());
 }
 
@@ -567,21 +567,21 @@ fn test_submesh_validation_index_overflow() {
 #[test]
 fn test_submesh_lookup_by_name() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 4,
@@ -596,10 +596,10 @@ fn test_submesh_lookup_by_name() {
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    let entry = mesh.mesh_entry_by_name("hero").unwrap();
-    let lod = entry.lod(0).unwrap();
+    let mesh = geom.mesh_by_name("hero").unwrap();
+    let lod = mesh.lod(0).unwrap();
 
     let submesh_id = lod.submesh_id("body");
     assert_eq!(submesh_id, Some(0));
@@ -614,21 +614,21 @@ fn test_submesh_lookup_by_name() {
 #[test]
 fn test_multiple_submeshes_in_lod() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 2,
@@ -636,7 +636,7 @@ fn test_multiple_submeshes_in_lod() {
                                 index_count: 3,
                                 topology: PrimitiveTopology::TriangleList,
                             },
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "armor".to_string(),
                                 vertex_offset: 2,
                                 vertex_count: 2,
@@ -651,10 +651,10 @@ fn test_multiple_submeshes_in_lod() {
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    let entry = mesh.mesh_entry_by_name("hero").unwrap();
-    let lod = entry.lod(0).unwrap();
+    let mesh = geom.mesh_by_name("hero").unwrap();
+    let lod = mesh.lod(0).unwrap();
 
     assert_eq!(lod.submesh_count(), 2);
     assert!(lod.submesh_by_name("body").is_some());
@@ -666,14 +666,14 @@ fn test_multiple_submeshes_in_lod() {
 // ============================================================================
 
 #[test]
-fn test_complex_mesh_hierarchy() {
+fn test_complex_geometry_hierarchy() {
     let renderer = create_mock_renderer();
 
-    // Create a large buffer to accommodate multiple mesh entries
+    // Create a large buffer to accommodate multiple meshes
     let vertex_data = vec![0u8; 100 * 8]; // 100 vertices
     let index_data = vec![0u8; 150 * 2]; // 150 indices
 
-    let desc = MeshDesc {
+    let desc = GeometryDesc {
         name: "characters".to_string(),
         renderer: renderer.clone(),
         vertex_data,
@@ -681,13 +681,13 @@ fn test_complex_mesh_hierarchy() {
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 10,
@@ -695,7 +695,7 @@ fn test_complex_mesh_hierarchy() {
                                 index_count: 15,
                                 topology: PrimitiveTopology::TriangleList,
                             },
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "armor".to_string(),
                                 vertex_offset: 10,
                                 vertex_count: 5,
@@ -705,10 +705,10 @@ fn test_complex_mesh_hierarchy() {
                             }
                         ],
                     },
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 1,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 8,
@@ -720,13 +720,13 @@ fn test_complex_mesh_hierarchy() {
                     },
                 ],
             },
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "enemy".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 20,
                                 vertex_count: 12,
@@ -741,14 +741,14 @@ fn test_complex_mesh_hierarchy() {
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    // Verify mesh structure
-    assert_eq!(mesh.mesh_entry_count(), 2);
-    assert_eq!(mesh.mesh_entry_names().len(), 2);
+    // Verify geometry structure
+    assert_eq!(geom.mesh_count(), 2);
+    assert_eq!(geom.mesh_names().len(), 2);
 
-    // Verify hero entry
-    let hero = mesh.mesh_entry_by_name("hero").unwrap();
+    // Verify hero mesh
+    let hero = geom.mesh_by_name("hero").unwrap();
     assert_eq!(hero.lod_count(), 2);
 
     let hero_lod0 = hero.lod(0).unwrap();
@@ -757,8 +757,8 @@ fn test_complex_mesh_hierarchy() {
     let hero_lod1 = hero.lod(1).unwrap();
     assert_eq!(hero_lod1.submesh_count(), 1);
 
-    // Verify enemy entry
-    let enemy = mesh.mesh_entry_by_name("enemy").unwrap();
+    // Verify enemy mesh
+    let enemy = geom.mesh_by_name("enemy").unwrap();
     assert_eq!(enemy.lod_count(), 1);
 
     let enemy_lod0 = enemy.lod(0).unwrap();
@@ -770,10 +770,10 @@ fn test_complex_mesh_hierarchy() {
 // ============================================================================
 
 #[test]
-fn test_mesh_getters() {
+fn test_geometry_getters() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
@@ -782,45 +782,45 @@ fn test_mesh_getters() {
         meshes: vec![],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
     // Test renderer()
-    assert!(Arc::ptr_eq(&mesh.renderer(), &renderer));
+    assert!(Arc::ptr_eq(&geom.renderer(), &renderer));
 
     // Test vertex_buffer()
-    let vb = mesh.vertex_buffer();
+    let vb = geom.vertex_buffer();
     assert!(Arc::strong_count(vb) >= 1);
 
     // Test vertex_layout()
-    let layout = mesh.vertex_layout();
+    let layout = geom.vertex_layout();
     assert_eq!(layout.bindings.len(), 1);
     assert_eq!(layout.bindings[0].stride, 8);
 
     // Test total_vertex_count() - already tested but verify here
-    assert_eq!(mesh.total_vertex_count(), 4);
+    assert_eq!(geom.total_vertex_count(), 4);
 
     // Test total_index_count() - already tested but verify here
-    assert_eq!(mesh.total_index_count(), 6);
+    assert_eq!(geom.total_index_count(), 6);
 }
 
 #[test]
 fn test_submesh_by_id() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 2,
@@ -828,7 +828,7 @@ fn test_submesh_by_id() {
                                 index_count: 3,
                                 topology: PrimitiveTopology::TriangleList,
                             },
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "armor".to_string(),
                                 vertex_offset: 2,
                                 vertex_count: 2,
@@ -843,52 +843,52 @@ fn test_submesh_by_id() {
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    // Get entry id
-    let entry_id = mesh.mesh_entry_id("hero").unwrap();
-    assert_eq!(entry_id, 0);
+    // Get mesh id
+    let mesh_id = geom.mesh_id("hero").unwrap();
+    assert_eq!(mesh_id, 0);
 
     // Test submesh() with ids (not by name)
-    let submesh0 = mesh.submesh(entry_id, 0, 0);
+    let submesh0 = geom.submesh(mesh_id, 0, 0);
     assert!(submesh0.is_some());
     assert_eq!(submesh0.unwrap().vertex_offset(), 0);
     assert_eq!(submesh0.unwrap().vertex_count(), 2);
 
-    let submesh1 = mesh.submesh(entry_id, 0, 1);
+    let submesh1 = geom.submesh(mesh_id, 0, 1);
     assert!(submesh1.is_some());
     assert_eq!(submesh1.unwrap().vertex_offset(), 2);
     assert_eq!(submesh1.unwrap().vertex_count(), 2);
 
     // Test invalid ids
-    let invalid_submesh = mesh.submesh(entry_id, 0, 99);
+    let invalid_submesh = geom.submesh(mesh_id, 0, 99);
     assert!(invalid_submesh.is_none());
 
-    let invalid_lod = mesh.submesh(entry_id, 99, 0);
+    let invalid_lod = geom.submesh(mesh_id, 99, 0);
     assert!(invalid_lod.is_none());
 
-    let invalid_entry = mesh.submesh(99, 0, 0);
-    assert!(invalid_entry.is_none());
+    let invalid_mesh = geom.submesh(99, 0, 0);
+    assert!(invalid_mesh.is_none());
 }
 
 #[test]
 fn test_submeshes_iterator() {
     let renderer = create_mock_renderer();
-    let desc = MeshDesc {
-        name: "test_mesh".to_string(),
+    let desc = GeometryDesc {
+        name: "test_geom".to_string(),
         renderer: renderer.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: IndexType::U16,
         meshes: vec![
-            MeshEntryDesc {
+            GeometryMeshDesc {
                 name: "hero".to_string(),
                 lods: vec![
-                    MeshLODDesc {
+                    GeometryLODDesc {
                         lod_index: 0,
                         submeshes: vec![
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 2,
@@ -896,7 +896,7 @@ fn test_submeshes_iterator() {
                                 index_count: 3,
                                 topology: PrimitiveTopology::TriangleList,
                             },
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "armor".to_string(),
                                 vertex_offset: 2,
                                 vertex_count: 2,
@@ -904,7 +904,7 @@ fn test_submeshes_iterator() {
                                 index_count: 3,
                                 topology: PrimitiveTopology::TriangleList,
                             },
-                            SubMeshDesc {
+                            GeometrySubMeshDesc {
                                 name: "weapon".to_string(),
                                 vertex_offset: 0,
                                 vertex_count: 4,
@@ -919,13 +919,13 @@ fn test_submeshes_iterator() {
         ],
     };
 
-    let mesh = Mesh::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc).unwrap();
 
-    let entry = mesh.mesh_entry_by_name("hero").unwrap();
-    let lod = entry.lod(0).unwrap();
+    let mesh = geom.mesh_by_name("hero").unwrap();
+    let lod = mesh.lod(0).unwrap();
 
     // Test submeshes() iterator
-    let submesh_vec: Vec<(&str, &SubMesh)> = lod.submeshes().collect();
+    let submesh_vec: Vec<(&str, &GeometrySubMesh)> = lod.submeshes().collect();
 
     assert_eq!(submesh_vec.len(), 3);
 
