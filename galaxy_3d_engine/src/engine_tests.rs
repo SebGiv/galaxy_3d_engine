@@ -693,3 +693,160 @@ fn test_concurrent_renderer_access() {
 
     // If we get here without deadlock or panic, concurrent access works
 }
+
+// ============================================================================
+// SCENE MANAGER TESTS
+// ============================================================================
+
+#[test]
+#[serial]
+fn test_create_scene_manager_success() {
+    setup();
+
+    let result = Engine::create_scene_manager();
+    assert!(result.is_ok());
+}
+
+#[test]
+#[serial]
+fn test_create_scene_manager_duplicate_fails() {
+    setup();
+
+    Engine::create_scene_manager().unwrap();
+
+    let result = Engine::create_scene_manager();
+    assert!(result.is_err());
+}
+
+#[test]
+#[serial]
+fn test_scene_manager_not_created_fails() {
+    setup();
+
+    let result = Engine::scene_manager();
+    assert!(result.is_err());
+}
+
+#[test]
+#[serial]
+fn test_scene_manager_retrieval_success() {
+    setup();
+
+    Engine::create_scene_manager().unwrap();
+
+    let result = Engine::scene_manager();
+    assert!(result.is_ok());
+}
+
+#[test]
+#[serial]
+fn test_scene_manager_returned_is_usable() {
+    setup();
+
+    Engine::create_scene_manager().unwrap();
+
+    let sm = Engine::scene_manager().unwrap();
+
+    // Lock and use the scene manager
+    let mut guard = sm.lock().unwrap();
+    let scene = guard.create_scene("test_scene");
+    assert!(scene.is_ok());
+}
+
+#[test]
+#[serial]
+fn test_destroy_scene_manager_success() {
+    setup();
+
+    Engine::create_scene_manager().unwrap();
+
+    // Should exist
+    assert!(Engine::scene_manager().is_ok());
+
+    // Destroy it
+    let result = Engine::destroy_scene_manager();
+    assert!(result.is_ok());
+
+    // Should no longer exist
+    assert!(Engine::scene_manager().is_err());
+}
+
+#[test]
+#[serial]
+fn test_scene_manager_lifecycle() {
+    setup();
+
+    // Create, destroy, create again cycle
+    Engine::create_scene_manager().unwrap();
+    Engine::destroy_scene_manager().unwrap();
+
+    // Should be able to create again
+    let result = Engine::create_scene_manager();
+    assert!(result.is_ok());
+}
+
+#[test]
+#[serial]
+fn test_shutdown_clears_scene_manager() {
+    setup();
+
+    Engine::create_scene_manager().unwrap();
+    assert!(Engine::scene_manager().is_ok());
+
+    Engine::shutdown();
+
+    // Re-initialize to avoid affecting other tests
+    Engine::initialize().unwrap();
+
+    // Scene manager should be cleared
+    assert!(Engine::scene_manager().is_err());
+}
+
+#[test]
+#[serial]
+fn test_shutdown_clears_sm_before_rm() {
+    setup();
+
+    // Create all subsystems
+    let _renderer = Engine::create_renderer("test_shutdown_sm_rm", MockRenderer::new()).unwrap();
+    Engine::create_resource_manager().unwrap();
+    Engine::create_scene_manager().unwrap();
+
+    // All should exist
+    assert!(Engine::renderer("test_shutdown_sm_rm").is_ok());
+    assert!(Engine::resource_manager().is_ok());
+    assert!(Engine::scene_manager().is_ok());
+
+    // Shutdown (order: SM → RM → renderers)
+    Engine::shutdown();
+
+    assert_eq!(Engine::renderer_count(), 0);
+
+    // Re-initialize
+    Engine::initialize().unwrap();
+}
+
+#[test]
+#[serial]
+fn test_full_engine_lifecycle_with_scene_manager() {
+    setup();
+
+    // Create all subsystems
+    let _renderer = Engine::create_renderer("test_full_sm", MockRenderer::new()).unwrap();
+    Engine::create_resource_manager().unwrap();
+    Engine::create_scene_manager().unwrap();
+
+    // Use scene manager
+    {
+        let sm = Engine::scene_manager().unwrap();
+        let mut guard = sm.lock().unwrap();
+        guard.create_scene("main").unwrap();
+        guard.create_scene("ui").unwrap();
+        assert_eq!(guard.scene_count(), 2);
+    }
+
+    // Cleanup
+    Engine::destroy_scene_manager().unwrap();
+    Engine::destroy_resource_manager().unwrap();
+    Engine::destroy_renderer("test_full_sm").unwrap();
+}
