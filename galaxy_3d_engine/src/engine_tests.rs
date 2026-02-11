@@ -850,3 +850,202 @@ fn test_full_engine_lifecycle_with_scene_manager() {
     Engine::destroy_resource_manager().unwrap();
     Engine::destroy_renderer("test_full_sm").unwrap();
 }
+
+// ============================================================================
+// TARGET MANAGER TESTS
+// ============================================================================
+
+#[test]
+#[serial]
+fn test_create_target_manager_success() {
+    setup();
+
+    let result = Engine::create_target_manager();
+    assert!(result.is_ok());
+}
+
+#[test]
+#[serial]
+fn test_create_target_manager_duplicate_fails() {
+    setup();
+
+    Engine::create_target_manager().unwrap();
+
+    let result = Engine::create_target_manager();
+    assert!(result.is_err());
+    match result {
+        Err(Error::InitializationFailed(msg)) => {
+            assert!(msg.contains("already exists"));
+        }
+        _ => panic!("Expected InitializationFailed error"),
+    }
+}
+
+#[test]
+#[serial]
+fn test_target_manager_not_created_fails() {
+    setup();
+
+    let result = Engine::target_manager();
+    assert!(result.is_err());
+    match result {
+        Err(Error::InitializationFailed(msg)) => {
+            assert!(msg.contains("not created"));
+        }
+        _ => panic!("Expected InitializationFailed error"),
+    }
+}
+
+#[test]
+#[serial]
+fn test_target_manager_retrieval_success() {
+    setup();
+
+    Engine::create_target_manager().unwrap();
+
+    let result = Engine::target_manager();
+    assert!(result.is_ok());
+
+    let tm = result.unwrap();
+    assert!(Arc::strong_count(&tm) >= 1);
+}
+
+#[test]
+#[serial]
+fn test_target_manager_returned_is_usable() {
+    setup();
+
+    Engine::create_target_manager().unwrap();
+
+    let tm = Engine::target_manager().unwrap();
+
+    // Lock and use the target manager
+    let mut guard = tm.lock().unwrap();
+    let target = guard.create_render_target("screen");
+    assert!(target.is_ok());
+}
+
+#[test]
+#[serial]
+fn test_destroy_target_manager_success() {
+    setup();
+
+    Engine::create_target_manager().unwrap();
+
+    // Should exist
+    assert!(Engine::target_manager().is_ok());
+
+    // Destroy it
+    let result = Engine::destroy_target_manager();
+    assert!(result.is_ok());
+
+    // Should no longer exist
+    assert!(Engine::target_manager().is_err());
+}
+
+#[test]
+#[serial]
+fn test_target_manager_lifecycle() {
+    setup();
+
+    // Create, destroy, create again cycle
+    Engine::create_target_manager().unwrap();
+    Engine::destroy_target_manager().unwrap();
+
+    // Should be able to create again
+    let result = Engine::create_target_manager();
+    assert!(result.is_ok());
+}
+
+#[test]
+#[serial]
+fn test_shutdown_clears_target_manager() {
+    setup();
+
+    Engine::create_target_manager().unwrap();
+    assert!(Engine::target_manager().is_ok());
+
+    Engine::shutdown();
+
+    // Re-initialize to avoid affecting other tests
+    Engine::initialize().unwrap();
+
+    // Target manager should be cleared
+    assert!(Engine::target_manager().is_err());
+}
+
+#[test]
+#[serial]
+fn test_shutdown_clears_tm_before_sm() {
+    setup();
+
+    // Create all subsystems
+    let _renderer = Engine::create_renderer("test_shutdown_tm_sm", MockRenderer::new()).unwrap();
+    Engine::create_resource_manager().unwrap();
+    Engine::create_scene_manager().unwrap();
+    Engine::create_target_manager().unwrap();
+
+    // All should exist
+    assert!(Engine::renderer("test_shutdown_tm_sm").is_ok());
+    assert!(Engine::resource_manager().is_ok());
+    assert!(Engine::scene_manager().is_ok());
+    assert!(Engine::target_manager().is_ok());
+
+    // Shutdown (order: TM → SM → RM → renderers)
+    Engine::shutdown();
+
+    assert_eq!(Engine::renderer_count(), 0);
+
+    // Re-initialize
+    Engine::initialize().unwrap();
+}
+
+#[test]
+#[serial]
+fn test_full_engine_lifecycle_with_target_manager() {
+    setup();
+
+    // Create all subsystems
+    let _renderer = Engine::create_renderer("test_full_tm", MockRenderer::new()).unwrap();
+    Engine::create_resource_manager().unwrap();
+    Engine::create_scene_manager().unwrap();
+    Engine::create_target_manager().unwrap();
+
+    // Use target manager
+    {
+        let tm = Engine::target_manager().unwrap();
+        let mut guard = tm.lock().unwrap();
+        guard.create_render_target("screen").unwrap();
+        guard.create_render_target("shadow_map").unwrap();
+        assert_eq!(guard.render_target_count(), 2);
+    }
+
+    // Cleanup (order: TM → SM → RM → renderers)
+    Engine::destroy_target_manager().unwrap();
+    Engine::destroy_scene_manager().unwrap();
+    Engine::destroy_resource_manager().unwrap();
+    Engine::destroy_renderer("test_full_tm").unwrap();
+}
+
+#[test]
+#[serial]
+fn test_target_manager_errors_logged() {
+    setup();
+
+    let test_logger = TestLogger::new();
+    let entries_ref = test_logger.entries.clone();
+    Engine::set_logger(test_logger);
+
+    // InitializationFailed: duplicate target manager
+    Engine::create_target_manager().unwrap();
+    let _ = Engine::create_target_manager();
+
+    // InitializationFailed: target manager not created (after destroy)
+    Engine::destroy_target_manager().unwrap();
+    let _ = Engine::target_manager();
+
+    // Check that errors were logged
+    let entries = entries_ref.lock().unwrap();
+    assert!(entries.iter().any(|e| e.contains("already exists")));
+    assert!(entries.iter().any(|e| e.contains("not created")));
+}

@@ -10,6 +10,7 @@ use std::time::SystemTime;
 use crate::renderer::Renderer;
 use crate::resource::ResourceManager;
 use crate::scene::SceneManager;
+use crate::target::TargetManager;
 use crate::error::{Result, Error};
 use crate::log::{Logger, LogEntry, LogSeverity, DefaultLogger};
 
@@ -29,6 +30,8 @@ struct EngineState {
     resource_manager: RwLock<Option<Arc<Mutex<ResourceManager>>>>,
     /// Scene manager singleton
     scene_manager: RwLock<Option<Arc<Mutex<SceneManager>>>>,
+    /// Target manager singleton
+    target_manager: RwLock<Option<Arc<Mutex<TargetManager>>>>,
 }
 
 impl EngineState {
@@ -38,6 +41,7 @@ impl EngineState {
             renderers: RwLock::new(HashMap::new()),
             resource_manager: RwLock::new(None),
             scene_manager: RwLock::new(None),
+            target_manager: RwLock::new(None),
         }
     }
 }
@@ -88,6 +92,10 @@ impl Engine {
     /// After calling this, you must call `initialize()` again before creating new subsystems.
     pub fn shutdown() {
         if let Some(state) = ENGINE_STATE.get() {
+            // Clear target manager BEFORE scene manager (targets reference scenes)
+            if let Ok(mut tm) = state.target_manager.write() {
+                *tm = None;
+            }
             // Clear scene manager BEFORE resource manager (scenes reference resources)
             if let Ok(mut sm) = state.scene_manager.write() {
                 *sm = None;
@@ -422,10 +430,106 @@ impl Engine {
         Ok(())
     }
 
+    // ===== TARGET MANAGER API =====
+
+    /// Create and register the target manager singleton
+    ///
+    /// Creates a new TargetManager and registers it as a global singleton.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The engine is not initialized
+    /// - A target manager already exists
+    ///
+    pub fn create_target_manager() -> Result<()> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
+            ))?;
+
+        let mut lock = state.target_manager.write()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("TargetManager lock poisoned".to_string())
+            ))?;
+
+        if lock.is_some() {
+            return Err(Self::log_and_return_error(
+                Error::InitializationFailed("TargetManager already exists. Call Engine::destroy_target_manager() first.".to_string())
+            ));
+        }
+
+        *lock = Some(Arc::new(Mutex::new(TargetManager::new())));
+
+        crate::engine_info!("galaxy3d::Engine", "TargetManager singleton created successfully");
+
+        Ok(())
+    }
+
+    /// Get the target manager singleton
+    ///
+    /// Provides global access to the target manager after it has been created.
+    ///
+    /// # Returns
+    ///
+    /// A shared pointer to the TargetManager wrapped in a Mutex for thread-safe access
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The engine is not initialized
+    /// - The target manager has not been created
+    ///
+    pub fn target_manager() -> Result<Arc<Mutex<TargetManager>>> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
+            ))?;
+
+        let lock = state.target_manager.read()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("TargetManager lock poisoned".to_string())
+            ))?;
+
+        lock.clone()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("TargetManager not created. Call Engine::create_target_manager() first.".to_string())
+            ))
+    }
+
+    /// Destroy the target manager singleton
+    ///
+    /// Removes the target manager singleton, allowing a new one to be created.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the engine is not initialized
+    ///
+    pub fn destroy_target_manager() -> Result<()> {
+        let state = ENGINE_STATE.get()
+            .ok_or_else(|| Self::log_and_return_error(
+                Error::InitializationFailed("Engine not initialized".to_string())
+            ))?;
+
+        let mut lock = state.target_manager.write()
+            .map_err(|_| Self::log_and_return_error(
+                Error::BackendError("TargetManager lock poisoned".to_string())
+            ))?;
+
+        *lock = None;
+
+        crate::engine_info!("galaxy3d::Engine", "TargetManager singleton destroyed");
+
+        Ok(())
+    }
+
     /// Reset all singletons for testing (only available in test builds)
     #[cfg(test)]
     pub fn reset_for_testing() {
         if let Some(state) = ENGINE_STATE.get() {
+            if let Ok(mut tm) = state.target_manager.write() {
+                *tm = None;
+            }
             if let Ok(mut sm) = state.scene_manager.write() {
                 *sm = None;
             }
