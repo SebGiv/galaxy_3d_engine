@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use crate::renderer::Renderer;
 use crate::resource::ResourceManager;
 use crate::scene::SceneManager;
-use crate::target::TargetManager;
+use crate::render_graph::RenderGraphManager;
 use crate::error::{Result, Error};
 use crate::log::{Logger, LogEntry, LogSeverity, DefaultLogger};
 
@@ -30,8 +30,8 @@ struct EngineState {
     resource_manager: RwLock<Option<Arc<Mutex<ResourceManager>>>>,
     /// Scene manager singleton
     scene_manager: RwLock<Option<Arc<Mutex<SceneManager>>>>,
-    /// Target manager singleton
-    target_manager: RwLock<Option<Arc<Mutex<TargetManager>>>>,
+    /// Render graph manager singleton
+    render_graph_manager: RwLock<Option<Arc<Mutex<RenderGraphManager>>>>,
 }
 
 impl EngineState {
@@ -41,7 +41,7 @@ impl EngineState {
             renderers: RwLock::new(HashMap::new()),
             resource_manager: RwLock::new(None),
             scene_manager: RwLock::new(None),
-            target_manager: RwLock::new(None),
+            render_graph_manager: RwLock::new(None),
         }
     }
 }
@@ -92,9 +92,9 @@ impl Engine {
     /// After calling this, you must call `initialize()` again before creating new subsystems.
     pub fn shutdown() {
         if let Some(state) = ENGINE_STATE.get() {
-            // Clear target manager BEFORE scene manager (targets reference scenes)
-            if let Ok(mut tm) = state.target_manager.write() {
-                *tm = None;
+            // Clear render graph manager BEFORE scene manager
+            if let Ok(mut rgm) = state.render_graph_manager.write() {
+                *rgm = None;
             }
             // Clear scene manager BEFORE resource manager (scenes reference resources)
             if let Ok(mut sm) = state.scene_manager.write() {
@@ -430,95 +430,95 @@ impl Engine {
         Ok(())
     }
 
-    // ===== TARGET MANAGER API =====
+    // ===== RENDER GRAPH MANAGER API =====
 
-    /// Create and register the target manager singleton
+    /// Create and register the render graph manager singleton
     ///
-    /// Creates a new TargetManager and registers it as a global singleton.
+    /// Creates a new RenderGraphManager and registers it as a global singleton.
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The engine is not initialized
-    /// - A target manager already exists
+    /// - A render graph manager already exists
     ///
-    pub fn create_target_manager() -> Result<()> {
+    pub fn create_render_graph_manager() -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
             ))?;
 
-        let mut lock = state.target_manager.write()
+        let mut lock = state.render_graph_manager.write()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("TargetManager lock poisoned".to_string())
+                Error::BackendError("RenderGraphManager lock poisoned".to_string())
             ))?;
 
         if lock.is_some() {
             return Err(Self::log_and_return_error(
-                Error::InitializationFailed("TargetManager already exists. Call Engine::destroy_target_manager() first.".to_string())
+                Error::InitializationFailed("RenderGraphManager already exists. Call Engine::destroy_render_graph_manager() first.".to_string())
             ));
         }
 
-        *lock = Some(Arc::new(Mutex::new(TargetManager::new())));
+        *lock = Some(Arc::new(Mutex::new(RenderGraphManager::new())));
 
-        crate::engine_info!("galaxy3d::Engine", "TargetManager singleton created successfully");
+        crate::engine_info!("galaxy3d::Engine", "RenderGraphManager singleton created successfully");
 
         Ok(())
     }
 
-    /// Get the target manager singleton
+    /// Get the render graph manager singleton
     ///
-    /// Provides global access to the target manager after it has been created.
+    /// Provides global access to the render graph manager after it has been created.
     ///
     /// # Returns
     ///
-    /// A shared pointer to the TargetManager wrapped in a Mutex for thread-safe access
+    /// A shared pointer to the RenderGraphManager wrapped in a Mutex for thread-safe access
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The engine is not initialized
-    /// - The target manager has not been created
+    /// - The render graph manager has not been created
     ///
-    pub fn target_manager() -> Result<Arc<Mutex<TargetManager>>> {
+    pub fn render_graph_manager() -> Result<Arc<Mutex<RenderGraphManager>>> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
             ))?;
 
-        let lock = state.target_manager.read()
+        let lock = state.render_graph_manager.read()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("TargetManager lock poisoned".to_string())
+                Error::BackendError("RenderGraphManager lock poisoned".to_string())
             ))?;
 
         lock.clone()
             .ok_or_else(|| Self::log_and_return_error(
-                Error::InitializationFailed("TargetManager not created. Call Engine::create_target_manager() first.".to_string())
+                Error::InitializationFailed("RenderGraphManager not created. Call Engine::create_render_graph_manager() first.".to_string())
             ))
     }
 
-    /// Destroy the target manager singleton
+    /// Destroy the render graph manager singleton
     ///
-    /// Removes the target manager singleton, allowing a new one to be created.
+    /// Removes the render graph manager singleton, allowing a new one to be created.
     ///
     /// # Errors
     ///
     /// Returns an error if the engine is not initialized
     ///
-    pub fn destroy_target_manager() -> Result<()> {
+    pub fn destroy_render_graph_manager() -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized".to_string())
             ))?;
 
-        let mut lock = state.target_manager.write()
+        let mut lock = state.render_graph_manager.write()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("TargetManager lock poisoned".to_string())
+                Error::BackendError("RenderGraphManager lock poisoned".to_string())
             ))?;
 
         *lock = None;
 
-        crate::engine_info!("galaxy3d::Engine", "TargetManager singleton destroyed");
+        crate::engine_info!("galaxy3d::Engine", "RenderGraphManager singleton destroyed");
 
         Ok(())
     }
@@ -527,8 +527,8 @@ impl Engine {
     #[cfg(test)]
     pub fn reset_for_testing() {
         if let Some(state) = ENGINE_STATE.get() {
-            if let Ok(mut tm) = state.target_manager.write() {
-                *tm = None;
+            if let Ok(mut rgm) = state.render_graph_manager.write() {
+                *rgm = None;
             }
             if let Ok(mut sm) = state.scene_manager.write() {
                 *sm = None;

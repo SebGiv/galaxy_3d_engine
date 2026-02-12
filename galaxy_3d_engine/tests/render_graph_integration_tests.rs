@@ -1,9 +1,9 @@
-//! Integration tests for Target system with GPU
+//! Integration tests for RenderGraph system with GPU
 //!
-//! These tests verify the TargetManager lifecycle through Engine with VulkanRenderer.
+//! These tests verify the RenderGraphManager lifecycle through Engine with VulkanRenderer.
 //! Tests requiring GPU are marked with #[ignore].
 //!
-//! Run with: cargo test --test target_integration_tests -- --ignored
+//! Run with: cargo test --test render_graph_integration_tests -- --ignored
 
 mod gpu_test_utils;
 
@@ -14,13 +14,13 @@ use gpu_test_utils::create_test_window;
 use serial_test::serial;
 
 // ============================================================================
-// TARGET MANAGER LIFECYCLE TESTS
+// RENDER GRAPH MANAGER LIFECYCLE TESTS
 // ============================================================================
 
 #[test]
 #[ignore] // Requires GPU
 #[serial]
-fn test_integration_target_manager_lifecycle() {
+fn test_integration_render_graph_manager_lifecycle() {
     // Initialize engine
     Engine::initialize().unwrap();
 
@@ -32,29 +32,29 @@ fn test_integration_target_manager_lifecycle() {
     // Create all managers
     Engine::create_resource_manager().unwrap();
     Engine::create_scene_manager().unwrap();
-    Engine::create_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
 
-    // Get target manager
-    let tm_arc = Engine::target_manager().unwrap();
+    // Get render graph manager
+    let rgm_arc = Engine::render_graph_manager().unwrap();
 
-    // Use target manager: create render targets
+    // Use render graph manager: create render graphs
     {
-        let mut tm = tm_arc.lock().unwrap();
-        tm.create_render_target("screen").unwrap();
-        tm.create_render_target("shadow_map").unwrap();
-        assert_eq!(tm.render_target_count(), 2);
+        let mut rgm = rgm_arc.lock().unwrap();
+        rgm.create_render_graph("main").unwrap();
+        rgm.create_render_graph("shadow").unwrap();
+        assert_eq!(rgm.render_graph_count(), 2);
 
-        // Get a render target
-        let screen = tm.render_target("screen");
-        assert!(screen.is_some());
+        // Get a render graph
+        let main_graph = rgm.render_graph("main");
+        assert!(main_graph.is_some());
 
-        // Remove a render target
-        tm.remove_render_target("shadow_map");
-        assert_eq!(tm.render_target_count(), 1);
+        // Remove a render graph
+        rgm.remove_render_graph("shadow");
+        assert_eq!(rgm.render_graph_count(), 1);
     }
 
-    // Cleanup (order: TM → SM → RM → renderers)
-    Engine::destroy_target_manager().unwrap();
+    // Cleanup (order: RGM → SM → RM → renderers)
+    Engine::destroy_render_graph_manager().unwrap();
     Engine::destroy_scene_manager().unwrap();
     Engine::destroy_resource_manager().unwrap();
     Engine::destroy_renderer("main").unwrap();
@@ -64,7 +64,7 @@ fn test_integration_target_manager_lifecycle() {
 #[test]
 #[ignore] // Requires GPU
 #[serial]
-fn test_integration_target_manager_with_full_engine() {
+fn test_integration_render_graph_manager_with_full_engine() {
     // Initialize engine
     Engine::initialize().unwrap();
 
@@ -74,13 +74,13 @@ fn test_integration_target_manager_with_full_engine() {
     Engine::create_renderer("main", renderer).unwrap();
     Engine::create_resource_manager().unwrap();
     Engine::create_scene_manager().unwrap();
-    Engine::create_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
 
     // Verify all subsystems are accessible
     assert!(Engine::renderer("main").is_ok());
     assert!(Engine::resource_manager().is_ok());
     assert!(Engine::scene_manager().is_ok());
-    assert!(Engine::target_manager().is_ok());
+    assert!(Engine::render_graph_manager().is_ok());
 
     // Shutdown clears everything
     Engine::shutdown();
@@ -89,7 +89,7 @@ fn test_integration_target_manager_with_full_engine() {
     Engine::initialize().unwrap();
 
     // All should be cleared
-    assert!(Engine::target_manager().is_err());
+    assert!(Engine::render_graph_manager().is_err());
     assert!(Engine::scene_manager().is_err());
     assert!(Engine::resource_manager().is_err());
     assert_eq!(Engine::renderer_count(), 0);

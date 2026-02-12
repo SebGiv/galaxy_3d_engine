@@ -1,10 +1,11 @@
-# Render Targets — Design Document
+# Render Graph — Design Document
 
 > **Projet** : Galaxy3D Engine
-> **Date** : 2026-02-11
-> **Statut** : Design (non implémenté)
+> **Date** : 2026-02-11 (mis à jour 2026-02-12)
+> **Statut** : Partiellement implémenté (RenderGraphManager singleton, RenderGraph struct vide)
 > **Prérequis** : SceneManager (implémenté), render::RenderTarget (trait existant), render::Swapchain (trait existant)
 > **Voir aussi** : [scene_design.md](scene_design.md), [pipeline_data_binding.md](pipeline_data_binding.md)
+> **Note** : Le module a été renommé de `target` à `render_graph`. Le concept de "render graph" (DAG de passes de rendu) remplace la notion initiale de "target manager". Les render targets deviennent des arêtes du graphe.
 
 ---
 
@@ -13,8 +14,8 @@
 1. [Problématique](#1-problématique)
 2. [Réflexion architecturale](#2-réflexion-architecturale)
 3. [Frontière bas niveau / haut niveau](#3-frontière-bas-niveau--haut-niveau)
-4. [SceneRenderTarget](#4-scenerendertarget)
-5. [TargetManager](#5-targetmanager)
+4. [SceneRenderTarget](#4-scenerendertarget) *(design futur)*
+5. [RenderGraphManager](#5-rendergraphmanager)
 6. [API de rendu](#6-api-de-rendu)
 7. [RenderPass — concept et abstraction](#7-renderpass--concept-et-abstraction)
 8. [Exemple d'utilisation](#8-exemple-dutilisation)
@@ -48,12 +49,12 @@ Comparaison avec le ResourceManager : il fonctionne bien parce que tout ce qu'il
 
 ### Conclusion : manager séparé
 
-Les targets sont gérés par un **TargetManager** dédié, séparé du SceneManager. Chaque manager a une responsabilité unique :
+Les render graphs sont gérés par un **RenderGraphManager** dédié, séparé du SceneManager. Chaque manager a une responsabilité unique :
 
 | Manager | Responsabilité | Contenu |
 |---------|---------------|---------|
 | **SceneManager** | "Quoi dessiner" | Scènes nommées (`Arc<Mutex<Scene>>`) |
-| **TargetManager** | "Où dessiner" | Targets nommés (`SceneRenderTarget`) |
+| **RenderGraphManager** | "Comment rendre" | Render graphs nommés (DAG de passes + targets) |
 | **ResourceManager** | "Avec quoi" | Geometry, Texture, Pipeline, Material, Mesh |
 
 ### Relation Scene ↔ Target : many-to-many
@@ -108,7 +109,7 @@ Des **primitives** de rendu. Il ne décide pas quoi rendre où — il exécute c
 │  Fournit 4 primitives :                                 │
 │                                                         │
 │  1. SceneManager       → gestion des scènes     ✅     │
-│  2. TargetManager      → gestion des targets            │
+│  2. RenderGraphManager → gestion des render graphs       │
 │  3. render()           → rendre une scène sur un target │
 │  4. begin/end_frame()  → lifecycle de frame             │
 │                                                         │
@@ -204,75 +205,49 @@ C'est un **détail d'implémentation GPU** que le moteur 3D doit abstraire. Quan
 
 ---
 
-## 5. TargetManager
+## 5. RenderGraphManager
 
-### Structure
+### Structure (implémenté)
 
 ```rust
-/// Manages named render targets
+/// Manages named render graphs
 ///
 /// Singleton managed by Engine (same pattern as SceneManager, ResourceManager).
-pub struct TargetManager {
-    targets: HashMap<String, SceneRenderTarget>,
+pub struct RenderGraphManager {
+    render_graphs: HashMap<String, RenderGraph>,
 }
 ```
 
-### API
+### API (implémenté)
 
 ```rust
-impl TargetManager {
+impl RenderGraphManager {
     pub fn new() -> Self;
-
-    /// Create a screen target (wraps swapchain)
-    pub fn create_screen_target(
-        &mut self,
-        name: &str,
-        renderer: &dyn Renderer,
-    ) -> Result<()>;
-
-    /// Create an offscreen texture target
-    pub fn create_texture_target(
-        &mut self,
-        name: &str,
-        renderer: &dyn Renderer,
-        desc: TextureTargetDesc,
-    ) -> Result<()>;
-
-    /// Get a target by name
-    pub fn target(&self, name: &str) -> Option<&SceneRenderTarget>;
-
-    /// Get a mutable target by name
-    pub fn target_mut(&mut self, name: &str) -> Option<&mut SceneRenderTarget>;
-
-    /// Remove a target
-    pub fn remove_target(&mut self, name: &str) -> Option<SceneRenderTarget>;
-
-    /// Get target count
-    pub fn target_count(&self) -> usize;
-
-    /// Get all target names
-    pub fn target_names(&self) -> Vec<&str>;
-
-    /// Remove all targets
+    pub fn create_render_graph(&mut self, name: &str) -> Result<&RenderGraph>;
+    pub fn render_graph(&self, name: &str) -> Option<&RenderGraph>;
+    pub fn render_graph_mut(&mut self, name: &str) -> Option<&mut RenderGraph>;
+    pub fn remove_render_graph(&mut self, name: &str) -> Option<RenderGraph>;
+    pub fn render_graph_count(&self) -> usize;
+    pub fn render_graph_names(&self) -> Vec<&str>;
     pub fn clear(&mut self);
 }
 ```
 
-### Lifecycle dans Engine
+### Lifecycle dans Engine (implémenté)
 
 ```rust
 // Création
-Engine::create_target_manager()?;
+Engine::create_render_graph_manager()?;
 
 // Accès
-let tm = Engine::target_manager()?;
+let rgm = Engine::render_graph_manager()?;
 
 // Destruction (avant SceneManager, ResourceManager, Renderers)
-Engine::destroy_target_manager()?;
+Engine::destroy_render_graph_manager()?;
 ```
 
 Ordre de destruction :
-1. TargetManager (les targets référencent des objets GPU)
+1. RenderGraphManager (les graphs référencent des objets GPU)
 2. SceneManager (les scènes référencent des resources)
 3. ResourceManager (les resources référencent des objets GPU)
 4. Renderers (les objets GPU)
@@ -384,13 +359,14 @@ let renderer = VulkanRenderer::new(&window, Config::default())?;
 Engine::create_renderer("main", renderer)?;
 Engine::create_resource_manager()?;
 Engine::create_scene_manager()?;
-Engine::create_target_manager()?;
+Engine::create_render_graph_manager()?;
 
-// Créer un target écran
+// Créer un render graph et un target écran (futur)
 {
-    let tm = Engine::target_manager()?;
-    let mut tm = tm.lock().unwrap();
-    tm.create_screen_target("screen", /* renderer "main" */)?;
+    let rgm = Engine::render_graph_manager()?;
+    let mut rgm = rgm.lock().unwrap();
+    let graph = rgm.create_render_graph("main")?;
+    // TODO: ajouter des passes et targets au graph
 }
 
 // Créer une scène et y ajouter des objets
@@ -416,18 +392,18 @@ loop {
     // Rendre la scène sur l'écran
     {
         let scene = scene_arc.lock().unwrap();
-        let tm = Engine::target_manager()?;
-        let tm = tm.lock().unwrap();
-        let target = tm.target("screen").unwrap();
+        let rgm = Engine::render_graph_manager()?;
+        let rgm = rgm.lock().unwrap();
+        let graph = rgm.render_graph("main").unwrap();
 
-        Engine::render(&scene, target, vp)?;
+        // TODO: Engine::render(&scene, graph, vp)?;
     }
 
     Engine::end_frame()?;
 }
 
 // === Cleanup ===
-Engine::destroy_target_manager()?;
+Engine::destroy_render_graph_manager()?;
 Engine::destroy_scene_manager()?;
 Engine::destroy_resource_manager()?;
 Engine::destroy_renderer("main")?;
@@ -461,4 +437,4 @@ Engine::shutdown();
 | **Render-to-texture puis sampling** | Utiliser un target texture comme source dans un material | Post-processing, reflections, shadow maps |
 | **MSAA targets** | Targets avec multisampling | Anti-aliasing |
 | **MRT (Multiple Render Targets)** | Écrire dans plusieurs textures en un seul pass | Deferred rendering (G-buffer) |
-| **Render Graph** | Graphe de dépendances entre passes de rendu | Optimisation automatique de l'ordre et des barrières |
+| **Render Graph** | Graphe de dépendances entre passes de rendu (base implémentée) | Optimisation automatique de l'ordre et des barrières |

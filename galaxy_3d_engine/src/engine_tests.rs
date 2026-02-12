@@ -852,26 +852,26 @@ fn test_full_engine_lifecycle_with_scene_manager() {
 }
 
 // ============================================================================
-// TARGET MANAGER TESTS
+// RENDER GRAPH MANAGER TESTS
 // ============================================================================
 
 #[test]
 #[serial]
-fn test_create_target_manager_success() {
+fn test_create_render_graph_manager_success() {
     setup();
 
-    let result = Engine::create_target_manager();
+    let result = Engine::create_render_graph_manager();
     assert!(result.is_ok());
 }
 
 #[test]
 #[serial]
-fn test_create_target_manager_duplicate_fails() {
+fn test_create_render_graph_manager_duplicate_fails() {
     setup();
 
-    Engine::create_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
 
-    let result = Engine::create_target_manager();
+    let result = Engine::create_render_graph_manager();
     assert!(result.is_err());
     match result {
         Err(Error::InitializationFailed(msg)) => {
@@ -883,10 +883,10 @@ fn test_create_target_manager_duplicate_fails() {
 
 #[test]
 #[serial]
-fn test_target_manager_not_created_fails() {
+fn test_render_graph_manager_not_created_fails() {
     setup();
 
-    let result = Engine::target_manager();
+    let result = Engine::render_graph_manager();
     assert!(result.is_err());
     match result {
         Err(Error::InitializationFailed(msg)) => {
@@ -898,100 +898,100 @@ fn test_target_manager_not_created_fails() {
 
 #[test]
 #[serial]
-fn test_target_manager_retrieval_success() {
+fn test_render_graph_manager_retrieval_success() {
     setup();
 
-    Engine::create_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
 
-    let result = Engine::target_manager();
+    let result = Engine::render_graph_manager();
     assert!(result.is_ok());
 
-    let tm = result.unwrap();
-    assert!(Arc::strong_count(&tm) >= 1);
+    let rgm = result.unwrap();
+    assert!(Arc::strong_count(&rgm) >= 1);
 }
 
 #[test]
 #[serial]
-fn test_target_manager_returned_is_usable() {
+fn test_render_graph_manager_returned_is_usable() {
     setup();
 
-    Engine::create_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
 
-    let tm = Engine::target_manager().unwrap();
+    let rgm = Engine::render_graph_manager().unwrap();
 
-    // Lock and use the target manager
-    let mut guard = tm.lock().unwrap();
-    let target = guard.create_render_target("screen");
-    assert!(target.is_ok());
+    // Lock and use the render graph manager
+    let mut guard = rgm.lock().unwrap();
+    let graph = guard.create_render_graph("main");
+    assert!(graph.is_ok());
 }
 
 #[test]
 #[serial]
-fn test_destroy_target_manager_success() {
+fn test_destroy_render_graph_manager_success() {
     setup();
 
-    Engine::create_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
 
     // Should exist
-    assert!(Engine::target_manager().is_ok());
+    assert!(Engine::render_graph_manager().is_ok());
 
     // Destroy it
-    let result = Engine::destroy_target_manager();
+    let result = Engine::destroy_render_graph_manager();
     assert!(result.is_ok());
 
     // Should no longer exist
-    assert!(Engine::target_manager().is_err());
+    assert!(Engine::render_graph_manager().is_err());
 }
 
 #[test]
 #[serial]
-fn test_target_manager_lifecycle() {
+fn test_render_graph_manager_lifecycle() {
     setup();
 
     // Create, destroy, create again cycle
-    Engine::create_target_manager().unwrap();
-    Engine::destroy_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
+    Engine::destroy_render_graph_manager().unwrap();
 
     // Should be able to create again
-    let result = Engine::create_target_manager();
+    let result = Engine::create_render_graph_manager();
     assert!(result.is_ok());
 }
 
 #[test]
 #[serial]
-fn test_shutdown_clears_target_manager() {
+fn test_shutdown_clears_render_graph_manager() {
     setup();
 
-    Engine::create_target_manager().unwrap();
-    assert!(Engine::target_manager().is_ok());
+    Engine::create_render_graph_manager().unwrap();
+    assert!(Engine::render_graph_manager().is_ok());
 
     Engine::shutdown();
 
     // Re-initialize to avoid affecting other tests
     Engine::initialize().unwrap();
 
-    // Target manager should be cleared
-    assert!(Engine::target_manager().is_err());
+    // Render graph manager should be cleared
+    assert!(Engine::render_graph_manager().is_err());
 }
 
 #[test]
 #[serial]
-fn test_shutdown_clears_tm_before_sm() {
+fn test_shutdown_clears_rgm_before_sm() {
     setup();
 
     // Create all subsystems
-    let _renderer = Engine::create_renderer("test_shutdown_tm_sm", MockRenderer::new()).unwrap();
+    let _renderer = Engine::create_renderer("test_shutdown_rgm_sm", MockRenderer::new()).unwrap();
     Engine::create_resource_manager().unwrap();
     Engine::create_scene_manager().unwrap();
-    Engine::create_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
 
     // All should exist
-    assert!(Engine::renderer("test_shutdown_tm_sm").is_ok());
+    assert!(Engine::renderer("test_shutdown_rgm_sm").is_ok());
     assert!(Engine::resource_manager().is_ok());
     assert!(Engine::scene_manager().is_ok());
-    assert!(Engine::target_manager().is_ok());
+    assert!(Engine::render_graph_manager().is_ok());
 
-    // Shutdown (order: TM → SM → RM → renderers)
+    // Shutdown (order: RGM → SM → RM → renderers)
     Engine::shutdown();
 
     assert_eq!(Engine::renderer_count(), 0);
@@ -1002,47 +1002,47 @@ fn test_shutdown_clears_tm_before_sm() {
 
 #[test]
 #[serial]
-fn test_full_engine_lifecycle_with_target_manager() {
+fn test_full_engine_lifecycle_with_render_graph_manager() {
     setup();
 
     // Create all subsystems
-    let _renderer = Engine::create_renderer("test_full_tm", MockRenderer::new()).unwrap();
+    let _renderer = Engine::create_renderer("test_full_rgm", MockRenderer::new()).unwrap();
     Engine::create_resource_manager().unwrap();
     Engine::create_scene_manager().unwrap();
-    Engine::create_target_manager().unwrap();
+    Engine::create_render_graph_manager().unwrap();
 
-    // Use target manager
+    // Use render graph manager
     {
-        let tm = Engine::target_manager().unwrap();
-        let mut guard = tm.lock().unwrap();
-        guard.create_render_target("screen").unwrap();
-        guard.create_render_target("shadow_map").unwrap();
-        assert_eq!(guard.render_target_count(), 2);
+        let rgm = Engine::render_graph_manager().unwrap();
+        let mut guard = rgm.lock().unwrap();
+        guard.create_render_graph("main").unwrap();
+        guard.create_render_graph("shadow").unwrap();
+        assert_eq!(guard.render_graph_count(), 2);
     }
 
-    // Cleanup (order: TM → SM → RM → renderers)
-    Engine::destroy_target_manager().unwrap();
+    // Cleanup (order: RGM → SM → RM → renderers)
+    Engine::destroy_render_graph_manager().unwrap();
     Engine::destroy_scene_manager().unwrap();
     Engine::destroy_resource_manager().unwrap();
-    Engine::destroy_renderer("test_full_tm").unwrap();
+    Engine::destroy_renderer("test_full_rgm").unwrap();
 }
 
 #[test]
 #[serial]
-fn test_target_manager_errors_logged() {
+fn test_render_graph_manager_errors_logged() {
     setup();
 
     let test_logger = TestLogger::new();
     let entries_ref = test_logger.entries.clone();
     Engine::set_logger(test_logger);
 
-    // InitializationFailed: duplicate target manager
-    Engine::create_target_manager().unwrap();
-    let _ = Engine::create_target_manager();
+    // InitializationFailed: duplicate render graph manager
+    Engine::create_render_graph_manager().unwrap();
+    let _ = Engine::create_render_graph_manager();
 
-    // InitializationFailed: target manager not created (after destroy)
-    Engine::destroy_target_manager().unwrap();
-    let _ = Engine::target_manager();
+    // InitializationFailed: render graph manager not created (after destroy)
+    Engine::destroy_render_graph_manager().unwrap();
+    let _ = Engine::render_graph_manager();
 
     // Check that errors were logged
     let entries = entries_ref.lock().unwrap();
