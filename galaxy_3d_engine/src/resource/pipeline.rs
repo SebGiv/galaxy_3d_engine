@@ -10,17 +10,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
-use crate::renderer::{
-    Pipeline as RendererPipeline,
-    Renderer,
-    PipelineDesc as RenderPipelineDesc,
-};
+use crate::renderer;
 
 // ===== PIPELINE =====
 
 /// Pipeline resource with variant support
 pub struct Pipeline {
-    renderer: Arc<Mutex<dyn Renderer>>,
+    renderer: Arc<Mutex<dyn renderer::Renderer>>,
     variants: Vec<PipelineVariant>,
     variant_names: HashMap<String, usize>,
 }
@@ -33,14 +29,14 @@ pub struct PipelineVariant {
 
 /// A single rendering pass within a pipeline variant
 pub struct PipelinePass {
-    renderer_pipeline: Arc<dyn RendererPipeline>,
+    renderer_pipeline: Arc<dyn renderer::Pipeline>,
 }
 
 // ===== DESCRIPTORS =====
 
 /// Pipeline creation descriptor
 pub struct PipelineDesc {
-    pub renderer: Arc<Mutex<dyn Renderer>>,
+    pub renderer: Arc<Mutex<dyn renderer::Renderer>>,
     pub variants: Vec<PipelineVariantDesc>,
 }
 
@@ -52,7 +48,7 @@ pub struct PipelineVariantDesc {
 
 /// Descriptor for a single rendering pass
 pub struct PipelinePassDesc {
-    pub pipeline: RenderPipelineDesc,
+    pub pipeline: renderer::PipelineDesc,
 }
 
 // ===== PIPELINE IMPLEMENTATION =====
@@ -196,7 +192,7 @@ impl PipelineVariant {
 
 impl PipelinePass {
     /// Get the underlying renderer pipeline
-    pub fn renderer_pipeline(&self) -> &Arc<dyn RendererPipeline> {
+    pub fn renderer_pipeline(&self) -> &Arc<dyn renderer::Pipeline> {
         &self.renderer_pipeline
     }
 }

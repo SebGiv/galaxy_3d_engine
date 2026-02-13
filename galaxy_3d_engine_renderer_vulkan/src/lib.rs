@@ -22,6 +22,7 @@ mod vulkan_render_target;
 mod vulkan_render_pass;
 mod vulkan_swapchain;
 mod vulkan_descriptor_set;
+mod vulkan_frame_buffer;
 
 // Main galaxy3d namespace module
 pub mod galaxy3d {
@@ -39,6 +40,7 @@ pub mod galaxy3d {
         pub use crate::vulkan_render_pass::RenderPass;
         pub use crate::vulkan_swapchain::Swapchain;
         pub use crate::vulkan_descriptor_set::DescriptorSet;
+        pub use crate::vulkan_frame_buffer::Framebuffer;
     }
 
     // Debug sub-module

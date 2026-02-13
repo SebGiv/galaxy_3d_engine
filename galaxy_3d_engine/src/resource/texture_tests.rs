@@ -6,10 +6,7 @@
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
-use crate::renderer::{
-    mock_renderer::MockRenderer,
-    TextureDesc as RenderTextureDesc, TextureFormat, TextureUsage, MipmapMode,
-};
+use crate::renderer;
 #[cfg(test)]
 use crate::resource::{
     Texture, TextureDesc, LayerDesc, AtlasRegionDesc, AtlasRegion,
@@ -20,22 +17,22 @@ use crate::resource::{
 // ============================================================================
 
 /// Create a mock renderer for testing
-fn create_mock_renderer() -> Arc<Mutex<dyn crate::renderer::Renderer>> {
-    let renderer = MockRenderer::new();
+fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
+    let renderer = renderer::mock_renderer::MockRenderer::new();
     Arc::new(Mutex::new(renderer))
 }
 
 /// Create a simple texture descriptor (simple texture, 256x256)
-fn create_simple_texture_desc(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> TextureDesc {
+fn create_simple_texture_desc(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> TextureDesc {
     TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -50,16 +47,16 @@ fn create_simple_texture_desc(renderer: Arc<Mutex<dyn crate::renderer::Renderer>
 }
 
 /// Create an indexed texture descriptor (4 layers, 256x256)
-fn create_indexed_texture_desc(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> TextureDesc {
+fn create_indexed_texture_desc(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> TextureDesc {
     TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 4,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -100,13 +97,13 @@ fn test_simple_texture_requires_one_layer() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1, // Simple texture
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![], // ERROR: must have exactly 1 layer
@@ -121,13 +118,13 @@ fn test_simple_texture_layer_must_be_index_0() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -149,13 +146,13 @@ fn test_simple_texture_with_atlas_region() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -214,13 +211,13 @@ fn test_indexed_texture_can_be_empty() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 4, // Indexed
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![], // OK: indexed can start empty
@@ -237,13 +234,13 @@ fn test_indexed_texture_layer_bounds() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 2, // Only 2 layers
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -428,13 +425,13 @@ fn test_region_bounds_validation() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -466,13 +463,13 @@ fn test_region_zero_dimension() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -504,13 +501,13 @@ fn test_region_lookup() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -560,13 +557,13 @@ fn test_duplicate_region_names() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -611,13 +608,13 @@ fn test_duplicate_layer_names() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 4,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -645,13 +642,13 @@ fn test_duplicate_layer_indices() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 4,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -683,13 +680,13 @@ fn test_complex_indexed_texture_with_atlas() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 512,
             height: 512,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 3,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -790,13 +787,13 @@ fn test_texture_layer_getters() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -852,13 +849,13 @@ fn test_layer_data_size_validation_rgba8() {
 
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -878,13 +875,13 @@ fn test_layer_data_size_validation_rgba8() {
     let renderer2 = create_mock_renderer();
     let desc_correct = TextureDesc {
         renderer: renderer2,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -908,13 +905,13 @@ fn test_layer_data_upload_multiple_layers() {
 
     let desc = TextureDesc {
         renderer,
-        texture: RenderTextureDesc {
+        texture: renderer::TextureDesc {
             width: 128,
             height: 128,
-            format: TextureFormat::B8G8R8A8_SRGB,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::B8G8R8A8_SRGB,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 3,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
             data: None,
         },
         layers: vec![

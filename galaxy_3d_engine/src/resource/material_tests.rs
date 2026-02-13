@@ -4,12 +4,7 @@
 /// then validate Material creation, LayerRef/RegionRef resolution, and error handling.
 
 use super::*;
-use crate::renderer::mock_renderer::{MockRenderer, MockShader};
-use crate::renderer::{
-    PrimitiveTopology, TextureFormat, TextureUsage, BufferFormat,
-    MipmapMode, TextureData, VertexLayout, VertexBinding, VertexAttribute,
-    VertexInputRate,
-};
+use crate::renderer;
 use crate::resource::texture::{TextureDesc, LayerDesc, AtlasRegion, AtlasRegionDesc};
 use crate::resource::pipeline::{PipelineDesc, PipelineVariantDesc, PipelinePassDesc};
 use std::sync::{Arc, Mutex};
@@ -19,22 +14,22 @@ use std::sync::{Arc, Mutex};
 // ============================================================================
 
 /// Create a MockRenderer wrapped in Arc<Mutex<>>
-fn create_mock_renderer() -> Arc<Mutex<dyn crate::renderer::Renderer>> {
-    Arc::new(Mutex::new(MockRenderer::new()))
+fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
+    Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()))
 }
 
 /// Create a simple texture (1 layer, no regions)
-fn create_simple_texture(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Texture> {
+fn create_simple_texture(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Texture> {
     let desc = TextureDesc {
         renderer,
-        texture: crate::renderer::TextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 1,
-            data: Some(TextureData::Single(vec![255u8; 256 * 256 * 4])),
-            mipmap: MipmapMode::None,
+            data: Some(renderer::TextureData::Single(vec![255u8; 256 * 256 * 4])),
+            mipmap: renderer::MipmapMode::None,
         },
         layers: vec![LayerDesc {
             name: "default".to_string(),
@@ -47,17 +42,17 @@ fn create_simple_texture(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) ->
 }
 
 /// Create an indexed texture (4 layers, with atlas regions on layer 0)
-fn create_indexed_texture_with_regions(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Texture> {
+fn create_indexed_texture_with_regions(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Texture> {
     let desc = TextureDesc {
         renderer,
-        texture: crate::renderer::TextureDesc {
+        texture: renderer::TextureDesc {
             width: 256,
             height: 256,
-            format: TextureFormat::R8G8B8A8_UNORM,
-            usage: TextureUsage::Sampled,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
             array_layers: 4,
             data: None,
-            mipmap: MipmapMode::None,
+            mipmap: renderer::MipmapMode::None,
         },
         layers: vec![
             LayerDesc {
@@ -93,17 +88,17 @@ fn create_indexed_texture_with_regions(renderer: Arc<Mutex<dyn crate::renderer::
 }
 
 /// Create a test pipeline
-fn create_test_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Pipeline> {
-    let vertex_layout = VertexLayout {
-        bindings: vec![VertexBinding {
+fn create_test_pipeline(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Pipeline> {
+    let vertex_layout = renderer::VertexLayout {
+        bindings: vec![renderer::VertexBinding {
             binding: 0,
             stride: 16,
-            input_rate: VertexInputRate::Vertex,
+            input_rate: renderer::VertexInputRate::Vertex,
         }],
-        attributes: vec![VertexAttribute {
+        attributes: vec![renderer::VertexAttribute {
             location: 0,
             binding: 0,
-            format: BufferFormat::R32G32_SFLOAT,
+            format: renderer::BufferFormat::R32G32_SFLOAT,
             offset: 0,
         }],
     };
@@ -113,11 +108,11 @@ fn create_test_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
         variants: vec![PipelineVariantDesc {
             name: "default".to_string(),
             passes: vec![PipelinePassDesc {
-                pipeline: crate::renderer::PipelineDesc {
-                    vertex_shader: Arc::new(MockShader::new("vert".to_string())),
-                    fragment_shader: Arc::new(MockShader::new("frag".to_string())),
+                pipeline: renderer::PipelineDesc {
+                    vertex_shader: Arc::new(renderer::mock_renderer::MockShader::new("vert".to_string())),
+                    fragment_shader: Arc::new(renderer::mock_renderer::MockShader::new("frag".to_string())),
                     vertex_layout,
-                    topology: PrimitiveTopology::TriangleList,
+                    topology: renderer::PrimitiveTopology::TriangleList,
                     push_constant_ranges: vec![],
                     descriptor_set_layouts: vec![],
                     rasterization: Default::default(),

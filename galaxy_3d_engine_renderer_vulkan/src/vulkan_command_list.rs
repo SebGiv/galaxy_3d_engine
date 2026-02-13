@@ -4,7 +4,7 @@ use galaxy_3d_engine::galaxy3d::Result;
 use galaxy_3d_engine::galaxy3d::render::{
     CommandList as RendererCommandList,
     RenderPass as RendererRenderPass,
-    RenderTarget as RendererRenderTarget,
+    Framebuffer as RendererFramebuffer,
     Pipeline as RendererPipeline,
     Buffer as RendererBuffer,
     DescriptorSet as RendererDescriptorSet,
@@ -14,8 +14,8 @@ use galaxy_3d_engine::{engine_bail, engine_err};
 use ash::vk;
 use std::sync::Arc;
 
-use crate::vulkan_render_target::RenderTarget;
 use crate::vulkan_render_pass::RenderPass;
+use crate::vulkan_frame_buffer::Framebuffer;
 use crate::vulkan_pipeline::Pipeline;
 use crate::vulkan_buffer::Buffer;
 use crate::vulkan_descriptor_set::DescriptorSet;
@@ -36,8 +36,6 @@ pub struct CommandList {
     in_render_pass: bool,
     /// Currently bound pipeline layout (for push constants)
     bound_pipeline_layout: Option<vk::PipelineLayout>,
-    /// Framebuffers created during recording (destroyed after command buffer is done)
-    framebuffers: Vec<vk::Framebuffer>,
 }
 
 impl CommandList {
@@ -76,7 +74,6 @@ impl CommandList {
                 is_recording: false,
                 in_render_pass: false,
                 bound_pipeline_layout: None,
-                framebuffers: Vec::new(),
             })
         }
     }
@@ -143,11 +140,6 @@ impl RendererCommandList for CommandList {
             self.in_render_pass = false;
             self.bound_pipeline_layout = None;
 
-            // Destroy old framebuffers before starting recording
-            for framebuffer in self.framebuffers.drain(..) {
-                self.device.destroy_framebuffer(framebuffer, None);
-            }
-
             Ok(())
         }
     }
@@ -175,7 +167,7 @@ impl RendererCommandList for CommandList {
     fn begin_render_pass(
         &mut self,
         render_pass: &Arc<dyn RendererRenderPass>,
-        render_target: &Arc<dyn RendererRenderTarget>,
+        framebuffer: &Arc<dyn RendererFramebuffer>,
         clear_values: &[ClearValue],
     ) -> Result<()> {
         if !self.is_recording {
@@ -188,19 +180,23 @@ impl RendererCommandList for CommandList {
 
         unsafe {
             // Downcast to Vulkan types
-            let vk_render_pass = render_pass.as_ref() as *const dyn RendererRenderPass as *const RenderPass;
+            let vk_render_pass = render_pass.as_ref()
+                as *const dyn RendererRenderPass
+                as *const RenderPass;
             let vk_render_pass = &*vk_render_pass;
 
-            let vk_render_target = render_target.as_ref() as *const dyn RendererRenderTarget as *const RenderTarget;
-            let vk_render_target = &*vk_render_target;
+            let vk_framebuffer = framebuffer.as_ref()
+                as *const dyn RendererFramebuffer
+                as *const Framebuffer;
+            let vk_framebuffer = &*vk_framebuffer;
 
             // Convert clear values
             let vk_clear_values: Vec<vk::ClearValue> = clear_values
                 .iter()
                 .map(|cv| match cv {
-                    ClearValue::Color(color) => vk::ClearValue {
+                    ClearValue::Color(rgba) => vk::ClearValue {
                         color: vk::ClearColorValue {
-                            float32: *color,
+                            float32: *rgba,
                         },
                     },
                     ClearValue::DepthStencil { depth, stencil } => vk::ClearValue {
@@ -212,38 +208,23 @@ impl RendererCommandList for CommandList {
                 })
                 .collect();
 
-            // Create framebuffer on the fly
-            // TODO: Cache framebuffers for performance
-            let attachments = [vk_render_target.image_view];
-            let framebuffer_info = vk::FramebufferCreateInfo::default()
+            let render_area = vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: vk_framebuffer.width(),
+                    height: vk_framebuffer.height(),
+                },
+            };
+
+            let render_pass_begin_info = vk::RenderPassBeginInfo::default()
                 .render_pass(vk_render_pass.render_pass)
-                .attachments(&attachments)
-                .width(render_target.width())
-                .height(render_target.height())
-                .layers(1);
-
-            let framebuffer = self.device.create_framebuffer(&framebuffer_info, None)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create framebuffer: {:?}", e))?;
-
-            // Store framebuffer for destruction in begin() or Drop
-            self.framebuffers.push(framebuffer);
-
-            // Begin render pass
-            let render_pass_info = vk::RenderPassBeginInfo::default()
-                .render_pass(vk_render_pass.render_pass)
-                .framebuffer(framebuffer)
-                .render_area(vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: vk::Extent2D {
-                        width: render_target.width(),
-                        height: render_target.height(),
-                    },
-                })
+                .framebuffer(vk_framebuffer.framebuffer)
+                .render_area(render_area)
                 .clear_values(&vk_clear_values);
 
             self.device.cmd_begin_render_pass(
                 self.command_buffer,
-                &render_pass_info,
+                &render_pass_begin_info,
                 vk::SubpassContents::INLINE,
             );
 
@@ -266,7 +247,6 @@ impl RendererCommandList for CommandList {
             self.device.cmd_end_render_pass(self.command_buffer);
             self.in_render_pass = false;
 
-            // Framebuffers will be destroyed in begin() or Drop
             Ok(())
         }
     }
@@ -496,11 +476,6 @@ impl RendererCommandList for CommandList {
 impl Drop for CommandList {
     fn drop(&mut self) {
         unsafe {
-            // Destroy all remaining framebuffers
-            for framebuffer in self.framebuffers.drain(..) {
-                self.device.destroy_framebuffer(framebuffer, None);
-            }
-
             // Free command buffer (automatically freed when pool is destroyed)
             // Destroy command pool
             self.device.destroy_command_pool(self.command_pool, None);

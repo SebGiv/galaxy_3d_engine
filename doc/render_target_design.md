@@ -1,8 +1,8 @@
 # Render Graph — Design Document
 
 > **Projet** : Galaxy3D Engine
-> **Date** : 2026-02-11 (mis à jour 2026-02-12)
-> **Statut** : Partiellement implémenté (RenderGraphManager singleton, RenderGraph struct vide)
+> **Date** : 2026-02-11 (mis à jour 2026-02-13)
+> **Statut** : Implémenté — DAG structure, RenderTargetKind (Swapchain + Texture), API spécialisées
 > **Prérequis** : SceneManager (implémenté), render::RenderTarget (trait existant), render::Swapchain (trait existant)
 > **Voir aussi** : [scene_design.md](scene_design.md), [pipeline_data_binding.md](pipeline_data_binding.md)
 > **Note** : Le module a été renommé de `target` à `render_graph`. Le concept de "render graph" (DAG de passes de rendu) remplace la notion initiale de "target manager". Les render targets deviennent des arêtes du graphe.
@@ -19,7 +19,8 @@
 6. [API de rendu](#6-api-de-rendu)
 7. [RenderPass — concept et abstraction](#7-renderpass--concept-et-abstraction)
 8. [Exemple d'utilisation](#8-exemple-dutilisation)
-9. [Itérations futures](#9-itérations-futures)
+9. [Design du render_graph::RenderTarget](#9-design-du-render_graphrendertarget-implémenté--2026-02-13) **(implémenté)**
+10. [Itérations futures](#10-itérations-futures)
 
 ---
 
@@ -412,7 +413,161 @@ Engine::shutdown();
 
 ---
 
-## 9. Itérations futures
+## 9. Design du render_graph::RenderTarget (implémenté — 2026-02-13)
+
+### Contexte
+
+Le render graph est un DAG où les **nodes** sont des `render_graph::RenderPass` et les **edges** sont des `render_graph::RenderTarget`. Ces types haut niveau ne sont pas à confondre avec les types bas niveau `renderer::RenderPass` et `renderer::RenderTarget` du backend GPU.
+
+**Principe clé** : le graph stocke des **descripteurs** (resource::Texture, renderer::Swapchain), pas des vues GPU résolues. La résolution GPU (`renderer.create_render_target_view()`) se fait à l'**exécution**, pas à la construction du graph.
+
+### Implémenté
+
+#### Structure du DAG
+
+```rust
+pub struct RenderGraph {
+    passes: Vec<RenderPass>,              // nodes
+    pass_names: HashMap<String, usize>,
+    targets: Vec<RenderTarget>,           // edges
+    target_names: HashMap<String, usize>,
+}
+```
+
+API : `add_pass()`, `add_swapchain_target()`, `add_texture_target()`, `set_output()`, `set_input()`, accesseurs par index/nom.
+
+#### render_graph::RenderTarget — deux types de targets
+
+Un render target du graph est soit un **Swapchain** (l'écran) soit une **Texture** (offscreen).
+
+```rust
+pub struct TextureTargetView {
+    pub texture: Arc<resource::Texture>,  // resource-level, NOT GPU view
+    pub layer: u32,
+    pub mip_level: u32,
+}
+
+pub enum RenderTargetKind {
+    /// L'écran — stocke la référence au swapchain.
+    /// Résolu chaque frame via swapchain.acquire_next_image()
+    Swapchain(Arc<Mutex<dyn renderer::Swapchain>>),
+    /// Une texture — stocke la resource::Texture + layer + mip.
+    /// Résolu à l'exécution via renderer.create_render_target_view()
+    Texture(TextureTargetView),
+}
+
+pub struct RenderTarget {
+    kind: RenderTargetKind,
+    written_by: Option<usize>,  // single writer constraint
+}
+```
+
+#### Deux méthodes de création spécialisées
+
+```rust
+impl RenderGraph {
+    /// Swapchain target — prend la référence au swapchain
+    pub fn add_swapchain_target(
+        &mut self,
+        name: &str,
+        swapchain: Arc<Mutex<dyn renderer::Swapchain>>,
+    ) -> Result<usize>;
+
+    /// Texture target — prend la resource::Texture + coordonnées
+    /// Pas de renderer en paramètre : la résolution GPU est différée
+    pub fn add_texture_target(
+        &mut self,
+        name: &str,
+        texture: Arc<resource::Texture>,
+        layer: u32,
+        mip_level: u32,
+    ) -> Result<usize>;
+}
+```
+
+#### Renderer::create_render_target_view (implémenté)
+
+Méthode du trait `Renderer` pour créer un `renderer::RenderTarget` (vue GPU bas niveau) à partir d'une `renderer::Texture` existante :
+
+```rust
+fn create_render_target_view(
+    &self,
+    texture: &dyn Texture,
+    layer: u32,
+    mip_level: u32,
+) -> Result<Arc<dyn RenderTarget>>;
+```
+
+- Crée un `VkImageView` (Vulkan) ciblant un layer/mip spécifique de l'image existante
+- La texture doit avoir un usage compatible (`RenderTarget`, `SampledAndRenderTarget`, ou `DepthStencil`)
+- Le `renderer::RenderTarget` retourné possède l'ImageView mais **pas** l'image (qui reste dans la Texture)
+- Implémenté dans VulkanRenderer et MockRenderer
+- **Appelé à l'exécution du graph**, pas à la construction
+
+#### Exécution (à implémenter)
+
+```
+Pour chaque pass du graph (ordre topologique) :
+  Pour chaque output target :
+    match target.kind() {
+        Swapchain(swapchain) => {
+            // Résolu dynamiquement chaque frame
+            let (idx, rt) = swapchain.lock().acquire_next_image()?;
+            command_list.begin_render_pass(&render_pass, &rt, &clear)?;
+        }
+        Texture(view) => {
+            // Résolu ici via le renderer
+            let gpu_tex = view.texture.renderer_texture();
+            let rt = renderer.create_render_target_view(
+                gpu_tex.as_ref(), view.layer, view.mip_level)?;
+            command_list.begin_render_pass(&render_pass, &rt, &clear)?;
+        }
+    }
+```
+
+#### Usage complet
+
+```rust
+// 1. Créer la texture avec usage compatible
+let shadow_tex = rm.create_texture("shadow_map", TextureDesc {
+    texture: RenderTextureDesc {
+        width: 2048, height: 2048,
+        format: TextureFormat::D32_FLOAT,
+        usage: TextureUsage::DepthStencil,
+        ..
+    },
+    ..
+})?;
+
+// 2. Construire le graph
+let graph = rgm.create_render_graph("main")?;
+
+// Swapchain target — on passe la référence au swapchain
+graph.add_swapchain_target("screen", swapchain.clone())?;
+
+// Texture target — on passe la resource::Texture, résolution GPU différée
+graph.add_texture_target("shadow_map", shadow_tex.clone(), 0, 0)?;
+
+// Passes et connexions
+graph.add_pass("shadow")?;
+graph.add_pass("geometry")?;
+graph.set_output("shadow", "shadow_map")?;
+graph.set_input("geometry", "shadow_map")?;
+graph.set_output("geometry", "screen")?;
+```
+
+### Points en suspens
+
+| Question | Statut |
+|----------|--------|
+| Résolution GPU des texture targets (`create_render_target_view`) | Se fait à l'exécution du graph — pas encore implémenté |
+| `renderer::RenderPass` auto-créé par target | Reporté — sera traité lors de l'implémentation de l'exécution |
+| Exécution du graph (tri topologique + command list) | Reporté — prochaine étape majeure |
+| Cache des `renderer::RenderTarget` views (éviter de recréer chaque frame) | Reporté — optimisation future |
+
+---
+
+## 10. Itérations futures
 
 ### Priorité haute
 

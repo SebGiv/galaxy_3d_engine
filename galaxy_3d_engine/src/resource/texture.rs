@@ -13,18 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
-use crate::renderer::{
-    Texture as RendererTexture,
-    DescriptorSet,
-    Renderer,
-    TextureData,
-    TextureLayerData,
-    TextureDesc as RenderTextureDesc,
-    TextureInfo,
-    TextureFormat,
-    MipmapMode,
-    ManualMipmapData,
-};
+use crate::renderer;
 
 // ===== TEXTURE =====
 
@@ -32,8 +21,8 @@ use crate::renderer::{
 ///
 /// Supports both simple and indexed textures, with optional atlas regions per layer.
 pub struct Texture {
-    renderer_texture: Arc<dyn RendererTexture>,
-    descriptor_set: Arc<dyn DescriptorSet>,
+    renderer_texture: Arc<dyn renderer::Texture>,
+    descriptor_set: Arc<dyn renderer::DescriptorSet>,
     layers: Vec<TextureLayer>,
     layer_names: HashMap<String, usize>,
 }
@@ -63,8 +52,8 @@ pub struct AtlasRegion {
 
 /// Texture creation descriptor
 pub struct TextureDesc {
-    pub renderer: Arc<Mutex<dyn Renderer>>,
-    pub texture: RenderTextureDesc,
+    pub renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    pub texture: renderer::TextureDesc,
     pub layers: Vec<LayerDesc>,
 }
 
@@ -175,8 +164,8 @@ impl Texture {
 
         // ========== VALIDATION 8: Mipmap data consistency ==========
         // If manual mipmaps with layers, validate layer indices
-        if let MipmapMode::Manual(ref manual_data) = desc.texture.mipmap {
-            if let ManualMipmapData::Layers(ref mipmap_layers) = manual_data {
+        if let renderer::MipmapMode::Manual(ref manual_data) = desc.texture.mipmap {
+            if let renderer::ManualMipmapData::Layers(ref mipmap_layers) = manual_data {
                 for mipmap_layer in mipmap_layers {
                     if mipmap_layer.layer >= array_layers {
                         engine_bail!("galaxy3d::Texture", "Manual mipmap references layer {} but array_layers = {}",
@@ -210,10 +199,10 @@ impl Texture {
 
         // Collect layer data for upload
         if !desc.layers.is_empty() {
-            let layer_data: Vec<TextureLayerData> = desc.layers
+            let layer_data: Vec<renderer::TextureLayerData> = desc.layers
                 .iter()
                 .filter_map(|ld| {
-                    ld.data.as_ref().map(|d| TextureLayerData {
+                    ld.data.as_ref().map(|d| renderer::TextureLayerData {
                         layer: ld.layer_index,
                         data: d.clone(),
                     })
@@ -221,7 +210,7 @@ impl Texture {
                 .collect();
 
             if !layer_data.is_empty() {
-                render_texture_desc.data = Some(TextureData::Layers(layer_data));
+                render_texture_desc.data = Some(renderer::TextureData::Layers(layer_data));
             }
         }
 
@@ -266,12 +255,12 @@ impl Texture {
     }
 
     /// Calculate expected data size for a layer
-    fn calculate_layer_data_size(width: u32, height: u32, format: TextureFormat) -> usize {
+    fn calculate_layer_data_size(width: u32, height: u32, format: renderer::TextureFormat) -> usize {
         let bytes_per_pixel = match format {
-            TextureFormat::R8G8B8A8_SRGB => 4,
-            TextureFormat::R8G8B8A8_UNORM => 4,
-            TextureFormat::B8G8R8A8_SRGB => 4,
-            TextureFormat::B8G8R8A8_UNORM => 4,
+            renderer::TextureFormat::R8G8B8A8_SRGB => 4,
+            renderer::TextureFormat::R8G8B8A8_UNORM => 4,
+            renderer::TextureFormat::B8G8R8A8_SRGB => 4,
+            renderer::TextureFormat::B8G8R8A8_UNORM => 4,
             _ => {
                 // For unsupported formats (depth, vertex attributes), return 0 to skip validation
                 return 0;
@@ -396,12 +385,12 @@ impl Texture {
     }
 
     /// Get the underlying renderer texture
-    pub fn renderer_texture(&self) -> &Arc<dyn RendererTexture> {
+    pub fn renderer_texture(&self) -> &Arc<dyn renderer::Texture> {
         &self.renderer_texture
     }
 
     /// Get the descriptor set for shader binding
-    pub fn descriptor_set(&self) -> &Arc<dyn DescriptorSet> {
+    pub fn descriptor_set(&self) -> &Arc<dyn renderer::DescriptorSet> {
         &self.descriptor_set
     }
 }
@@ -451,7 +440,7 @@ impl TextureLayer {
 
     // ===== MODIFICATION (internal) =====
 
-    pub(crate) fn add_region(&mut self, desc: AtlasRegionDesc, texture_info: &TextureInfo) -> Result<u32> {
+    pub(crate) fn add_region(&mut self, desc: AtlasRegionDesc, texture_info: &renderer::TextureInfo) -> Result<u32> {
         // Check duplicate name
         if self.region_names.contains_key(&desc.name) {
             engine_bail!("galaxy3d::Texture", "Region '{}' already exists in layer '{}'", desc.name, self.name);

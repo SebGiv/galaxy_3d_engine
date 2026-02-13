@@ -19,6 +19,7 @@ pub enum TextureFormat {
     D16_UNORM,
     D32_FLOAT,
     D24_UNORM_S8_UINT,
+    D32_FLOAT_S8_UINT,
 }
 
 impl TextureFormat {
@@ -33,6 +34,7 @@ impl TextureFormat {
             TextureFormat::D16_UNORM => 2,
             TextureFormat::D32_FLOAT => 4,
             TextureFormat::D24_UNORM_S8_UINT => 4,
+            TextureFormat::D32_FLOAT_S8_UINT => 8,
         }
     }
 }

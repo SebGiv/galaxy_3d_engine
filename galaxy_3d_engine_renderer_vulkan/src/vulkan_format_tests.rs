@@ -244,5 +244,6 @@ fn texture_format_mapping(format: TextureFormat) -> vk::Format {
         TextureFormat::D16_UNORM => vk::Format::D16_UNORM,
         TextureFormat::D32_FLOAT => vk::Format::D32_SFLOAT,
         TextureFormat::D24_UNORM_S8_UINT => vk::Format::D24_UNORM_S8_UINT,
+        TextureFormat::D32_FLOAT_S8_UINT => vk::Format::D32_SFLOAT_S8_UINT,
     }
 }

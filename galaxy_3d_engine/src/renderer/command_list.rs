@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use crate::error::Result;
 use crate::renderer::{
-    RenderPass, RenderTarget, Pipeline, Buffer,
+    RenderPass, Framebuffer, Pipeline, Buffer,
     DescriptorSet, IndexType, ShaderStage,
 };
 
@@ -22,12 +22,12 @@ pub trait CommandList: Send + Sync {
     /// # Arguments
     ///
     /// * `render_pass` - The render pass to begin
-    /// * `render_target` - The target to render to
+    /// * `framebuffer` - The framebuffer containing color and depth/stencil attachments
     /// * `clear_values` - Clear values for attachments
     fn begin_render_pass(
         &mut self,
         render_pass: &Arc<dyn RenderPass>,
-        render_target: &Arc<dyn RenderTarget>,
+        framebuffer: &Arc<dyn Framebuffer>,
         clear_values: &[ClearValue]
     ) -> Result<()>;
 

@@ -6,11 +6,9 @@
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
-use crate::renderer::{
-    Renderer, mock_renderer::MockRenderer,
-    PipelineDesc as RenderPipelineDesc, VertexLayout, VertexBinding, VertexAttribute,
-    BufferFormat, VertexInputRate, PrimitiveTopology,
-};
+use crate::renderer;
+#[cfg(test)]
+use renderer::Renderer as _;
 #[cfg(test)]
 use crate::resource::{
     Pipeline, PipelineDesc, PipelineVariantDesc, PipelinePassDesc,
@@ -21,50 +19,50 @@ use crate::resource::{
 // ============================================================================
 
 /// Create a simple vertex layout for testing
-fn create_simple_vertex_layout() -> VertexLayout {
-    VertexLayout {
+fn create_simple_vertex_layout() -> renderer::VertexLayout {
+    renderer::VertexLayout {
         bindings: vec![
-            VertexBinding {
+            renderer::VertexBinding {
                 binding: 0,
                 stride: 8,
-                input_rate: VertexInputRate::Vertex,
+                input_rate: renderer::VertexInputRate::Vertex,
             }
         ],
         attributes: vec![
-            VertexAttribute {
+            renderer::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: BufferFormat::R32G32_SFLOAT,
+                format: renderer::BufferFormat::R32G32_SFLOAT,
                 offset: 0,
             }
         ],
     }
 }
 
-/// Create a mock RenderPipelineDesc for testing
-fn create_mock_render_pipeline_desc() -> RenderPipelineDesc {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+/// Create a mock renderer::PipelineDesc for testing
+fn create_mock_render_pipeline_desc() -> renderer::PipelineDesc {
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
     let mut renderer_lock = renderer.lock().unwrap();
 
-    let vertex_shader = renderer_lock.create_shader(crate::renderer::ShaderDesc {
-        stage: crate::renderer::ShaderStage::Vertex,
+    let vertex_shader = renderer_lock.create_shader(renderer::ShaderDesc {
+        stage: renderer::ShaderStage::Vertex,
         entry_point: "main".to_string(),
         code: &[],
     }).unwrap();
 
-    let fragment_shader = renderer_lock.create_shader(crate::renderer::ShaderDesc {
-        stage: crate::renderer::ShaderStage::Fragment,
+    let fragment_shader = renderer_lock.create_shader(renderer::ShaderDesc {
+        stage: renderer::ShaderStage::Fragment,
         entry_point: "main".to_string(),
         code: &[],
     }).unwrap();
 
     drop(renderer_lock);
 
-    RenderPipelineDesc {
+    renderer::PipelineDesc {
         vertex_shader,
         fragment_shader,
         vertex_layout: create_simple_vertex_layout(),
-        topology: PrimitiveTopology::TriangleList,
+        topology: renderer::PrimitiveTopology::TriangleList,
         push_constant_ranges: vec![],
         descriptor_set_layouts: vec![],
         rasterization: Default::default(),
@@ -106,7 +104,7 @@ fn create_multi_pass_variant(name: &str, pass_count: usize) -> PipelineVariantDe
 
 #[test]
 fn test_create_pipeline_single_variant_single_pass() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -123,7 +121,7 @@ fn test_create_pipeline_single_variant_single_pass() {
 
 #[test]
 fn test_create_pipeline_multiple_variants() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -144,7 +142,7 @@ fn test_create_pipeline_multiple_variants() {
 
 #[test]
 fn test_create_pipeline_multi_pass_variant() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -164,7 +162,7 @@ fn test_create_pipeline_multi_pass_variant() {
 
 #[test]
 fn test_create_pipeline_mixed_pass_counts() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -188,7 +186,7 @@ fn test_create_pipeline_mixed_pass_counts() {
 
 #[test]
 fn test_create_pipeline_duplicate_variant_names_fails() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -208,7 +206,7 @@ fn test_create_pipeline_duplicate_variant_names_fails() {
 
 #[test]
 fn test_create_pipeline_empty_passes_fails() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -230,7 +228,7 @@ fn test_create_pipeline_empty_passes_fails() {
 
 #[test]
 fn test_add_variant_duplicate_name_fails() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -249,7 +247,7 @@ fn test_add_variant_duplicate_name_fails() {
 
 #[test]
 fn test_add_variant_empty_passes_fails() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -275,7 +273,7 @@ fn test_add_variant_empty_passes_fails() {
 
 #[test]
 fn test_variant_by_name_found() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -294,7 +292,7 @@ fn test_variant_by_name_found() {
 
 #[test]
 fn test_variant_by_name_not_found() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -309,7 +307,7 @@ fn test_variant_by_name_not_found() {
 
 #[test]
 fn test_variant_by_index_found() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -329,7 +327,7 @@ fn test_variant_by_index_found() {
 
 #[test]
 fn test_variant_by_index_out_of_bounds() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -345,7 +343,7 @@ fn test_variant_by_index_out_of_bounds() {
 
 #[test]
 fn test_variant_index_from_name() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -370,7 +368,7 @@ fn test_variant_index_from_name() {
 
 #[test]
 fn test_pass_by_index() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -389,7 +387,7 @@ fn test_pass_by_index() {
 
 #[test]
 fn test_pass_renderer_pipeline_getter() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -416,7 +414,7 @@ fn test_pass_renderer_pipeline_getter() {
 
 #[test]
 fn test_max_pass_count_single_variant() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -429,7 +427,7 @@ fn test_max_pass_count_single_variant() {
 
 #[test]
 fn test_max_pass_count_mixed_variants() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -446,7 +444,7 @@ fn test_max_pass_count_mixed_variants() {
 
 #[test]
 fn test_max_pass_count_empty_pipeline() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -463,7 +461,7 @@ fn test_max_pass_count_empty_pipeline() {
 
 #[test]
 fn test_variant_names_case_sensitive() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -482,7 +480,7 @@ fn test_variant_names_case_sensitive() {
 
 #[test]
 fn test_add_variant_increases_count() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),
@@ -503,7 +501,7 @@ fn test_add_variant_increases_count() {
 
 #[test]
 fn test_add_multi_pass_variant() {
-    let renderer = Arc::new(Mutex::new(MockRenderer::new()));
+    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
 
     let desc = PipelineDesc {
         renderer: renderer.clone(),

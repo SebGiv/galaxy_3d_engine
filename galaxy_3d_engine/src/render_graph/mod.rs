@@ -7,6 +7,10 @@
 
 mod render_graph;
 mod render_graph_manager;
+mod render_pass;
+mod render_target;
 
 pub use render_graph::RenderGraph;
 pub use render_graph_manager::RenderGraphManager;
+pub use render_pass::RenderPass;
+pub use render_target::{RenderTarget, RenderTargetKind, TextureTargetView};

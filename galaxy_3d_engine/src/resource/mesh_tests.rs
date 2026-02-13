@@ -4,12 +4,7 @@
 /// resources, then validate Mesh creation, ref resolution, ordering, and error handling.
 
 use super::*;
-use crate::renderer::mock_renderer::{MockRenderer, MockShader};
-use crate::renderer::{
-    PrimitiveTopology, BufferFormat,
-    VertexLayout, VertexBinding, VertexAttribute,
-    VertexInputRate, IndexType,
-};
+use crate::renderer;
 use crate::resource::geometry::{
     Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
@@ -22,24 +17,24 @@ use std::sync::{Arc, Mutex};
 // Helper Functions
 // ============================================================================
 
-fn create_mock_renderer() -> Arc<Mutex<dyn crate::renderer::Renderer>> {
-    Arc::new(Mutex::new(MockRenderer::new()))
+fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
+    Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()))
 }
 
 /// Create a geometry with:
 /// - GeometryMesh "body": LOD 0 (head, torso, legs), LOD 1 (head, body)
 /// - GeometryMesh "weapon": LOD 0 (blade)
-fn create_test_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Geometry> {
-    let vertex_layout = VertexLayout {
-        bindings: vec![VertexBinding {
+fn create_test_geometry(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Geometry> {
+    let vertex_layout = renderer::VertexLayout {
+        bindings: vec![renderer::VertexBinding {
             binding: 0,
             stride: 8,
-            input_rate: VertexInputRate::Vertex,
+            input_rate: renderer::VertexInputRate::Vertex,
         }],
-        attributes: vec![VertexAttribute {
+        attributes: vec![renderer::VertexAttribute {
             location: 0,
             binding: 0,
-            format: BufferFormat::R32G32_SFLOAT,
+            format: renderer::BufferFormat::R32G32_SFLOAT,
             offset: 0,
         }],
     };
@@ -50,7 +45,7 @@ fn create_test_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
         vertex_data: vec![0u8; 160],  // 20 vertices * 8 bytes
         index_data: Some(vec![0u8; 48]), // 24 indices * 2 bytes
         vertex_layout,
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "body".to_string(),
@@ -62,19 +57,19 @@ fn create_test_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
                                 name: "head".to_string(),
                                 vertex_offset: 0, vertex_count: 4,
                                 index_offset: 0, index_count: 6,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "torso".to_string(),
                                 vertex_offset: 4, vertex_count: 4,
                                 index_offset: 6, index_count: 6,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "legs".to_string(),
                                 vertex_offset: 8, vertex_count: 4,
                                 index_offset: 12, index_count: 6,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                         ],
                     },
@@ -85,13 +80,13 @@ fn create_test_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
                                 name: "head".to_string(),
                                 vertex_offset: 0, vertex_count: 4,
                                 index_offset: 0, index_count: 6,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "body".to_string(),
                                 vertex_offset: 4, vertex_count: 6,
                                 index_offset: 6, index_count: 12,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                         ],
                     },
@@ -107,7 +102,7 @@ fn create_test_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
                                 name: "blade".to_string(),
                                 vertex_offset: 12, vertex_count: 4,
                                 index_offset: 18, index_count: 6,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                         ],
                     },
@@ -118,14 +113,14 @@ fn create_test_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
     Arc::new(Geometry::from_desc(desc).unwrap())
 }
 
-fn create_test_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Pipeline> {
-    let vertex_layout = VertexLayout {
-        bindings: vec![VertexBinding {
-            binding: 0, stride: 8, input_rate: VertexInputRate::Vertex,
+fn create_test_pipeline(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Pipeline> {
+    let vertex_layout = renderer::VertexLayout {
+        bindings: vec![renderer::VertexBinding {
+            binding: 0, stride: 8, input_rate: renderer::VertexInputRate::Vertex,
         }],
-        attributes: vec![VertexAttribute {
+        attributes: vec![renderer::VertexAttribute {
             location: 0, binding: 0,
-            format: BufferFormat::R32G32_SFLOAT, offset: 0,
+            format: renderer::BufferFormat::R32G32_SFLOAT, offset: 0,
         }],
     };
 
@@ -134,11 +129,11 @@ fn create_test_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
         variants: vec![PipelineVariantDesc {
             name: "default".to_string(),
             passes: vec![PipelinePassDesc {
-                pipeline: crate::renderer::PipelineDesc {
-                    vertex_shader: Arc::new(MockShader::new("vert".to_string())),
-                    fragment_shader: Arc::new(MockShader::new("frag".to_string())),
+                pipeline: renderer::PipelineDesc {
+                    vertex_shader: Arc::new(renderer::mock_renderer::MockShader::new("vert".to_string())),
+                    fragment_shader: Arc::new(renderer::mock_renderer::MockShader::new("frag".to_string())),
                     vertex_layout,
-                    topology: PrimitiveTopology::TriangleList,
+                    topology: renderer::PrimitiveTopology::TriangleList,
                     push_constant_ranges: vec![],
                     descriptor_set_layouts: vec![],
                     rasterization: Default::default(),

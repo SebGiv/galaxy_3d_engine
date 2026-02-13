@@ -7,6 +7,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Texture as RendererTexture, Buffer as RendererBuffer,
     Shader as RendererShader, Pipeline as RendererPipeline,
     DescriptorSet as RendererDescriptorSet,
+    Framebuffer as RendererFramebuffer, FramebufferDesc,
     RenderTargetDesc, RenderPassDesc,
     TextureDesc, TextureData, TextureInfo, BufferDesc, ShaderDesc, PipelineDesc,
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
@@ -497,6 +498,7 @@ impl VulkanRenderer {
             TextureFormat::D16_UNORM => vk::Format::D16_UNORM,
             TextureFormat::D32_FLOAT => vk::Format::D32_SFLOAT,
             TextureFormat::D24_UNORM_S8_UINT => vk::Format::D24_UNORM_S8_UINT,
+            TextureFormat::D32_FLOAT_S8_UINT => vk::Format::D32_SFLOAT_S8_UINT,
         }
     }
 
@@ -925,6 +927,137 @@ impl Renderer for VulkanRenderer {
         }
     }
 
+    fn create_render_target_view(
+        &self,
+        texture: &dyn RendererTexture,
+        layer: u32,
+        mip_level: u32,
+    ) -> Result<Arc<dyn RendererRenderTarget>> {
+        let info = texture.info();
+
+        // Validate usage
+        match info.usage {
+            TextureUsage::RenderTarget
+            | TextureUsage::SampledAndRenderTarget
+            | TextureUsage::DepthStencil => {}
+            _ => {
+                engine_bail!("galaxy3d::vulkan",
+                    "create_render_target_view: texture usage {:?} is not compatible \
+                     with render target (expected RenderTarget, SampledAndRenderTarget, \
+                     or DepthStencil)", info.usage);
+            }
+        }
+
+        // Validate layer
+        if layer >= info.array_layers {
+            engine_bail!("galaxy3d::vulkan",
+                "create_render_target_view: layer {} out of range (array_layers = {})",
+                layer, info.array_layers);
+        }
+
+        // Validate mip level
+        if mip_level >= info.mip_levels {
+            engine_bail!("galaxy3d::vulkan",
+                "create_render_target_view: mip_level {} out of range (mip_levels = {})",
+                mip_level, info.mip_levels);
+        }
+
+        unsafe {
+            // Downcast to Vulkan texture to access VkImage
+            let vk_texture = texture as *const dyn RendererTexture as *const Texture;
+            let vk_texture = &*vk_texture;
+
+            let format = self.format_to_vk(info.format);
+            let aspect_mask = if matches!(info.usage, TextureUsage::DepthStencil) {
+                vk::ImageAspectFlags::DEPTH
+            } else {
+                vk::ImageAspectFlags::COLOR
+            };
+
+            // Create image view targeting specific layer/mip of the existing image
+            let view_create_info = vk::ImageViewCreateInfo::default()
+                .image(vk_texture.image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(format)
+                .components(vk::ComponentMapping {
+                    r: vk::ComponentSwizzle::IDENTITY,
+                    g: vk::ComponentSwizzle::IDENTITY,
+                    b: vk::ComponentSwizzle::IDENTITY,
+                    a: vk::ComponentSwizzle::IDENTITY,
+                })
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask,
+                    base_mip_level: mip_level,
+                    level_count: 1,
+                    base_array_layer: layer,
+                    layer_count: 1,
+                });
+
+            let view = self.device.create_image_view(&view_create_info, None)
+                .map_err(|e| engine_err!("galaxy3d::vulkan",
+                    "Failed to create image view for render target view: {:?}", e))?;
+
+            // Calculate dimensions for this mip level
+            let mip_width = (info.width >> mip_level).max(1);
+            let mip_height = (info.height >> mip_level).max(1);
+
+            // RenderTarget owns the ImageView (cleaned up on Drop)
+            // but NOT the VkImage (owned by the Texture)
+            Ok(Arc::new(RenderTarget::new_texture_target(
+                mip_width,
+                mip_height,
+                info.format,
+                view,
+                (*self.device).clone(),
+            )))
+        }
+    }
+
+    fn create_framebuffer(&self, desc: &FramebufferDesc) -> Result<Arc<dyn RendererFramebuffer>> {
+        unsafe {
+            // Downcast render pass to Vulkan type
+            let vk_render_pass = desc.render_pass.as_ref()
+                as *const dyn RendererRenderPass
+                as *const crate::vulkan_render_pass::RenderPass;
+            let vk_render_pass = &*vk_render_pass;
+
+            // Collect image views from attachments
+            let mut attachments = Vec::with_capacity(
+                desc.color_attachments.len()
+                    + if desc.depth_stencil_attachment.is_some() { 1 } else { 0 },
+            );
+
+            for color_rt in &desc.color_attachments {
+                let vk_rt = color_rt.as_ref()
+                    as *const dyn RendererRenderTarget
+                    as *const crate::vulkan_render_target::RenderTarget;
+                attachments.push((*vk_rt).image_view);
+            }
+
+            if let Some(depth_rt) = &desc.depth_stencil_attachment {
+                let vk_rt = depth_rt.as_ref()
+                    as *const dyn RendererRenderTarget
+                    as *const crate::vulkan_render_target::RenderTarget;
+                attachments.push((*vk_rt).image_view);
+            }
+
+            let framebuffer_info = vk::FramebufferCreateInfo::default()
+                .render_pass(vk_render_pass.render_pass)
+                .attachments(&attachments)
+                .width(desc.width)
+                .height(desc.height)
+                .layers(1);
+
+            let framebuffer = self.device.create_framebuffer(&framebuffer_info, None)
+                .map_err(|e| engine_err!("galaxy3d::vulkan",
+                    "Failed to create framebuffer: {:?}", e))?;
+
+            Ok(Arc::new(crate::vulkan_frame_buffer::Framebuffer::new(
+                framebuffer, desc.width, desc.height, (*self.device).clone(),
+            )))
+        }
+    }
+
     fn create_render_pass(&self, desc: &RenderPassDesc) -> Result<Arc<dyn RendererRenderPass>> {
         unsafe {
             // Convert attachment descriptions
@@ -954,7 +1087,7 @@ impl Renderer for VulkanRenderer {
                     .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
             }
 
-            if let Some(depth_attachment) = &desc.depth_attachment {
+            if let Some(depth_attachment) = &desc.depth_stencil_attachment {
                 let depth_index = attachments.len() as u32;
                 attachments.push(vk::AttachmentDescription::default()
                     .format(self.format_to_vk(depth_attachment.format))

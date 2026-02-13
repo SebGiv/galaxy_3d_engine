@@ -6,11 +6,7 @@
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
-use crate::renderer::{
-    mock_renderer::MockRenderer,
-    IndexType, PrimitiveTopology, VertexLayout,
-    VertexBinding, VertexAttribute, BufferFormat, VertexInputRate,
-};
+use crate::renderer;
 #[cfg(test)]
 use crate::resource::{
     Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc, GeometrySubMesh,
@@ -21,26 +17,26 @@ use crate::resource::{
 // ============================================================================
 
 /// Create a mock renderer for testing
-fn create_mock_renderer() -> Arc<Mutex<dyn crate::renderer::Renderer>> {
-    let renderer = MockRenderer::new();
+fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
+    let renderer = renderer::mock_renderer::MockRenderer::new();
     Arc::new(Mutex::new(renderer))
 }
 
 /// Create a simple vertex layout (Position2D)
-fn create_simple_vertex_layout() -> VertexLayout {
-    VertexLayout {
+fn create_simple_vertex_layout() -> renderer::VertexLayout {
+    renderer::VertexLayout {
         bindings: vec![
-            VertexBinding {
+            renderer::VertexBinding {
                 binding: 0,
                 stride: 8, // 2 floats (x, y) = 8 bytes
-                input_rate: VertexInputRate::Vertex,
+                input_rate: renderer::VertexInputRate::Vertex,
             }
         ],
         attributes: vec![
-            VertexAttribute {
+            renderer::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: BufferFormat::R32G32_SFLOAT, // vec2 of floats
+                format: renderer::BufferFormat::R32G32_SFLOAT, // vec2 of floats
                 offset: 0,
             }
         ],
@@ -82,7 +78,7 @@ fn create_simple_submesh_desc() -> GeometrySubMeshDesc {
         vertex_count: 4,
         index_offset: 0,
         index_count: 6,
-        topology: PrimitiveTopology::TriangleList,
+        topology: renderer::PrimitiveTopology::TriangleList,
     }
 }
 
@@ -99,7 +95,7 @@ fn test_create_geometry_indexed() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![],
     };
 
@@ -109,7 +105,7 @@ fn test_create_geometry_indexed() {
     assert_eq!(geom.total_vertex_count(), 4);
     assert_eq!(geom.total_index_count(), 6);
     assert!(geom.is_indexed());
-    assert_eq!(geom.index_type(), IndexType::U16);
+    assert_eq!(geom.index_type(), renderer::IndexType::U16);
 }
 
 #[test]
@@ -121,7 +117,7 @@ fn test_create_geometry_non_indexed() {
         vertex_data: create_quad_vertex_data(),
         index_data: None, // Non-indexed
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![],
     };
 
@@ -143,7 +139,7 @@ fn test_create_geometry_with_mesh() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -172,7 +168,7 @@ fn test_create_geometry_invalid_vertex_stride() {
         vertex_data: vec![1, 2, 3], // 3 bytes, not divisible by stride 8
         index_data: None,
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![],
     };
 
@@ -189,7 +185,7 @@ fn test_create_geometry_invalid_index_stride() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(vec![1, 2, 3]), // 3 bytes, not divisible by u16 size (2)
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![],
     };
 
@@ -210,7 +206,7 @@ fn test_add_mesh() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![],
     };
 
@@ -242,7 +238,7 @@ fn test_get_mesh_by_name() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -269,7 +265,7 @@ fn test_get_mesh_by_id() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -296,7 +292,7 @@ fn test_add_duplicate_mesh() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -329,7 +325,7 @@ fn test_add_lod() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -363,7 +359,7 @@ fn test_multiple_lods() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -401,7 +397,7 @@ fn test_submesh_accessors() {
         vertex_count: 20,
         index_offset: 5,
         index_count: 30,
-        topology: PrimitiveTopology::TriangleStrip,
+        topology: renderer::PrimitiveTopology::TriangleStrip,
     };
 
     let renderer = create_mock_renderer();
@@ -415,7 +411,7 @@ fn test_submesh_accessors() {
         vertex_data,
         index_data: Some(index_data),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -437,7 +433,7 @@ fn test_submesh_accessors() {
     assert_eq!(submesh.vertex_count(), 20);
     assert_eq!(submesh.index_offset(), 5);
     assert_eq!(submesh.index_count(), 30);
-    assert_eq!(submesh.topology(), PrimitiveTopology::TriangleStrip);
+    assert_eq!(submesh.topology(), renderer::PrimitiveTopology::TriangleStrip);
 }
 
 #[test]
@@ -449,7 +445,7 @@ fn test_add_submesh() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -471,7 +467,7 @@ fn test_add_submesh() {
         vertex_count: 4,
         index_offset: 0,
         index_count: 6,
-        topology: PrimitiveTopology::TriangleList,
+        topology: renderer::PrimitiveTopology::TriangleList,
     };
 
     let mesh_id = geom.mesh_id("hero").unwrap();
@@ -493,7 +489,7 @@ fn test_submesh_validation_vertex_overflow() {
         vertex_data: create_quad_vertex_data(), // 4 vertices
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![],
     };
 
@@ -511,7 +507,7 @@ fn test_submesh_validation_vertex_overflow() {
                         vertex_count: 10, // Exceeds total_vertex_count (4)
                         index_offset: 0,
                         index_count: 6,
-                        topology: PrimitiveTopology::TriangleList,
+                        topology: renderer::PrimitiveTopology::TriangleList,
                     }
                 ],
             }
@@ -531,7 +527,7 @@ fn test_submesh_validation_index_overflow() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()), // 6 indices
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![],
     };
 
@@ -549,7 +545,7 @@ fn test_submesh_validation_index_overflow() {
                         vertex_count: 4,
                         index_offset: 0,
                         index_count: 20, // Exceeds total_index_count (6)
-                        topology: PrimitiveTopology::TriangleList,
+                        topology: renderer::PrimitiveTopology::TriangleList,
                     }
                 ],
             }
@@ -573,7 +569,7 @@ fn test_submesh_lookup_by_name() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -587,7 +583,7 @@ fn test_submesh_lookup_by_name() {
                                 vertex_count: 4,
                                 index_offset: 0,
                                 index_count: 6,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -620,7 +616,7 @@ fn test_multiple_submeshes_in_lod() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -634,7 +630,7 @@ fn test_multiple_submeshes_in_lod() {
                                 vertex_count: 2,
                                 index_offset: 0,
                                 index_count: 3,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "armor".to_string(),
@@ -642,7 +638,7 @@ fn test_multiple_submeshes_in_lod() {
                                 vertex_count: 2,
                                 index_offset: 3,
                                 index_count: 3,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -679,7 +675,7 @@ fn test_complex_geometry_hierarchy() {
         vertex_data,
         index_data: Some(index_data),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -693,7 +689,7 @@ fn test_complex_geometry_hierarchy() {
                                 vertex_count: 10,
                                 index_offset: 0,
                                 index_count: 15,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "armor".to_string(),
@@ -701,7 +697,7 @@ fn test_complex_geometry_hierarchy() {
                                 vertex_count: 5,
                                 index_offset: 15,
                                 index_count: 9,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             }
                         ],
                     },
@@ -714,7 +710,7 @@ fn test_complex_geometry_hierarchy() {
                                 vertex_count: 8,
                                 index_offset: 0,
                                 index_count: 12,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             }
                         ],
                     },
@@ -732,7 +728,7 @@ fn test_complex_geometry_hierarchy() {
                                 vertex_count: 12,
                                 index_offset: 30,
                                 index_count: 18,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -778,7 +774,7 @@ fn test_geometry_getters() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![],
     };
 
@@ -812,7 +808,7 @@ fn test_submesh_by_id() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -826,7 +822,7 @@ fn test_submesh_by_id() {
                                 vertex_count: 2,
                                 index_offset: 0,
                                 index_count: 3,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "armor".to_string(),
@@ -834,7 +830,7 @@ fn test_submesh_by_id() {
                                 vertex_count: 2,
                                 index_offset: 3,
                                 index_count: 3,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -880,7 +876,7 @@ fn test_submeshes_iterator() {
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: IndexType::U16,
+        index_type: renderer::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -894,7 +890,7 @@ fn test_submeshes_iterator() {
                                 vertex_count: 2,
                                 index_offset: 0,
                                 index_count: 3,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "armor".to_string(),
@@ -902,7 +898,7 @@ fn test_submeshes_iterator() {
                                 vertex_count: 2,
                                 index_offset: 3,
                                 index_count: 3,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "weapon".to_string(),
@@ -910,7 +906,7 @@ fn test_submeshes_iterator() {
                                 vertex_count: 4,
                                 index_offset: 0,
                                 index_count: 6,
-                                topology: PrimitiveTopology::TriangleList,
+                                topology: renderer::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }

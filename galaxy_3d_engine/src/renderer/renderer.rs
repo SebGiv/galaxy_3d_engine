@@ -10,6 +10,7 @@ use crate::renderer::{
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
     CommandList, RenderPass, RenderTarget, Swapchain,
     RenderPassDesc, RenderTargetDesc, DescriptorSet,
+    Framebuffer, FramebufferDesc,
 };
 
 // Import error types from crate root
@@ -224,6 +225,41 @@ pub trait Renderer: Send + Sync {
     ///
     /// A shared pointer to the created render target
     fn create_render_target(&self, desc: &RenderTargetDesc) -> Result<Arc<dyn RenderTarget>>;
+
+    /// Create a render target view from an existing texture
+    ///
+    /// Creates an image view suitable for framebuffer attachment,
+    /// targeting a specific layer and mip level of the texture.
+    /// The texture must have been created with a compatible usage
+    /// (RenderTarget, SampledAndRenderTarget, or DepthStencil).
+    ///
+    /// # Arguments
+    ///
+    /// * `texture` - The texture to create a render target view from
+    /// * `layer` - Array layer index (0 for simple textures)
+    /// * `mip_level` - Mip level (0 for full resolution)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the texture usage is incompatible,
+    /// or if layer/mip_level are out of bounds.
+    fn create_render_target_view(
+        &self,
+        texture: &dyn Texture,
+        layer: u32,
+        mip_level: u32,
+    ) -> Result<Arc<dyn RenderTarget>>;
+
+    /// Create a framebuffer grouping color and depth/stencil attachments
+    ///
+    /// # Arguments
+    ///
+    /// * `desc` - Framebuffer descriptor (render pass, attachments, dimensions)
+    ///
+    /// # Returns
+    ///
+    /// A shared pointer to the created framebuffer
+    fn create_framebuffer(&self, desc: &FramebufferDesc) -> Result<Arc<dyn Framebuffer>>;
 
     /// Create a render pass
     ///
