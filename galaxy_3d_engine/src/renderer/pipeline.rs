@@ -1,7 +1,7 @@
 /// Pipeline trait and pipeline descriptor
 
 use std::sync::Arc;
-use crate::renderer::{Shader, BufferFormat, ShaderStage};
+use crate::renderer::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -421,8 +421,8 @@ pub struct PipelineDesc {
     pub topology: PrimitiveTopology,
     /// Push constant ranges (optional)
     pub push_constant_ranges: Vec<PushConstantRange>,
-    /// Descriptor set layouts (for binding textures, uniforms, etc.)
-    pub descriptor_set_layouts: Vec<u64>, // vk::DescriptorSetLayout as u64
+    /// Binding group layouts (one per set index, describing what resources the pipeline expects)
+    pub binding_group_layouts: Vec<BindingGroupLayoutDesc>,
     /// Rasterization state
     pub rasterization: RasterizationState,
     /// Depth and stencil testing state
@@ -437,8 +437,10 @@ pub struct PipelineDesc {
 ///
 /// Implemented by backend-specific pipeline types (e.g., VulkanPipeline).
 /// The pipeline is automatically destroyed when dropped.
+/// The pipeline stores its binding group layouts internally (Option B design).
 pub trait Pipeline: Send + Sync {
-    // No public methods for now, pipelines are created and bound by frames
+    /// Returns the number of binding group layouts in this pipeline
+    fn binding_group_layout_count(&self) -> u32;
 }
 
 #[cfg(test)]

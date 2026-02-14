@@ -22,7 +22,6 @@ use crate::renderer;
 /// Supports both simple and indexed textures, with optional atlas regions per layer.
 pub struct Texture {
     renderer_texture: Arc<dyn renderer::Texture>,
-    descriptor_set: Arc<dyn renderer::DescriptorSet>,
     layers: Vec<TextureLayer>,
     layer_names: HashMap<String, usize>,
 }
@@ -217,9 +216,6 @@ impl Texture {
         // Create the GPU texture
         let renderer_texture = desc.renderer.lock().unwrap().create_texture(render_texture_desc)?;
 
-        // Create descriptor set
-        let descriptor_set = desc.renderer.lock().unwrap().create_descriptor_set_for_texture(&renderer_texture)?;
-
         // ========== BUILD LAYERS ==========
 
         let mut layers = Vec::new();
@@ -248,7 +244,6 @@ impl Texture {
 
         Ok(Self {
             renderer_texture,
-            descriptor_set,
             layers,
             layer_names,
         })
@@ -389,10 +384,6 @@ impl Texture {
         &self.renderer_texture
     }
 
-    /// Get the descriptor set for shader binding
-    pub fn descriptor_set(&self) -> &Arc<dyn renderer::DescriptorSet> {
-        &self.descriptor_set
-    }
 }
 
 // ===== TEXTURE LAYER IMPLEMENTATION =====

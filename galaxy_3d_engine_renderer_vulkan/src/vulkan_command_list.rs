@@ -7,7 +7,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Framebuffer as RendererFramebuffer,
     Pipeline as RendererPipeline,
     Buffer as RendererBuffer,
-    DescriptorSet as RendererDescriptorSet,
+    BindingGroup as RendererBindingGroup,
     Viewport, Rect2D, ClearValue, IndexType, ShaderStage,
 };
 use galaxy_3d_engine::{engine_bail, engine_err};
@@ -18,7 +18,7 @@ use crate::vulkan_render_pass::RenderPass;
 use crate::vulkan_frame_buffer::Framebuffer;
 use crate::vulkan_pipeline::Pipeline;
 use crate::vulkan_buffer::Buffer;
-use crate::vulkan_descriptor_set::DescriptorSet;
+use crate::vulkan_binding_group::BindingGroup;
 
 /// Vulkan command list implementation
 ///
@@ -83,19 +83,21 @@ impl CommandList {
         self.command_buffer
     }
 
-    /// Bind descriptor sets to the command buffer
+    /// Bind a single descriptor set to the command buffer at a given set index
     ///
     /// # Arguments
     ///
-    /// * `descriptor_sets` - Array of descriptor sets to bind
-    /// * `pipeline_layout` - Pipeline layout that the descriptor sets are compatible with
-    pub fn bind_descriptor_sets(
+    /// * `descriptor_set` - The descriptor set to bind
+    /// * `pipeline_layout` - Pipeline layout that the descriptor set is compatible with
+    /// * `first_set` - The set index to bind at
+    pub fn bind_descriptor_set_at(
         &mut self,
-        descriptor_sets: &[vk::DescriptorSet],
+        descriptor_set: vk::DescriptorSet,
         pipeline_layout: vk::PipelineLayout,
+        first_set: u32,
     ) -> Result<()> {
         if !self.is_recording {
-            engine_bail!("galaxy3d::vulkan", "bind_descriptor_sets: command list not recording");
+            engine_bail!("galaxy3d::vulkan", "bind_descriptor_set_at: command list not recording");
         }
 
         unsafe {
@@ -103,8 +105,8 @@ impl CommandList {
                 self.command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_layout,
-                0, // first_set
-                descriptor_sets,
+                first_set,
+                &[descriptor_set],
                 &[], // dynamic_offsets
             );
 
@@ -434,37 +436,33 @@ impl RendererCommandList for CommandList {
         }
     }
 
-    fn bind_descriptor_sets(
+    fn bind_binding_group(
         &mut self,
         pipeline: &Arc<dyn RendererPipeline>,
-        descriptor_sets: &[&Arc<dyn RendererDescriptorSet>],
+        set_index: u32,
+        binding_group: &Arc<dyn RendererBindingGroup>,
     ) -> Result<()> {
         if !self.is_recording {
-            engine_bail!("galaxy3d::vulkan", "bind_descriptor_sets (trait): command list not recording");
+            engine_bail!("galaxy3d::vulkan", "bind_binding_group: command list not recording");
         }
 
         unsafe {
-            // Downcast pipeline to extract pipeline_layout (now private)
+            // Downcast pipeline to extract pipeline_layout
             let vk_pipeline = pipeline.as_ref() as *const dyn RendererPipeline as *const Pipeline;
             let vk_pipeline = &*vk_pipeline;
             let pipeline_layout = vk_pipeline.pipeline_layout;
 
-            // Downcast descriptor sets from abstract types to Vulkan types
-            let vk_descriptor_sets: Vec<vk::DescriptorSet> = descriptor_sets
-                .iter()
-                .map(|ds| {
-                    let vk_ds = ds.as_ref() as *const dyn RendererDescriptorSet as *const DescriptorSet;
-                    (*vk_ds).descriptor_set
-                })
-                .collect();
+            // Downcast binding group to extract descriptor set
+            let vk_bg = binding_group.as_ref() as *const dyn RendererBindingGroup as *const BindingGroup;
+            let vk_bg = &*vk_bg;
 
-            // Bind Vulkan descriptor sets
+            // Bind single descriptor set at the given set index
             self.device.cmd_bind_descriptor_sets(
                 self.command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_layout,
-                0, // first_set
-                &vk_descriptor_sets,
+                set_index,
+                &[vk_bg.descriptor_set],
                 &[], // dynamic_offsets
             );
 

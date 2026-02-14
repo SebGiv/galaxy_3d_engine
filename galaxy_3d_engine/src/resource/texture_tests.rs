@@ -771,18 +771,6 @@ fn test_renderer_texture_getter() {
 }
 
 #[test]
-fn test_descriptor_set_getter() {
-    let renderer = create_mock_renderer();
-    let desc = create_simple_texture_desc(renderer);
-
-    let texture = Texture::from_desc(desc).unwrap();
-
-    // descriptor_set() should return a valid Arc
-    let descriptor_set = texture.descriptor_set();
-    assert!(Arc::strong_count(descriptor_set) >= 1);
-}
-
-#[test]
 fn test_texture_layer_getters() {
     let renderer = create_mock_renderer();
     let desc = TextureDesc {

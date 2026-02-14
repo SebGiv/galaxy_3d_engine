@@ -12,13 +12,30 @@
 1. [Vue d'ensemble](#1-vue-densemble)
 2. [Les 3 fréquences de mise à jour](#2-les-3-fréquences-de-mise-à-jour)
 3. [Les 3 mécanismes GPU (Vulkan)](#3-les-3-mécanismes-gpu-vulkan)
-4. [Organisation des Descriptor Sets](#4-organisation-des-descriptor-sets)
+4. [Descriptor Sets en profondeur](#4-descriptor-sets-en-profondeur)
 5. [Push Constants — données ultra-rapides](#5-push-constants--données-ultra-rapides)
 6. [Uniform Buffers (UBO) — données structurées](#6-uniform-buffers-ubo--données-structurées)
 7. [Textures et Samplers](#7-textures-et-samplers)
+   - 7.1 [Qu'est-ce qu'un Sampler ?](#71-quest-ce-quun-sampler-)
+   - 7.2 [Paramètres d'un Sampler](#72-paramètres-dun-sampler)
+   - 7.3 [Samplers prédéfinis Galaxy3D](#73-samplers-prédéfinis-galaxy3d)
+   - 7.4 [État actuel dans Galaxy3D](#74-état-actuel-dans-galaxy3d)
+   - 7.5 [Binding dans les Descriptor Sets](#75-binding-dans-les-descriptor-sets)
+   - 7.6 [Textures manquantes](#76-textures-manquantes)
 8. [Le Material comme pont entre Pipeline et données](#8-le-material-comme-pont-entre-pipeline-et-données)
 9. [Flux de rendu complet avec binding](#9-flux-de-rendu-complet-avec-binding)
-10. [Recommandations pour Galaxy3D](#10-recommandations-pour-galaxy3d)
+10. [Bonnes pratiques des Descriptor Sets](#10-bonnes-pratiques-des-descriptor-sets)
+11. [Erreurs classiques à éviter](#11-erreurs-classiques-à-éviter)
+12. [Approche des moteurs modernes](#12-approche-des-moteurs-modernes)
+13. [Stratégie Galaxy3D](#13-stratégie-galaxy3d)
+14. [Glossaire](#14-glossaire)
+15. [BindingGroup — abstraction Galaxy3D](#15-bindinggroup--abstraction-galaxy3d)
+   - 15.1 [Concept et origine](#151-concept-et-origine)
+   - 15.2 [Design choisi (Option B)](#152-design-choisi-option-b)
+   - 15.3 [Différences avec un Descriptor Set brut](#153-différences-avec-un-descriptor-set-brut)
+   - 15.4 [Relation avec les slots de Pipeline](#154-relation-avec-les-slots-de-pipeline)
+   - 15.5 [Ce qui reste en dehors du BindingGroup](#155-ce-qui-reste-en-dehors-du-bindinggroup)
+   - 15.6 [API envisagée](#156-api-envisagée)
 
 ---
 
@@ -234,9 +251,172 @@ Vulkan offre 3 moyens pour envoyer des données aux shaders, chacun avec ses car
 
 ---
 
-## 4. Organisation des Descriptor Sets
+## 4. Descriptor Sets en profondeur
 
-### Stratégie par fréquence de changement
+### 4.1 Définition et analogies
+
+Un **Descriptor Set** est un objet Vulkan qui regroupe un ensemble de **bindings** (liaisons) entre des ressources GPU (buffers, textures, samplers) et des emplacements numérotés que les shaders peuvent lire.
+
+C'est le mécanisme par lequel le CPU dit au GPU : "pour ce draw call, voici les données que le shader doit utiliser".
+
+#### Analogie : le formulaire
+
+```
+Descriptor Set Layout = formulaire vierge (structure)
+  ┌─────────────────────────────────────────────┐
+  │ Champ 0 : [type: Uniform Buffer]            │
+  │ Champ 1 : [type: Combined Image Sampler]    │
+  │ Champ 2 : [type: Combined Image Sampler]    │
+  └─────────────────────────────────────────────┘
+
+Descriptor Set = formulaire rempli (données concrètes)
+  ┌─────────────────────────────────────────────┐
+  │ Champ 0 : UBO_material_brick                │
+  │ Champ 1 : texture_albedo_brick              │
+  │ Champ 2 : texture_normal_brick              │
+  └─────────────────────────────────────────────┘
+```
+
+Un Layout est une **structure vide** (quels types à quels emplacements).
+Un Descriptor Set est une **instance concrète** de ce layout avec de vraies ressources.
+
+### 4.2 Descriptor Set Layout — le blueprint
+
+Un layout décrit la **forme** d'un descriptor set sans contenir de données :
+
+```
+DescriptorSetLayout {
+    bindings: [
+        { binding: 0, type: UNIFORM_BUFFER,          count: 1, stages: VERTEX|FRAGMENT },
+        { binding: 1, type: COMBINED_IMAGE_SAMPLER,   count: 1, stages: FRAGMENT },
+        { binding: 2, type: COMBINED_IMAGE_SAMPLER,   count: 1, stages: FRAGMENT },
+        { binding: 3, type: COMBINED_IMAGE_SAMPLER,   count: 1, stages: FRAGMENT },
+    ]
+}
+```
+
+Chaque binding spécifie :
+- **binding** : numéro de l'emplacement (correspond au `layout(binding = N)` dans le shader)
+- **type** : quel genre de ressource (UBO, texture+sampler, storage buffer, etc.)
+- **count** : nombre de descriptors à cet emplacement (>1 pour les tableaux de textures)
+- **stages** : quels étages du shader y accèdent (vertex, fragment, compute, etc.)
+
+Le layout est créé **une seule fois**, au moment de la création du Pipeline. Il fait partie du Pipeline Layout :
+
+```
+Pipeline Layout = [
+    Set 0 Layout : per-frame (caméra, lumières)
+    Set 1 Layout : per-material (paramètres, textures)
+    Set 2 Layout : per-object (optionnel)
+]
+
+Pipeline = Shaders + Pipeline Layout + States (blend, depth, rasterizer)
+```
+
+Le même layout peut être partagé entre plusieurs pipelines si leur structure de binding est identique.
+
+### 4.3 Relations Layout ↔ Descriptor Set ↔ Pipeline
+
+#### Layout → Descriptor Set (1-N)
+
+Un layout peut servir de modèle pour **N** descriptor sets différents :
+
+```
+Layout_PBR_Material :
+  binding 0 : UBO
+  binding 1 : texture
+  binding 2 : texture
+
+  ──────────────────────────────────────
+  │                                    │
+  ▼                                    ▼
+DS_brick                           DS_metal
+  binding 0 : UBO_brick             binding 0 : UBO_metal
+  binding 1 : tex_brick_albedo      binding 1 : tex_metal_albedo
+  binding 2 : tex_brick_normal      binding 2 : tex_metal_normal
+```
+
+Le nombre de descriptor sets n'est pas lié au nombre de layouts, mais au nombre de **combinaisons uniques de ressources**.
+
+#### Layout → Pipeline (N-N)
+
+Plusieurs pipelines peuvent utiliser le **même** layout s'ils attendent la même structure de données :
+
+```
+Layout_PBR_Material ◄──── Pipeline_PBR_Opaque
+                    ◄──── Pipeline_PBR_Translucent
+                    ◄──── Pipeline_PBR_Wireframe
+
+Layout_Unlit       ◄──── Pipeline_Unlit_Color
+                   ◄──── Pipeline_Unlit_Debug
+```
+
+#### Descriptor Set → Pipeline au draw time (N-N)
+
+Au moment du draw, n'importe quel descriptor set peut être bindé à n'importe quel pipeline, **à condition que leurs layouts soient compatibles** (même structure) :
+
+```
+Pipeline_PBR_Opaque + DS_brick     → Draw mur
+Pipeline_PBR_Opaque + DS_metal     → Draw armure
+Pipeline_PBR_Translucent + DS_glass → Draw vitre
+```
+
+#### Exemple concret
+
+```
+Textures : T1 (brique), T2 (métal), T3 (verre)
+Pipelines : P1 (opaque), P2 (translucide), P3 (wireframe), P4 (shadow)
+
+Layouts nécessaires :
+  L1 = [UBO + 2 textures]    ← utilisé par P1, P2, P3
+  L2 = [UBO seul]            ← utilisé par P4 (shadow n'a pas besoin de textures)
+
+Descriptor Sets nécessaires :
+  DS1 = L1 rempli avec [UBO_brick, T1_albedo, T1_normal]
+  DS2 = L1 rempli avec [UBO_metal, T2_albedo, T2_normal]
+  DS3 = L1 rempli avec [UBO_glass, T3_albedo, T3_normal]
+  DS4 = L2 rempli avec [UBO_generic]
+
+Draw calls possibles :
+  P1 + DS1 → brique opaque
+  P1 + DS2 → métal opaque
+  P2 + DS3 → verre translucide
+  P3 + DS1 → brique wireframe
+  P4 + DS4 → shadow pass (tous objets)
+```
+
+### 4.4 Contenu d'un Descriptor Set
+
+Un descriptor set **ne contient pas que des textures**. Il peut contenir :
+
+| Type Vulkan | Description | Exemple |
+|---|---|---|
+| `UNIFORM_BUFFER` | Buffer de données structurées (lecture seule shader) | Matrices caméra, paramètres matériaux (roughness, metallic, couleur) |
+| `COMBINED_IMAGE_SAMPLER` | Texture + mode de filtrage | Albedo, normal map, roughness map |
+| `STORAGE_BUFFER` | Buffer lecture/écriture (compute shaders) | Données de particules, résultats de compute |
+| `SAMPLED_IMAGE` | Texture seule (sans sampler) | Utilisé avec samplers séparés |
+| `SAMPLER` | Sampler seul (sans texture) | Filtrage bilinéaire, trilinéaire, anisotropique |
+| `STORAGE_IMAGE` | Image lecture/écriture (compute shaders) | Post-processing, génération procédurale |
+| `UNIFORM_BUFFER_DYNAMIC` | UBO avec offset dynamique | Plusieurs objets dans un même gros buffer |
+| `INPUT_ATTACHMENT` | Framebuffer attachment en lecture | Deferred shading (lire le G-buffer) |
+
+#### Distinction importante : la Roughness
+
+La **roughness** (ou tout paramètre scalaire du matériau) n'est pas directement dans le descriptor set. Elle est dans un **Uniform Buffer**, et c'est le buffer qui est bindé dans le descriptor set :
+
+```
+Descriptor Set (Set 1 — per-material)
+  ├── binding 0 : Uniform Buffer ──→ { roughness: 0.5, metallic: 0.8, base_color: [1,0,0,1] }
+  ├── binding 1 : Texture ──→ albedo.png
+  ├── binding 2 : Texture ──→ normal.png
+  └── binding 3 : Sampler ──→ linear_repeat
+```
+
+Deux matériaux avec les **mêmes textures** mais des **roughness différentes** ont besoin de :
+- Deux UBOs différents (un avec roughness=0.5, un avec roughness=0.8)
+- Donc deux descriptor sets différents (car ils pointent vers des UBOs différents)
+
+### 4.5 Organisation par fréquence de changement
 
 L'organisation standard (utilisée par la majorité des moteurs modernes) est de répartir les descriptor sets **par fréquence de mise à jour** :
 
@@ -260,7 +440,7 @@ Push Constants : Per-Object (rapide, petites données)
   └── model matrix (64 octets)
 ```
 
-### Pourquoi cet ordre ?
+#### Pourquoi cet ordre ?
 
 L'avantage est de **minimiser les rebinds** pendant le rendu :
 
@@ -278,7 +458,7 @@ Début de frame :
 
 Le Set 0 n'est bindé **qu'une seule fois par frame**. Le Set 1 n'est rebindé que quand on change de matériau. Seules les push constants changent à chaque draw call.
 
-### Impact sur les performances
+#### Impact sur les performances
 
 ```
 Sans cette organisation (tout dans un seul set) :
@@ -291,6 +471,69 @@ Avec cette organisation (sets par fréquence) :
   → 1000 push constants (quasi gratuits)
   → Total : 51 binds + 1000 push constants au lieu de 1000 binds complets
 ```
+
+### 4.6 Cycle de vie complet
+
+#### 1. Création du Descriptor Pool
+
+Avant de pouvoir allouer des descriptor sets, il faut créer un pool :
+
+```
+Descriptor Pool :
+  max_sets: 1000
+  pool_sizes: [
+    { type: UNIFORM_BUFFER,          count: 500 },
+    { type: COMBINED_IMAGE_SAMPLER,  count: 2000 },
+  ]
+```
+
+Le pool pré-alloue la mémoire. C'est analogue à un allocateur de mémoire spécialisé.
+
+#### 2. Allocation du Descriptor Set
+
+```
+descriptor_set = pool.allocate(layout)
+```
+
+L'allocation est rapide (pas d'appel GPU, juste de la gestion mémoire côté driver).
+
+#### 3. Écriture (Write)
+
+C'est ici qu'on remplit le descriptor set avec les ressources concrètes :
+
+```
+vkUpdateDescriptorSets(device, [
+    WriteDescriptorSet {
+        dst_set: descriptor_set,
+        dst_binding: 0,
+        descriptor_type: UNIFORM_BUFFER,
+        buffer_info: { buffer: ubo_material, offset: 0, range: 64 },
+    },
+    WriteDescriptorSet {
+        dst_set: descriptor_set,
+        dst_binding: 1,
+        descriptor_type: COMBINED_IMAGE_SAMPLER,
+        image_info: { sampler: linear_sampler, image_view: albedo_view, layout: SHADER_READ_ONLY },
+    },
+])
+```
+
+**IMPORTANT** : L'écriture doit être faite **avant** que le descriptor set soit utilisé par le GPU, et **pas pendant** qu'il est utilisé.
+
+#### 4. Bind pendant le rendu
+
+```
+vkCmdBindDescriptorSets(command_buffer, GRAPHICS, pipeline_layout, set_index=1, [descriptor_set])
+```
+
+Le bind est très rapide — c'est juste un changement de pointeur dans le command buffer.
+
+#### 5. Réutilisation
+
+Le descriptor set reste valide tant que :
+- Le pool n'est pas détruit
+- Les ressources qu'il référence ne sont pas détruites
+- Il n'est pas en cours d'utilisation par le GPU au moment d'une écriture
 
 ---
 
@@ -404,20 +647,147 @@ struct PerFrameData {
 
 ## 7. Textures et Samplers
 
-### Binding dans les Descriptor Sets
+### 7.1 Qu'est-ce qu'un Sampler ?
 
-Les textures sont bindées dans les descriptor sets, typiquement dans le Set 1 (per-material) :
+Un **Sampler** et une **Texture** sont deux objets GPU **fondamentalement distincts** :
+
+| Concept | Analogie | Ce que c'est |
+|---------|----------|-------------|
+| **Texture** | Une **photo** | Les données brutes : pixels (texels), dimensions, format (RGBA8, BC7…), niveaux de mipmap |
+| **Sampler** | Les **réglages de l'appareil photo** | Comment on **lit** la texture : filtrage, mode de répétition, niveau de détail |
+
+Quand un shader exécute `texture(sampler2D, uv)`, il y a en réalité **deux objets** qui collaborent :
+- La **Texture** (`VkImage` + `VkImageView`) → les données pixel
+- Le **Sampler** (`VkSampler`) → les règles de lecture
+
+#### Pourquoi séparer les deux ?
+
+**1. Réutilisation** — Un même sampler peut servir pour des centaines de textures. Si toutes les textures diffuses utilisent du filtrage linéaire + repeat, un seul objet `VkSampler` suffit pour toutes.
+
+**2. Combinaisons** — Une même texture peut être lue avec des samplers différents selon le contexte :
+
+```
+Texture terrain.png :
+  + Sampler REPEAT     → le terrain se répète à l'infini sur le sol
+  + Sampler CLAMP      → la même texture en preview dans l'éditeur (pas de répétition)
+  + Sampler NEAREST    → debug mode (voir les texels individuels)
+
+Même image, trois comportements de lecture différents.
+```
+
+**3. Performance** — Un `VkSampler` est un objet extrêmement léger (~quelques octets de configuration GPU). En avoir 3 à 5 pour tout le moteur est la norme. Alors qu'une texture peut peser des centaines de Mo en mémoire GPU.
+
+**4. Séparation des responsabilités** — La texture ne devrait pas savoir *comment* elle sera lue. Un artiste crée une image ; le moteur décide comment l'échantillonner selon le contexte (filtrage anisotropique sur un sol, filtrage nearest pour du pixel art, etc.).
+
+### 7.2 Paramètres d'un Sampler
+
+Un sampler configure quatre aspects de la lecture :
+
+#### Filtrage (comment interpoler entre les texels)
+
+| Mode | Comportement | Usage typique |
+|------|-------------|---------------|
+| `NEAREST` | Retourne le texel le plus proche, aucune interpolation | Pixel art, lookup tables, données brutes |
+| `LINEAR` | Interpolation bilinéaire entre les 4 texels voisins | Rendu 3D général, textures réalistes |
+
+Le filtrage s'applique en deux situations :
+- **Magnification** (`magFilter`) : quand la texture est affichée plus grande qu'elle n'est (on zoom)
+- **Minification** (`minFilter`) : quand la texture est affichée plus petite qu'elle n'est (on dézoom)
+
+#### Mode d'adressage (que faire quand UV sort de [0, 1])
+
+| Mode | Comportement | Usage typique |
+|------|-------------|---------------|
+| `REPEAT` | La texture se répète en boucle (carrelage) | Sol, murs, terrain |
+| `MIRRORED_REPEAT` | Se répète en miroir (évite les coutures) | Textures procédurales |
+| `CLAMP_TO_EDGE` | Le bord de la texture se prolonge à l'infini | UI, shadow maps, environment maps |
+| `CLAMP_TO_BORDER` | Couleur fixe (noir, blanc, transparent) en dehors | Effets spéciaux, masques |
+
+Le mode d'adressage est configurable indépendamment pour U, V, et W (3D).
+
+#### Mipmapping (niveaux de détail)
+
+Les mipmaps sont des versions pré-calculées de la texture à des résolutions décroissantes (1024→512→256→128→…→1). Le sampler contrôle :
+
+| Paramètre | Description |
+|-----------|-------------|
+| `mipmapMode` | `NEAREST` (pas d'interpolation entre niveaux) ou `LINEAR` (interpolation trilinéaire) |
+| `minLod` | Niveau de mipmap minimum utilisable (0 = pleine résolution) |
+| `maxLod` | Niveau de mipmap maximum utilisable |
+| `mipLodBias` | Décalage du LOD (positif = plus flou, négatif = plus net) |
+
+**Filtrage trilinéaire** = `minFilter: LINEAR` + `magFilter: LINEAR` + `mipmapMode: LINEAR`. C'est le mode le plus courant pour un rendu de qualité.
+
+#### Anisotropie (qualité en angle rasant)
+
+Le filtrage anisotropique améliore la qualité quand une surface est vue en angle rasant (sol, route, mur en perspective). Sans anisotropie, ces surfaces deviennent floues.
+
+| Niveau | Qualité | Coût GPU |
+|--------|---------|----------|
+| 1x (désactivé) | Flou en angle rasant | Nul |
+| 4x | Bon compromis | Faible |
+| 8x | Très bon | Modéré |
+| 16x | Maximum | Légèrement plus élevé |
+
+Sur les GPU modernes, le coût du filtrage anisotropique 16x est quasi négligeable. C'est activé par défaut dans la plupart des moteurs.
+
+### 7.3 Samplers prédéfinis Galaxy3D
+
+Un moteur 3D n'a besoin que de quelques samplers couvrant les cas d'usage courants :
+
+| Sampler | Filtrage | Adressage | Anisotropie | Usage typique |
+|---------|----------|-----------|-------------|---------------|
+| `LinearRepeat` | LINEAR + trilinéaire | REPEAT | 16x | Textures diffuse, normal maps, terrain |
+| `LinearClamp` | LINEAR + trilinéaire | CLAMP_TO_EDGE | 16x | UI, shadow maps, environment maps, post-process |
+| `NearestRepeat` | NEAREST | REPEAT | Désactivé | Pixel art, données brutes, voxels |
+| `NearestClamp` | NEAREST | CLAMP_TO_EDGE | Désactivé | Lookup tables, textures de bruit, indices |
+| `Shadow` | LINEAR | CLAMP_TO_BORDER (blanc) | Désactivé | Shadow maps avec comparaison de profondeur |
+
+Ces samplers sont créés **une seule fois** à l'initialisation du moteur et réutilisés pour toutes les textures qui en ont besoin. Cinq objets `VkSampler` suffisent pour couvrir la grande majorité des situations.
+
+### 7.4 État actuel dans Galaxy3D
+
+**Ce qui existe** :
+
+Un seul sampler partagé dans le backend Vulkan (`VulkanRenderer::texture_sampler`), créé à l'initialisation avec :
+- Filtrage : LINEAR (mag et min)
+- Mipmapping : LINEAR
+- Adressage : REPEAT (U, V, W)
+- Anisotropie : activée (16x)
+
+Ce sampler est utilisé pour toutes les textures du moteur sans distinction.
+
+**Ce qui n'existe pas encore** :
+
+- Aucun `renderer::Sampler` dans la couche abstraite du renderer
+- Aucune possibilité de créer des samplers avec des réglages différents
+- Aucune association sampler ↔ texture configurable côté utilisateur
+
+À terme, le renderer devra exposer les samplers prédéfinis (section 7.3) et permettre au Material de spécifier quel sampler utiliser pour chaque texture.
+
+### 7.5 Binding dans les Descriptor Sets
+
+Les textures sont bindées dans les descriptor sets, typiquement dans le Set 1 (per-material). En Vulkan, le type `COMBINED_IMAGE_SAMPLER` associe une texture **ET** un sampler dans un même binding :
 
 ```
 Descriptor Set 1 :
   binding 0 : UBO MaterialData
-  binding 1 : Combined Image Sampler → diffuse texture
-  binding 2 : Combined Image Sampler → normal map
-  binding 3 : Combined Image Sampler → roughness/metallic map
-  binding 4 : Combined Image Sampler → emission map
+  binding 1 : Combined Image Sampler → diffuse texture + LinearRepeat
+  binding 2 : Combined Image Sampler → normal map     + LinearRepeat
+  binding 3 : Combined Image Sampler → roughness map  + LinearRepeat
+  binding 4 : Combined Image Sampler → emission map   + LinearRepeat
 ```
 
-### Textures manquantes
+Deux textures dans le même descriptor set peuvent utiliser des samplers différents :
+
+```
+Descriptor Set (post-process) :
+  binding 0 : Combined Image Sampler → color buffer   + LinearClamp   ← pas de repeat
+  binding 1 : Combined Image Sampler → depth buffer   + NearestClamp  ← pas d'interpolation
+  binding 2 : Combined Image Sampler → noise texture  + NearestRepeat ← repeat sans filtrage
+```
+
+### 7.6 Textures manquantes
 
 Un matériau ne fournit pas toujours toutes les textures. Solutions courantes :
 
@@ -427,7 +797,7 @@ Un matériau ne fournit pas toujours toutes les textures. Solutions courantes :
 | **Flag dans le UBO** | Un booléen `has_normal_map` dans le MaterialData |
 | **Specialization constants** | Variantes shader compilées avec/sans certaines textures |
 
-**Recommandation** : Texture par défaut (le plus simple). Créer au démarrage du moteur :
+**Recommandation** : Texture par défaut. Créer au démarrage du moteur :
 
 ```
 default_white   : 1×1 pixel blanc  (1, 1, 1, 1)  → pour diffuse absent
@@ -579,14 +949,273 @@ Total : 1 bind Set 0, 1 bind pipeline, 3 binds Set 1, 5 push constants, 5 draws
 
 ---
 
-## 10. Recommandations pour Galaxy3D
+## 10. Bonnes pratiques des Descriptor Sets
+
+### Un Descriptor Set par combinaison unique de ressources
+
+```
+CORRECT :
+  DS1 → [UBO_brick, tex_brick]        ← pour tous les objets "brick"
+  DS2 → [UBO_metal, tex_metal]        ← pour tous les objets "metal"
+  DS3 → [UBO_wood, tex_wood]          ← pour tous les objets "wood"
+
+INCORRECT :
+  DS1 → [UBO_shared, tex_brick]       ← on change UBO_shared entre les draws
+  (danger : race condition GPU/CPU)
+```
+
+### Ne jamais muter un Descriptor Set en cours d'utilisation
+
+Si le GPU est en train de lire un descriptor set (draw call soumis mais pas terminé), **ne pas écrire dedans**. Solutions :
+
+- **Double/triple buffering** : avoir N copies du DS (une par frame en vol)
+- **Allocation par frame** : allouer de nouveaux DS à chaque frame, libérer les anciens quand le GPU a fini
+
+### Pré-construire les Descriptor Sets
+
+Ne pas créer de descriptor sets pendant la boucle de draw. Les construire à l'avance :
+- Au chargement du matériau
+- Quand un matériau est modifié
+
+### Trier les draws par pipeline puis par descriptor set
+
+```
+OPTIMAL :
+  Bind Pipeline A
+    Bind DS1 → Draw, Draw, Draw
+    Bind DS2 → Draw, Draw
+  Bind Pipeline B
+    Bind DS3 → Draw
+
+SOUS-OPTIMAL :
+  Bind Pipeline A, Bind DS1 → Draw
+  Bind Pipeline B, Bind DS3 → Draw     ← changement de pipeline inutile
+  Bind Pipeline A, Bind DS2 → Draw     ← re-changement
+  Bind Pipeline A, Bind DS1 → Draw     ← re-bind inutile
+```
+
+Le changement de **pipeline est coûteux** (~microseconde). Le changement de **descriptor set est quasi gratuit** (~nanosecondes).
+
+### Organiser par fréquence de changement
+
+```
+Set 0 : Per-Frame    → bindé 1 fois par frame
+Set 1 : Per-Material → bindé 1 fois par matériau
+Set 2 : Per-Object   → bindé 1 fois par objet (si push constants insuffisantes)
+```
+
+Quand on bind le Set 1, le Set 0 reste bindé (il n'est pas invalidé).
+
+---
+
+## 11. Erreurs classiques à éviter
+
+### Mettre le Descriptor Set dans la Texture
+
+```
+MAUVAIS :
+  resource::Texture {
+      renderer_texture: Arc<dyn Texture>,
+      descriptor_set: Arc<dyn DescriptorSet>,  ← NON
+  }
+
+POURQUOI : Une même texture peut apparaître dans plusieurs descriptor sets
+avec des bindings différents (binding 1 dans un DS, binding 3 dans un autre)
+ou combinée avec des ressources différentes (UBO différent, sampler différent).
+Le descriptor set n'appartient pas à la texture.
+```
+
+### Muter un buffer bindé dans un DS en cours d'utilisation
+
+```
+MAUVAIS :
+  Bind DS1 → [UBO_params, tex_albedo]
+  Draw submesh_1                          ← GPU commence à lire UBO_params
+  UBO_params.roughness = 0.8             ← DANGER : GPU lit peut-être encore l'ancienne valeur
+  Draw submesh_2                          ← données indéterminées
+
+CORRECT :
+  DS1 → [UBO_params_A(roughness=0.5), tex_albedo]
+  DS2 → [UBO_params_B(roughness=0.8), tex_albedo]
+  Bind DS1 → Draw submesh_1              ← GPU lit UBO_params_A
+  Bind DS2 → Draw submesh_2              ← GPU lit UBO_params_B (buffer séparé)
+```
+
+### Un seul gros Descriptor Set pour tout
+
+```
+MAUVAIS :
+  DS_tout = [UBO_camera, UBO_lights, UBO_material, tex_albedo, tex_normal, UBO_object]
+  → Chaque changement d'objet/matériau nécessite un nouveau DS complet
+
+CORRECT :
+  DS_frame    = [UBO_camera, UBO_lights]                    ← 1 par frame
+  DS_material = [UBO_material, tex_albedo, tex_normal]      ← 1 par matériau
+  Push constants = model_matrix                              ← par objet
+```
+
+### Allouer des Descriptor Sets dans la boucle de rendu
+
+```
+MAUVAIS :
+  for each object:
+      let ds = pool.allocate(layout)         ← allocation à chaque frame pour chaque objet
+      write_descriptor_set(ds, resources)     ← écriture à chaque frame
+      cmd.bind(ds)
+      cmd.draw()
+
+CORRECT :
+  // Au chargement :
+  for each material:
+      material.ds = pool.allocate(layout)
+      write_descriptor_set(material.ds, material.resources)
+
+  // Au rendu :
+  for each object:
+      cmd.bind(object.material.ds)           ← simple bind, pas d'allocation
+      cmd.draw()
+```
+
+---
+
+## 12. Approche des moteurs modernes
+
+### Unity
+
+Unity cache complètement les descriptor sets derrière le concept de **Material properties** :
+
+```
+Couche 1 — Utilisateur (C#) :
+  material.SetTexture("_MainTex", brickTexture);
+  material.SetFloat("_Roughness", 0.5f);
+  → L'utilisateur ne voit jamais de descriptor set, layout, binding
+
+Couche 2 — Shader Property System (C++ natif) :
+  → Chaque property a un identifiant numérique (hash du nom)
+  → Le système résout : nom → slot/binding dans le shader compilé
+  → Table de correspondance compilée à partir des #pragma et annotations
+
+Couche 3 — Backend Vulkan (C++ natif) :
+  → Hash de la combinaison {textures + UBO contents}
+  → Lookup dans un cache global de descriptor sets
+  → Si trouvé : réutilise le DS existant
+  → Si pas trouvé : alloue un nouveau DS depuis le pool, écrit les ressources, cache-le
+  → Bind le DS au moment du draw
+
+Résultat :
+  L'utilisateur manipule des "propriétés de matériau" (SetFloat, SetTexture)
+  Le backend Vulkan gère automatiquement l'allocation/cache/réutilisation des DS
+  90%+ des DS sont réutilisés frame après frame (cache hit)
+```
+
+### Unreal Engine 5
+
+UE5 pré-calcule les bindings dans un système de commandes de draw :
+
+```
+Couche 1 — Utilisateur (Blueprint/C++) :
+  Material Instance → hérite d'un Master Material
+  → Paramètres modifiables : couleur, roughness, textures
+  → L'utilisateur ne voit jamais de descriptor set
+
+Couche 2 — FMeshDrawCommand (C++) :
+  → Au moment du chargement (pas au rendu !) :
+     → Pré-compile toutes les infos de draw dans un FMeshDrawCommand
+     → Contient : pipeline state, vertex buffers, toutes les références de ressources
+  → C'est un objet immuable prêt à être soumis
+
+Couche 3 — RHI (Rendering Hardware Interface) :
+  → API abstraite (SetShaderTexture, SetShaderUniformBuffer)
+  → Accumule les appels de binding
+
+Couche 4 — FVulkanRHI (backend Vulkan) :
+  → Hash de la combinaison accumulée de ressources
+  → Cache global de descriptor sets
+  → Allocateur par pool avec reset par frame
+
+Organisation des descriptor sets UE5 :
+  Set 0 : Global      → données partagées par toute la frame
+  Set 1 : Per-Pass    → données spécifiques à une passe de rendu
+  Set 2 : Per-Material → textures et paramètres du matériau
+  Set 3 : Per-Object  → matrices de transformation, bones
+```
+
+### Points communs des moteurs modernes
+
+1. **L'utilisateur ne voit jamais les descriptor sets** — il manipule des matériaux avec des propriétés nommées
+2. **Hash + Cache** — les DS sont identifiés par un hash de leur contenu, et réutilisés si déjà existants
+3. **Organisation par fréquence** — les sets sont numérotés du moins fréquemment changé au plus fréquemment changé
+4. **Pré-construction** — les DS sont construits au chargement, pas pendant le rendu
+
+### Pourquoi cette complexité ?
+
+Cette complexité existe pour gérer des scènes avec **des milliers de matériaux** et **des dizaines de milliers d'objets**. À cette échelle :
+
+- Allouer un DS par matériau naïvement = explosion mémoire
+- Les cacher par hash = ~90% de réutilisation
+- Les trier par pipeline = moins de state changes GPU = gros gain de performance
+
+**Pour Galaxy3D** (scènes de taille modeste), cette complexité n'est pas nécessaire dans un premier temps. Une approche directe est préférable.
+
+---
+
+## 13. Stratégie Galaxy3D
+
+### Approche choisie : un DS par material × submesh
+
+Chaque submesh dans un RenderInstance possède son propre descriptor set, pré-construit :
+
+```
+RenderInstance (mesh "character")
+├── RenderSubMesh 0 (torse)
+│   ├── Pipeline : PBR_opaque
+│   └── DescriptorSet → [UBO{roughness=0.3}, tex_body, tex_normal_body]
+├── RenderSubMesh 1 (yeux)
+│   ├── Pipeline : PBR_translucent
+│   └── DescriptorSet → [UBO{roughness=0.1}, tex_eyes, tex_normal_eyes]
+└── RenderSubMesh 2 (armure)
+    ├── Pipeline : PBR_opaque
+    └── DescriptorSet → [UBO{roughness=0.9}, tex_armor, tex_normal_armor]
+```
+
+### Rendu simplifié
+
+```rust
+// Tri par pipeline pour minimiser les changements de pipeline
+let sorted_submeshes = sort_by_pipeline(scene.all_submeshes());
+
+for submesh in sorted_submeshes {
+    cmd.bind_pipeline(submesh.pipeline);              // changé seulement si différent
+    cmd.bind_descriptor_set(submesh.descriptor_set);  // quasi gratuit
+    cmd.push_constants(submesh.model_matrix);         // ultra rapide
+    cmd.draw_indexed(submesh.index_count, submesh.index_offset, 0);
+}
+```
+
+### Pourquoi cette approche
+
+| Avantage | Explication |
+|---|---|
+| **Simple** | Pas de hash, pas de cache, pas de résolution dynamique |
+| **Sûr** | Chaque draw a ses propres données, pas de race condition |
+| **Performant** | Le bind de DS est quasi gratuit, le tri par pipeline minimise les vrais coûts |
+| **Évolutif** | On peut ajouter un cache par hash plus tard si nécessaire |
+
+### Où vit le Descriptor Set ?
+
+```
+PAS dans resource::Texture     → une texture peut être dans plusieurs DS
+PAS dans resource::Pipeline    → un pipeline peut être utilisé avec plusieurs DS
+→ DANS le RenderInstance/RenderSubMesh → c'est la combinaison concrète material+pipeline+mesh
+```
+
+Le Material (quand il sera implémenté) sera responsable de **créer** le descriptor set à partir de ses textures et paramètres. Le RenderInstance **stockera** ce descriptor set pour l'utiliser au rendu.
 
 ### Ce qui existe déjà
 
 | Fonctionnalité | Status | Localisation |
 |----------------|--------|-------------|
 | Push constants | Implémenté | `cmd_push_constants()` dans CommandList |
-| Descriptor sets | Implémenté | `create_descriptor_set()` dans Renderer |
 | Buffers (vertex, index, uniform) | Implémenté | `create_buffer()` avec BufferUsage |
 | Textures | Implémenté | `create_texture()` + `resource::Texture` |
 | Pipeline avec variantes | Implémenté | `resource::Pipeline` |
@@ -661,12 +1290,244 @@ pub struct TextureSlotDesc {
 5. Material instances           → optimisation future
 ```
 
+### Évolution future
+
+Si Galaxy3D doit un jour gérer des milliers de matériaux, on pourra ajouter un cache :
+
+```
+Phase 1 (actuel)  : DS par material × submesh, construction directe
+Phase 2 (futur)   : Cache de DS par hash de contenu (comme Unity/UE5)
+Phase 3 (lointain) : Bindless textures (un seul énorme DS avec toutes les textures)
+```
+
+---
+
+## 14. Glossaire
+
+| Terme | Définition |
+|---|---|
+| **Descriptor** | Un seul binding dans un descriptor set (une texture, un buffer, etc.) |
+| **Descriptor Set** | Groupe de descriptors qui sont bindés ensemble au GPU |
+| **Descriptor Set Layout** | Blueprint décrivant la structure d'un descriptor set (types et bindings) |
+| **Descriptor Pool** | Allocateur spécialisé pour les descriptor sets |
+| **Pipeline Layout** | Ensemble de descriptor set layouts + push constant ranges, définissant l'interface complète du pipeline |
+| **Binding** | Numéro d'emplacement dans un descriptor set (correspond à `layout(binding=N)` dans le shader) |
+| **Set** | Numéro du descriptor set dans le pipeline layout (correspond à `layout(set=N)` dans le shader) |
+| **UBO** | Uniform Buffer Object — buffer de données structurées en lecture seule pour les shaders |
+| **SSBO** | Shader Storage Buffer Object — buffer lecture/écriture pour compute shaders |
+| **Combined Image Sampler** | Texture + sampler combinés en un seul descriptor |
+| **Push Constants** | Petites données (≤128 octets) écrites directement dans le command buffer, sans descriptor set |
+| **Sampler** | Objet GPU définissant comment lire une texture : filtrage, mode d'adressage, mipmapping, anisotropie. Séparé de la texture elle-même |
+| **BindingGroup** | Abstraction Galaxy3D au-dessus du Descriptor Set Vulkan, inspirée de WebGPU. Immuable après création, layout déduit du Pipeline, pool géré en interne |
+| **Anisotropie** | Filtrage améliorant la qualité des textures vues en angle rasant. Niveaux : 1x (off), 4x, 8x, 16x (max) |
+| **Filtrage bilinéaire** | Interpolation entre les 4 texels voisins (`LINEAR`). Trilinéaire = bilinéaire + interpolation entre niveaux de mipmap |
+
+---
+
+## 15. BindingGroup — abstraction Galaxy3D
+
+### 15.1 Concept et origine
+
+Le terme **Descriptor Set** est un concept Vulkan bas niveau dont le nom n'est pas particulièrement parlant. L'API **WebGPU** a introduit le concept équivalent sous le nom de **BindingGroup** (ou GPUBindGroup), qui exprime mieux la nature de l'objet : un **groupe de bindings** prêt à être attaché au pipeline.
+
+Galaxy3D adopte ce nom et cette philosophie : l'utilisateur du moteur manipule des **BindingGroup**, jamais des Descriptor Sets directement. Sous le capot, un BindingGroup **est** un `VkDescriptorSet`, mais encapsulé dans une abstraction plus ergonomique.
+
+```
+                    Utilisateur Galaxy3D
+                          │
+                    BindingGroup API
+                          │
+                 ┌────────┴────────┐
+                 │   renderer::    │
+                 │  BindingGroup   │  ← trait abstrait
+                 └────────┬────────┘
+                          │
+                 ┌────────┴────────┐
+                 │   VulkanBinding │
+                 │     Group       │  ← implémentation Vulkan
+                 │ (= VkDescriptor│
+                 │      Set)       │
+                 └─────────────────┘
+```
+
+### 15.2 Design choisi (Option B)
+
+Galaxy3D utilise le design **"vrai BindingGroup"** où le layout est déduit du Pipeline, inspiré de WebGPU :
+
+1. **Le Pipeline stocke ses layouts** — À la création du Pipeline, les `VkDescriptorSetLayout` sont créés et stockés en interne. L'utilisateur ne les voit jamais.
+
+2. **Création par le Pipeline** — Pour créer un BindingGroup, on passe par le Pipeline qui connaît le layout attendu :
+
+```
+// L'utilisateur ne manipule jamais de layout directement
+let bg = pipeline.create_binding_group(set_index, &[
+    Binding::UniformBuffer(ubo_camera),
+    Binding::CombinedImageSampler(tex_albedo, sampler_linear),
+    Binding::CombinedImageSampler(tex_normal, sampler_linear),
+]);
+```
+
+3. **Immuable après création** — Une fois créé, le BindingGroup ne peut plus être modifié. Pour changer les ressources, on en crée un nouveau. Cette contrainte élimine toute race condition GPU/CPU.
+
+4. **Pool géré en interne** — Le `VkDescriptorPool` est créé et géré par le `VulkanRenderer`. L'utilisateur n'a pas à se soucier de l'allocation, du dimensionnement, ni de la libération du pool. C'est déjà le cas dans le backend actuel (`VulkanRenderer::descriptor_pool`).
+
+### 15.3 Différences avec un Descriptor Set brut
+
+| Aspect | Descriptor Set Vulkan brut | BindingGroup Galaxy3D |
+|--------|---------------------------|----------------------|
+| **Layout** | L'utilisateur doit créer un `VkDescriptorSetLayout` explicitement | Layout déduit du Pipeline, invisible pour l'utilisateur |
+| **Pool** | L'utilisateur doit créer et dimensionner un `VkDescriptorPool` | Pool géré en interne par le renderer |
+| **Allocation** | `vkAllocateDescriptorSets` explicite | Allocation automatique à la création du BindingGroup |
+| **Écriture** | `vkUpdateDescriptorSets` séparé après allocation | Écriture en une seule étape à la construction |
+| **Mutabilité** | Modifiable via `vkUpdateDescriptorSets` (dangereux si en cours d'utilisation) | Immuable après création — sûr par design |
+| **Création** | 3 étapes : allocate → write → utilise | 1 étape : `pipeline.create_binding_group(...)` |
+| **Sous le capot** | C'est un `VkDescriptorSet` | C'est exactement un `VkDescriptorSet` — aucune différence de performance |
+
+### 15.4 Relation avec les slots de Pipeline
+
+Un Pipeline possède **plusieurs slots** (ou "tiroirs") numérotés, chacun associé à un layout :
+
+```
+Pipeline "PBR_forward"
+  ┌──────────────────────────────────┐
+  │ Slot 0 (set=0) : Layout_PerFrame │ ← caméra, lumières
+  │ Slot 1 (set=1) : Layout_Material │ ← UBO matériau + textures
+  │ Slot 2 (set=2) : Layout_PerObj   │ ← optionnel (si push constants insuffisantes)
+  └──────────────────────────────────┘
+```
+
+Chaque slot correspond au `set = N` dans le GLSL.
+
+#### Cardinalités
+
+| Relation | Cardinalité | Explication |
+|----------|-------------|-------------|
+| Slot ↔ Layout (dans un pipeline) | **1-1** | Chaque slot a exactement un layout |
+| Layout ↔ Pipelines qui l'utilisent | **1-N** | Plusieurs pipelines peuvent partager le même layout si leur structure est identique |
+| Layout ↔ BindingGroups créés depuis ce layout | **1-N** | Un layout sert de modèle pour N BindingGroups avec des ressources différentes |
+
+#### Indépendance des slots
+
+Quand on bind un BindingGroup dans le slot 1, le slot 0 **reste bindé** — il n'est pas invalidé. C'est ce qui permet l'organisation par fréquence :
+
+```
+Bind BindingGroup slot 0 (per-frame)         ← 1 fois par frame
+
+  Pour chaque matériau :
+    Bind BindingGroup slot 1 (per-material)  ← slot 0 reste bindé
+
+    Pour chaque objet :
+      Push constants (per-object)            ← slots 0 et 1 restent bindés
+      Draw
+```
+
+### 15.5 Ce qui reste en dehors du BindingGroup
+
+Les **Push Constants** sont un mécanisme **complètement séparé** des BindingGroup :
+
+| Aspect | BindingGroup | Push Constants |
+|--------|-------------|----------------|
+| **Contenu** | UBOs, textures, samplers, storage buffers | Scalaires, matrices (≤128 octets) |
+| **Mutabilité** | Immuable après création | Modifiable à chaque draw call |
+| **Mécanisme GPU** | Pointeur vers de la mémoire GPU | Données copiées directement dans le command buffer |
+| **Coût de changement** | Quasi gratuit (changement de pointeur) | Encore plus rapide (pas de pointeur, données inline) |
+| **Déclaration shader** | `layout(set=N, binding=M) uniform ...` | `layout(push_constant) uniform ...` |
+
+Les push constants ne passent **pas** par un BindingGroup. Elles sont écrites directement via `cmd_push_constants()`.
+
+#### Exemple Galaxy3D — Roughness en push constant
+
+Si un paramètre comme `roughness` doit changer à chaque draw call (par exemple pour varier entre les submeshes d'un même matériau), on peut le placer dans les push constants plutôt que dans un UBO :
+
+```glsl
+layout(push_constant) uniform PushConstants {
+    mat4 model;           // 64 octets — transformation de l'objet
+    float roughness;      // 4 octets  — rugosité per-draw
+    float metallic;       // 4 octets  — métallicité per-draw
+    uint object_id;       // 4 octets  — identifiant unique
+    // ... jusqu'à 128 octets
+};
+```
+
+Dans ce cas, le BindingGroup (per-material) contient les textures et les paramètres qui ne changent pas par draw, et les push constants contiennent les valeurs qui varient.
+
+### 15.6 API envisagée
+
+#### Création d'un BindingGroup
+
+```rust
+// Le Pipeline expose la création de BindingGroup
+// L'utilisateur ne touche jamais aux layouts ni au pool
+
+let bg_per_frame = pipeline.create_binding_group(
+    renderer,
+    0,  // set index
+    &[
+        BindingResource::UniformBuffer(ubo_camera),
+        BindingResource::UniformBuffer(ubo_lights),
+    ],
+)?;
+
+let bg_material_brick = pipeline.create_binding_group(
+    renderer,
+    1,  // set index
+    &[
+        BindingResource::UniformBuffer(ubo_brick_params),
+        BindingResource::CombinedImageSampler(tex_brick_albedo, sampler_linear_repeat),
+        BindingResource::CombinedImageSampler(tex_brick_normal, sampler_linear_repeat),
+        BindingResource::CombinedImageSampler(tex_brick_roughness, sampler_linear_repeat),
+    ],
+)?;
+```
+
+#### Utilisation au rendu
+
+```rust
+// Boucle de rendu
+cmd.bind_pipeline(&pipeline);
+cmd.bind_binding_group(0, &bg_per_frame);        // per-frame — 1 fois
+
+for material in materials_sorted {
+    cmd.bind_binding_group(1, &material.binding_group);  // per-material
+
+    for object in material.objects {
+        cmd.push_constants(&PushConstants {
+            model: object.transform,
+            roughness: object.roughness_override,
+            // ...
+        });
+        cmd.draw_indexed(object.index_count, object.index_offset, 0);
+    }
+}
+```
+
+#### Trait renderer::BindingGroup
+
+```rust
+/// A BindingGroup is an immutable set of GPU resource bindings.
+/// It maps to a VkDescriptorSet in Vulkan, but the layout and pool
+/// are managed internally by the renderer.
+pub trait BindingGroup: Send + Sync {
+    /// Returns the set index this BindingGroup was created for.
+    fn set_index(&self) -> u32;
+}
+
+/// Resources that can be bound in a BindingGroup.
+pub enum BindingResource<'a> {
+    UniformBuffer(&'a dyn Buffer),
+    CombinedImageSampler(&'a dyn Texture, &'a dyn Sampler),
+    StorageBuffer(&'a dyn Buffer),
+    // ... extensible
+}
+```
+
 ---
 
 ## Références
 
-- **Vulkan Specification** : Push Constants, Descriptor Sets, Uniform Buffers
-- **Vulkan Guide — Descriptor Sets** : organisation par fréquence de mise à jour
-- **GPU Gems 3, Chapter 2** : "Efficient Resource Management" — stratégies de binding
+- **Vulkan Specification** : Chapters 14 (Resource Descriptors), Push Constants, Uniform Buffers
+- **Vulkan Guide** : [Descriptor Sets](https://vkguide.dev/docs/chapter-4/descriptors/)
+- **WebGPU Specification** : [GPUBindGroup](https://www.w3.org/TR/webgpu/#bind-groups) — inspiration directe pour le concept BindingGroup
+- **Sascha Willems** : Vulkan descriptor set examples
 - Voir aussi : [materials_and_passes.md](materials_and_passes.md) pour l'architecture Material/Pipeline/Passes
 - Voir aussi : [rendering_techniques.md](rendering_techniques.md) pour les techniques d'optimisation du rendu

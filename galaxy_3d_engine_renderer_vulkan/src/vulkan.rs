@@ -6,10 +6,11 @@ use galaxy_3d_engine::galaxy3d::render::{
     RenderPass as RendererRenderPass, Swapchain as RendererSwapchain,
     Texture as RendererTexture, Buffer as RendererBuffer,
     Shader as RendererShader, Pipeline as RendererPipeline,
-    DescriptorSet as RendererDescriptorSet,
+    BindingGroup as RendererBindingGroup,
     Framebuffer as RendererFramebuffer, FramebufferDesc,
     RenderTargetDesc, RenderPassDesc,
     TextureDesc, TextureData, TextureInfo, BufferDesc, ShaderDesc, PipelineDesc,
+    BindingResource, BindingType, ShaderStageFlags,
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
     RendererStats, VertexInputRate,
@@ -19,7 +20,6 @@ use galaxy_3d_engine::galaxy3d::render::{
     BlendFactor, BlendOp, ColorWriteMask, SampleCount,
 };
 use ash::vk;
-use ash::vk::Handle;
 use std::sync::{Arc, Mutex};
 use std::ffi::CString;
 use std::mem::ManuallyDrop;
@@ -36,7 +36,8 @@ use crate::vulkan_command_list::CommandList;
 use crate::vulkan_render_target::RenderTarget;
 use crate::vulkan_render_pass::RenderPass;
 use crate::vulkan_swapchain::Swapchain;
-use crate::vulkan_descriptor_set::DescriptorSet;
+use crate::vulkan_sampler::SamplerCache;
+use crate::vulkan_binding_group::BindingGroup;
 use crate::vulkan_context::GpuContext;
 
 /// Vulkan device implementation
@@ -68,12 +69,10 @@ pub struct VulkanRenderer {
     submit_fences: Vec<vk::Fence>,
     current_submit_fence: usize,
 
-    /// Descriptor pool for texture sampling
+    /// Descriptor pool for binding group allocation
     descriptor_pool: vk::DescriptorPool,
-    /// Texture sampler
-    texture_sampler: vk::Sampler,
-    /// Descriptor set layout
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    /// Internal sampler cache (creates VkSampler on first use, behind Mutex for &self access)
+    sampler_cache: Mutex<SamplerCache>,
 
     /// Shared GPU context for all resources (textures, buffers)
     /// Owns device, instance, and debug messenger destruction
@@ -341,9 +340,13 @@ impl VulkanRenderer {
 
             let device_extension_names = vec![ash::khr::swapchain::NAME.as_ptr()];
 
+            let device_features = vk::PhysicalDeviceFeatures::default()
+                .sampler_anisotropy(true);
+
             let device_create_info = vk::DeviceCreateInfo::default()
                 .queue_create_infos(&queue_create_infos)
-                .enabled_extension_names(&device_extension_names);
+                .enabled_extension_names(&device_extension_names)
+                .enabled_features(&device_features);
 
             let device = Arc::new(
                 instance
@@ -387,60 +390,30 @@ impl VulkanRenderer {
                 );
             }
 
-            // Create descriptor pool for texture sampling (enough for 1000 sets)
-            let pool_size = vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 1000,
-            };
+            // Create descriptor pool for binding group allocation (supports UBO + samplers)
+            let pool_sizes = [
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    descriptor_count: 2000,
+                },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1000,
+                },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 500,
+                },
+            ];
 
             let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::default()
-                .pool_sizes(std::slice::from_ref(&pool_size))
+                .pool_sizes(&pool_sizes)
                 .max_sets(1000);
 
             let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_create_info, None)
                 .map_err(|e| {
                     engine_error!("galaxy3d::vulkan", "Failed to create descriptor pool: {:?}", e);
                     Error::InitializationFailed(format!("Failed to create descriptor pool: {:?}", e))
-                })?;
-
-            // Create texture sampler with linear filtering and repeat addressing
-            let sampler_create_info = vk::SamplerCreateInfo::default()
-                .mag_filter(vk::Filter::LINEAR)
-                .min_filter(vk::Filter::LINEAR)
-                .address_mode_u(vk::SamplerAddressMode::REPEAT)
-                .address_mode_v(vk::SamplerAddressMode::REPEAT)
-                .address_mode_w(vk::SamplerAddressMode::REPEAT)
-                .anisotropy_enable(false)
-                .max_anisotropy(1.0)
-                .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
-                .unnormalized_coordinates(false)
-                .compare_enable(false)
-                .compare_op(vk::CompareOp::ALWAYS)
-                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-                .mip_lod_bias(0.0)
-                .min_lod(0.0)
-                .max_lod(vk::LOD_CLAMP_NONE);  // Allow all mipmap levels (1000.0)
-
-            let texture_sampler = device.create_sampler(&sampler_create_info, None)
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "Failed to create texture sampler: {:?}", e);
-                    Error::InitializationFailed(format!("Failed to create sampler: {:?}", e))
-                })?;
-
-            // Create descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader
-            let sampler_binding = vk::DescriptorSetLayoutBinding::default()
-                .binding(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(1)
-                .stage_flags(vk::ShaderStageFlags::FRAGMENT);
-
-            let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo::default()
-                .bindings(std::slice::from_ref(&sampler_binding));
-
-            let descriptor_set_layout = device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "Failed to create descriptor set layout: {:?}", e);
-                    Error::InitializationFailed(format!("Failed to create descriptor set layout: {:?}", e))
                 })?;
 
             // Create upload command pool (TRANSIENT + RESET for reusable one-shot uploads)
@@ -481,8 +454,7 @@ impl VulkanRenderer {
                 submit_fences,
                 current_submit_fence: 0,
                 descriptor_pool,
-                texture_sampler,
-                descriptor_set_layout,
+                sampler_cache: Mutex::new(SamplerCache::new(Arc::clone(&gpu_context))),
                 gpu_context,
             })
         }
@@ -748,69 +720,24 @@ impl VulkanRenderer {
         )
     }
 
-    /// Get the descriptor set layout for texture sampling
-    ///
-    /// # Returns
-    ///
-    /// Get descriptor set layout (crate-private)
-    ///
-    /// The descriptor set layout with binding 0 for COMBINED_IMAGE_SAMPLER in fragment shader stage.
-    /// This is used internally for pipeline creation and descriptor set allocation.
-    #[allow(dead_code)]
-    pub(crate) fn get_descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
-        self.descriptor_set_layout
-    }
-
-    /// Get descriptor set layout as u64 for pipeline creation (public API)
-    ///
-    /// Returns the descriptor set layout handle as a u64, which can be passed to PipelineDesc.
-    /// This avoids exposing Vulkan types in the public API.
-    pub fn get_descriptor_set_layout_handle(&self) -> u64 {
-        Handle::as_raw(self.descriptor_set_layout)
-    }
-
-    /// Create a descriptor set for a texture
-    ///
-    /// Allocates a descriptor set from the pool and updates it to point to the given texture.
-    ///
-    /// # Arguments
-    ///
-    /// * `texture` - The texture to bind to the descriptor set
-    ///
-    /// # Returns
-    ///
-    /// A descriptor set that can be used in shaders to sample the texture
-    pub fn create_texture_descriptor_set(&self, texture: &Texture) -> Result<vk::DescriptorSet> {
-        unsafe {
-            // Allocate descriptor set
-            let layouts = [self.descriptor_set_layout];
-            let allocate_info = vk::DescriptorSetAllocateInfo::default()
-                .descriptor_pool(self.descriptor_pool)
-                .set_layouts(&layouts);
-
-            let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to allocate descriptor set for texture: {:?}", e))?;
-
-            let descriptor_set = descriptor_sets[0];
-
-            // Update descriptor set to point to the texture
-            let image_info = vk::DescriptorImageInfo::default()
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image_view(texture.view)
-                .sampler(self.texture_sampler);
-
-            let descriptor_write = vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(0)
-                .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(std::slice::from_ref(&image_info));
-
-            self.device.update_descriptor_sets(std::slice::from_ref(&descriptor_write), &[]);
-
-            Ok(descriptor_set)
+    /// Convert BindingType to Vulkan descriptor type
+    fn binding_type_to_vk(binding_type: BindingType) -> vk::DescriptorType {
+        match binding_type {
+            BindingType::UniformBuffer => vk::DescriptorType::UNIFORM_BUFFER,
+            BindingType::CombinedImageSampler => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            BindingType::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
         }
     }
+
+    /// Convert ShaderStageFlags to Vulkan shader stage flags
+    fn stage_flags_to_vk(flags: ShaderStageFlags) -> vk::ShaderStageFlags {
+        let mut vk_flags = vk::ShaderStageFlags::empty();
+        if flags.contains_vertex() { vk_flags |= vk::ShaderStageFlags::VERTEX; }
+        if flags.contains_fragment() { vk_flags |= vk::ShaderStageFlags::FRAGMENT; }
+        if flags.contains_compute() { vk_flags |= vk::ShaderStageFlags::COMPUTE; }
+        vk_flags
+    }
+
 }
 
 impl Renderer for VulkanRenderer {
@@ -1140,6 +1067,134 @@ impl Renderer for VulkanRenderer {
             Ok(Arc::new(RenderPass {
                 render_pass,
                 device: (*self.device).clone(),
+            }))
+        }
+    }
+
+    fn create_binding_group(
+        &self,
+        pipeline: &Arc<dyn RendererPipeline>,
+        set_index: u32,
+        resources: &[BindingResource],
+    ) -> Result<Arc<dyn RendererBindingGroup>> {
+        unsafe {
+            // Downcast pipeline to access stored descriptor set layouts
+            let vk_pipeline = pipeline.as_ref() as *const dyn RendererPipeline as *const Pipeline;
+            let vk_pipeline = &*vk_pipeline;
+
+            if set_index as usize >= vk_pipeline.descriptor_set_layouts.len() {
+                engine_bail!("galaxy3d::vulkan",
+                    "create_binding_group: set_index {} out of range (pipeline has {} layouts)",
+                    set_index, vk_pipeline.descriptor_set_layouts.len());
+            }
+
+            let ds_layout = vk_pipeline.descriptor_set_layouts[set_index as usize];
+
+            // Allocate descriptor set from pool
+            let layouts = [ds_layout];
+            let allocate_info = vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(self.descriptor_pool)
+                .set_layouts(&layouts);
+
+            let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
+                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to allocate descriptor set for binding group: {:?}", e))?;
+
+            let descriptor_set = descriptor_sets[0];
+
+            // Write resources into descriptor set
+            // We need to keep buffer_infos and image_infos alive for the duration of the write
+            let mut buffer_infos: Vec<vk::DescriptorBufferInfo> = Vec::new();
+            let mut image_infos: Vec<vk::DescriptorImageInfo> = Vec::new();
+            let mut writes: Vec<vk::WriteDescriptorSet> = Vec::new();
+
+            for (binding_index, resource) in resources.iter().enumerate() {
+                match resource {
+                    BindingResource::UniformBuffer(buffer) => {
+                        let vk_buffer = *buffer as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = &*vk_buffer;
+
+                        buffer_infos.push(
+                            vk::DescriptorBufferInfo::default()
+                                .buffer(vk_buffer.buffer)
+                                .offset(0)
+                                .range(vk::WHOLE_SIZE)
+                        );
+                    }
+                    BindingResource::SampledTexture(texture, sampler_type) => {
+                        let vk_texture = *texture as *const dyn RendererTexture as *const Texture;
+                        let vk_texture = &*vk_texture;
+                        let vk_sampler = self.sampler_cache.lock().unwrap().get(*sampler_type);
+
+                        image_infos.push(
+                            vk::DescriptorImageInfo::default()
+                                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                .image_view(vk_texture.view)
+                                .sampler(vk_sampler)
+                        );
+                    }
+                    BindingResource::StorageBuffer(buffer) => {
+                        let vk_buffer = *buffer as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = &*vk_buffer;
+
+                        buffer_infos.push(
+                            vk::DescriptorBufferInfo::default()
+                                .buffer(vk_buffer.buffer)
+                                .offset(0)
+                                .range(vk::WHOLE_SIZE)
+                        );
+                    }
+                }
+                // Track binding index for write construction
+                let _ = binding_index;
+            }
+
+            // Build write descriptor sets with correct pointers
+            let mut buffer_idx = 0usize;
+            let mut image_idx = 0usize;
+
+            for (binding_index, resource) in resources.iter().enumerate() {
+                match resource {
+                    BindingResource::UniformBuffer(_) => {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .dst_set(descriptor_set)
+                                .dst_binding(binding_index as u32)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                                .buffer_info(std::slice::from_ref(&buffer_infos[buffer_idx]))
+                        );
+                        buffer_idx += 1;
+                    }
+                    BindingResource::SampledTexture(_, _) => {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .dst_set(descriptor_set)
+                                .dst_binding(binding_index as u32)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .image_info(std::slice::from_ref(&image_infos[image_idx]))
+                        );
+                        image_idx += 1;
+                    }
+                    BindingResource::StorageBuffer(_) => {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .dst_set(descriptor_set)
+                                .dst_binding(binding_index as u32)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                                .buffer_info(std::slice::from_ref(&buffer_infos[buffer_idx]))
+                        );
+                        buffer_idx += 1;
+                    }
+                }
+            }
+
+            self.device.update_descriptor_sets(&writes, &[]);
+
+            Ok(Arc::new(BindingGroup {
+                descriptor_set,
+                set_index,
             }))
         }
     }
@@ -2096,11 +2151,28 @@ impl Renderer for VulkanRenderer {
                 })
                 .collect();
 
-            // Convert u64 descriptor set layouts back to vk::DescriptorSetLayout
-            let descriptor_set_layouts: Vec<vk::DescriptorSetLayout> = desc.descriptor_set_layouts
-                .iter()
-                .map(|&layout| vk::DescriptorSetLayout::from_raw(layout))
-                .collect();
+            // Create VkDescriptorSetLayouts from abstract BindingGroupLayoutDescs
+            let mut descriptor_set_layouts: Vec<vk::DescriptorSetLayout> = Vec::new();
+            for bg_layout_desc in &desc.binding_group_layouts {
+                let bindings: Vec<vk::DescriptorSetLayoutBinding> = bg_layout_desc.entries
+                    .iter()
+                    .map(|entry| {
+                        vk::DescriptorSetLayoutBinding::default()
+                            .binding(entry.binding)
+                            .descriptor_type(Self::binding_type_to_vk(entry.binding_type))
+                            .descriptor_count(entry.count)
+                            .stage_flags(Self::stage_flags_to_vk(entry.stage_flags))
+                    })
+                    .collect();
+
+                let layout_create = vk::DescriptorSetLayoutCreateInfo::default()
+                    .bindings(&bindings);
+
+                let ds_layout = self.device.create_descriptor_set_layout(&layout_create, None)
+                    .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create descriptor set layout: {:?}", e))?;
+
+                descriptor_set_layouts.push(ds_layout);
+            }
 
             let mut layout_create_info = vk::PipelineLayoutCreateInfo::default();
 
@@ -2147,6 +2219,7 @@ impl Renderer for VulkanRenderer {
             Ok(Arc::new(Pipeline {
                 pipeline,
                 pipeline_layout: layout,
+                descriptor_set_layouts,
                 device: (*self.device).clone(),
             }))
         }
@@ -2191,53 +2264,6 @@ impl Renderer for VulkanRenderer {
 
             Ok(())
         }
-    }
-
-    fn create_descriptor_set_for_texture(
-        &self,
-        texture: &Arc<dyn RendererTexture>,
-    ) -> Result<Arc<dyn RendererDescriptorSet>> {
-        // Downcast to Texture internally (not in demo)
-        let vk_texture = texture.as_ref() as *const dyn RendererTexture as *const Texture;
-        let vk_texture = unsafe { &*vk_texture };
-
-        unsafe {
-            // Allocate descriptor set from pool
-            let layouts = [self.descriptor_set_layout];
-            let allocate_info = vk::DescriptorSetAllocateInfo::default()
-                .descriptor_pool(self.descriptor_pool)
-                .set_layouts(&layouts);
-
-            let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to allocate descriptor set for texture (trait): {:?}", e))?;
-
-            let descriptor_set = descriptor_sets[0];
-
-            // Update descriptor set to point to the texture
-            let image_info = vk::DescriptorImageInfo::default()
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image_view(vk_texture.view)
-                .sampler(self.texture_sampler);
-
-            let descriptor_write = vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(0)
-                .dst_array_element(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(std::slice::from_ref(&image_info));
-
-            self.device.update_descriptor_sets(std::slice::from_ref(&descriptor_write), &[]);
-
-            // Wrap in abstract type
-            Ok(Arc::new(DescriptorSet {
-                descriptor_set,
-                device: (*self.device).clone(),
-            }))
-        }
-    }
-
-    fn get_descriptor_set_layout_handle(&self) -> u64 {
-        Handle::as_raw(self.descriptor_set_layout)
     }
 
     fn submit_with_swapchain(
@@ -2323,21 +2349,18 @@ impl Drop for VulkanRenderer {
             // Wait for device to finish
             self.device.device_wait_idle().ok();
 
-            // Destroy submit fences
+            // 1. Shutdown sampler cache: destroy VkSamplers + release Arc<GpuContext>
+            //    Must happen first while device is alive.
+            //    After this, self.gpu_context is the sole Arc<GpuContext> owner.
+            self.sampler_cache.get_mut().unwrap().shutdown();
+
+            // 2. Destroy VulkanRenderer-owned Vulkan objects
             for &fence in &self.submit_fences {
                 self.device.destroy_fence(fence, None);
             }
-
-            // Destroy descriptor set layout
-            self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-
-            // Destroy texture sampler
-            self.device.destroy_sampler(self.texture_sampler, None);
-
-            // Destroy descriptor pool
             self.device.destroy_descriptor_pool(self.descriptor_pool, None);
 
-            // Destroy upload command pool from GpuContext
+            // 3. Destroy upload command pool from GpuContext
             {
                 let mut pool = self.gpu_context.upload_command_pool.lock().unwrap();
                 if *pool != vk::CommandPool::null() {
@@ -2346,14 +2369,25 @@ impl Drop for VulkanRenderer {
                 }
             }
 
-            // Drop allocator explicitly BEFORE destroying device
+            // 4. Drop allocator: free VkDeviceMemory pages BEFORE destroying device.
+            //    First drop VulkanRenderer's Arc, then GpuContext's ManuallyDrop Arc.
             ManuallyDrop::drop(&mut self.allocator);
+            if let Some(ctx) = Arc::get_mut(&mut self.gpu_context) {
+                ManuallyDrop::drop(&mut ctx.allocator);
+            }
 
-            // Cleanup debug config to prevent callbacks during device destruction
+            // 5. Cleanup debug config to prevent callbacks during destruction
             crate::debug::cleanup_debug_config();
 
-            // Destroy device and instance directly (not via GpuContext::drop)
-            // This avoids potential issues with drop ordering and callback exceptions on Windows
+            // 6. Destroy debug messenger BEFORE device and instance
+            if let (Some(debug_utils), Some(messenger)) = (
+                &self.gpu_context.debug_utils_loader,
+                &self.gpu_context.debug_messenger,
+            ) {
+                debug_utils.destroy_debug_utils_messenger(*messenger, None);
+            }
+
+            // 7. Destroy device and instance
             self.device.destroy_device(None);
             self._instance.destroy_instance(None);
         }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::error::Result;
 use crate::renderer::{
     RenderPass, Framebuffer, Pipeline, Buffer,
-    DescriptorSet, IndexType, ShaderStage,
+    BindingGroup, IndexType, ShaderStage,
 };
 
 /// Command list for recording rendering commands
@@ -55,19 +55,21 @@ pub trait CommandList: Send + Sync {
     /// * `pipeline` - Pipeline to bind
     fn bind_pipeline(&mut self, pipeline: &Arc<dyn Pipeline>) -> Result<()>;
 
-    /// Bind descriptor sets (for textures, uniform buffers, etc.)
+    /// Bind a binding group to a pipeline slot
     ///
-    /// Descriptor sets group together resources that shaders can access.
-    /// This method binds descriptor sets to the currently bound pipeline.
+    /// Binding groups are immutable sets of GPU resource bindings (textures, buffers, samplers).
+    /// This method binds a binding group at the given set index.
     ///
     /// # Arguments
     ///
-    /// * `pipeline` - Pipeline to bind descriptor sets to (needed to extract pipeline layout)
-    /// * `descriptor_sets` - Slice of descriptor sets to bind
-    fn bind_descriptor_sets(
+    /// * `pipeline` - Pipeline to bind the group to (needed to extract pipeline layout)
+    /// * `set_index` - Set index (0 = per-frame, 1 = per-material, etc.)
+    /// * `binding_group` - The binding group to bind
+    fn bind_binding_group(
         &mut self,
         pipeline: &Arc<dyn Pipeline>,
-        descriptor_sets: &[&Arc<dyn DescriptorSet>],
+        set_index: u32,
+        binding_group: &Arc<dyn BindingGroup>,
     ) -> Result<()>;
 
     /// Push constants to the pipeline

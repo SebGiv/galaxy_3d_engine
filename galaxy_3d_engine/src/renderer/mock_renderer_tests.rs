@@ -6,7 +6,7 @@
 use crate::renderer::mock_renderer::*;
 use crate::renderer::{
     Renderer, Buffer, Texture, Pipeline, CommandList,
-    RenderPass, RenderTarget, Swapchain, DescriptorSet, Framebuffer,
+    RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
     BufferDesc, BufferUsage, TextureDesc, TextureFormat,
     TextureUsage, MipmapMode, ShaderDesc, ShaderStage, PipelineDesc,
     RenderPassDesc, RenderTargetDesc, FramebufferDesc,
@@ -148,15 +148,14 @@ fn test_mock_command_list_bind_buffers() {
 }
 
 #[test]
-fn test_mock_command_list_bind_descriptor_sets() {
+fn test_mock_command_list_bind_binding_group() {
     let mut cmd_list = MockCommandList::new();
     let pipeline: Arc<dyn Pipeline> = Arc::new(MockPipeline::new("test".to_string()));
-    let descriptor_set: Arc<dyn DescriptorSet> = Arc::new(MockDescriptorSet::new("desc".to_string()));
-    let sets = vec![&descriptor_set];
+    let binding_group: Arc<dyn BindingGroup> = Arc::new(MockBindingGroup::new("bg".to_string(), 0));
 
-    cmd_list.bind_descriptor_sets(&pipeline, &sets).unwrap();
+    cmd_list.bind_binding_group(&pipeline, 0, &binding_group).unwrap();
     assert_eq!(cmd_list.commands.len(), 1);
-    assert_eq!(cmd_list.commands[0], "bind_descriptor_sets");
+    assert_eq!(cmd_list.commands[0], "bind_binding_group");
 }
 
 #[test]
@@ -317,13 +316,21 @@ fn test_mock_swapchain_recreate() {
 }
 
 // ============================================================================
-// MockDescriptorSet Tests
+// MockBindingGroup Tests
 // ============================================================================
 
 #[test]
-fn test_mock_descriptor_set_creation() {
-    let descriptor_set = MockDescriptorSet::new("test_desc".to_string());
-    assert_eq!(descriptor_set.name, "test_desc");
+fn test_mock_binding_group_creation() {
+    let binding_group = MockBindingGroup::new("test_bg".to_string(), 1);
+    assert_eq!(binding_group.name, "test_bg");
+    assert_eq!(binding_group.set_index, 1);
+}
+
+#[test]
+fn test_mock_binding_group_trait() {
+    let binding_group = MockBindingGroup::new("bg".to_string(), 2);
+    let bg: &dyn BindingGroup = &binding_group;
+    assert_eq!(bg.set_index(), 2);
 }
 
 // ============================================================================
@@ -442,7 +449,7 @@ fn test_mock_renderer_create_pipeline() {
         vertex_layout,
         topology: PrimitiveTopology::TriangleList,
         push_constant_ranges: vec![],
-        descriptor_set_layouts: vec![],
+        binding_group_layouts: vec![],
         rasterization: Default::default(),
         depth_stencil: Default::default(),
         color_blend: Default::default(),
@@ -609,23 +616,6 @@ fn test_mock_renderer_submit_with_swapchain() {
     let commands: Vec<&dyn CommandList> = vec![&cmd_list];
     let result = renderer.submit_with_swapchain(&commands, &swapchain, 0);
     assert!(result.is_ok());
-}
-
-#[test]
-fn test_mock_renderer_create_descriptor_set_for_texture() {
-    let renderer = MockRenderer::new();
-    let texture: Arc<dyn Texture> = Arc::new(MockTexture::new(256, 256, 1, "tex".to_string()));
-
-    let _descriptor_set = renderer.create_descriptor_set_for_texture(&texture).unwrap();
-    // DescriptorSet has no methods to verify
-}
-
-#[test]
-fn test_mock_renderer_get_descriptor_set_layout_handle() {
-    let renderer = MockRenderer::new();
-
-    let handle = renderer.get_descriptor_set_layout_handle();
-    assert_eq!(handle, 0xDEADBEEF);
 }
 
 #[test]

@@ -12,7 +12,6 @@ use crate::engine_err;
 use crate::renderer::{
     Buffer,
     Pipeline as RendererPipeline,
-    DescriptorSet,
     PrimitiveTopology,
 };
 use crate::resource::material::ParamValue;
@@ -71,8 +70,6 @@ pub struct RenderSubMesh {
     topology: PrimitiveTopology,
     /// Renderer pipelines, one per pass of the selected variant
     passes: Vec<Arc<dyn RendererPipeline>>,
-    /// Descriptor sets for texture binding in shaders
-    descriptor_sets: Vec<Arc<dyn DescriptorSet>>,
     /// Material parameters for push constants
     params: Vec<(String, ParamValue)>,
 }
@@ -179,17 +176,6 @@ impl RenderInstance {
                     passes.push(Arc::clone(pass.renderer_pipeline()));
                 }
 
-                // Extract descriptor sets from texture slots
-                let mut descriptor_sets = Vec::with_capacity(
-                    material.texture_slot_count()
-                );
-                for tex_idx in 0..material.texture_slot_count() {
-                    let slot = material.texture_slot_at(tex_idx)
-                        .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
-                            "Texture slot index {} out of range", tex_idx))?;
-                    descriptor_sets.push(Arc::clone(slot.texture().descriptor_set()));
-                }
-
                 // Clone material parameters
                 let mut params = Vec::with_capacity(material.param_count());
                 for p_idx in 0..material.param_count() {
@@ -205,7 +191,6 @@ impl RenderInstance {
                     index_count: geom_submesh.index_count(),
                     topology: geom_submesh.topology(),
                     passes,
-                    descriptor_sets,
                     params,
                 });
             }
@@ -336,11 +321,6 @@ impl RenderSubMesh {
     /// Get pipeline passes
     pub fn passes(&self) -> &[Arc<dyn RendererPipeline>] {
         &self.passes
-    }
-
-    /// Get descriptor sets
-    pub fn descriptor_sets(&self) -> &[Arc<dyn DescriptorSet>] {
-        &self.descriptor_sets
     }
 
     /// Get material parameters

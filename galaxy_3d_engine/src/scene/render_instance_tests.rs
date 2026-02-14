@@ -140,7 +140,7 @@ fn create_render_pipeline_desc() -> crate::renderer::PipelineDesc {
         vertex_layout: create_vertex_layout(),
         topology: PrimitiveTopology::TriangleList,
         push_constant_ranges: vec![],
-        descriptor_set_layouts: vec![],
+        binding_group_layouts: vec![],
         rasterization: Default::default(),
         depth_stencil: Default::default(),
         color_blend: Default::default(),
@@ -521,24 +521,6 @@ fn test_from_mesh_extracts_params() {
 }
 
 #[test]
-fn test_from_mesh_extracts_descriptor_sets() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_test_texture(renderer.clone());
-    let material = create_test_material_with_texture(&pipeline, &texture);
-    let mesh = create_simple_mesh(&geometry, &material);
-
-    let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
-    ).unwrap();
-
-    // Material has 1 texture slot → 1 descriptor set
-    let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.descriptor_sets().len(), 1);
-}
-
-#[test]
 fn test_from_mesh_material_with_multiple_params() {
     let renderer = create_mock_renderer();
     let geometry = create_test_geometry(renderer.clone());
@@ -813,9 +795,6 @@ fn test_render_submesh_all_accessors() {
 
     // Pipeline passes
     assert_eq!(sm.passes().len(), 1);
-
-    // Descriptor sets
-    assert_eq!(sm.descriptor_sets().len(), 1);
 
     // Params
     assert_eq!(sm.params().len(), 2);

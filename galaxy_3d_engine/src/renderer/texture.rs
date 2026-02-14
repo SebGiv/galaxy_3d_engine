@@ -265,6 +265,34 @@ pub trait Texture: Send + Sync {
     }
 }
 
+// ===== SAMPLER TYPE =====
+
+/// Predefined sampler configurations
+///
+/// Describes HOW a texture is sampled by the GPU (filtering, addressing, mipmapping).
+/// The backend creates and caches the actual GPU sampler objects internally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SamplerType {
+    /// Bilinear filtering, repeat addressing, trilinear mipmapping, anisotropy x16
+    /// Best for: most 3D textures (diffuse, normal, etc.)
+    LinearRepeat,
+    /// Bilinear filtering, clamp-to-edge, trilinear mipmapping, anisotropy x16
+    /// Best for: UI, post-processing, environment maps
+    LinearClamp,
+    /// Nearest-neighbor filtering, repeat addressing, no anisotropy
+    /// Best for: pixel art, voxel textures, data textures
+    NearestRepeat,
+    /// Nearest-neighbor filtering, clamp-to-edge, no anisotropy
+    /// Best for: lookup tables, noise textures
+    NearestClamp,
+    /// Depth comparison sampler (linear, clamp-to-border white)
+    /// Best for: shadow mapping
+    Shadow,
+    /// Trilinear with max anisotropy, repeat addressing
+    /// Best for: high-quality 3D textures at oblique angles
+    Anisotropic,
+}
+
 #[cfg(test)]
 #[path = "texture_tests.rs"]
 mod tests;

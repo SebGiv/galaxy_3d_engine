@@ -12,7 +12,7 @@ pub mod command_list;
 pub mod render_target;
 pub mod render_pass;
 pub mod swapchain;
-pub mod descriptor_set;
+pub mod binding_group;
 pub mod frame_buffer;
 
 // Re-export everything from renderer.rs
@@ -29,7 +29,7 @@ pub use command_list::*;
 pub use render_target::*;
 pub use render_pass::*;
 pub use swapchain::*;
-pub use descriptor_set::*;
+pub use binding_group::*;
 pub use frame_buffer::*;
 
 // Mock renderer for tests (no GPU required)

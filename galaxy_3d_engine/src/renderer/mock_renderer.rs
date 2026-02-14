@@ -11,8 +11,9 @@ use winit::window::Window;
 #[cfg(test)]
 use crate::renderer::{
     Renderer, Buffer, Texture, Shader, Pipeline, CommandList,
-    RenderPass, RenderTarget, Swapchain, DescriptorSet, Framebuffer,
+    RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
     BufferDesc, TextureDesc, ShaderDesc, ShaderStage, PipelineDesc,
+    BindingResource,
     RenderPassDesc, RenderTargetDesc, FramebufferDesc, Viewport, Rect2D,
     ClearValue, IndexType, TextureInfo, TextureUsage,
 };
@@ -119,7 +120,9 @@ impl MockPipeline {
 }
 
 #[cfg(test)]
-impl Pipeline for MockPipeline {}
+impl Pipeline for MockPipeline {
+    fn binding_group_layout_count(&self) -> u32 { 0 }
+}
 
 // ============================================================================
 // Mock CommandList
@@ -180,12 +183,13 @@ impl CommandList for MockCommandList {
         Ok(())
     }
 
-    fn bind_descriptor_sets(
+    fn bind_binding_group(
         &mut self,
         _pipeline: &Arc<dyn Pipeline>,
-        _descriptor_sets: &[&Arc<dyn DescriptorSet>],
+        _set_index: u32,
+        _binding_group: &Arc<dyn BindingGroup>,
     ) -> Result<()> {
-        self.commands.push("bind_descriptor_sets".to_string());
+        self.commands.push("bind_binding_group".to_string());
         Ok(())
     }
 
@@ -344,24 +348,27 @@ impl Swapchain for MockSwapchain {
 }
 
 // ============================================================================
-// Mock DescriptorSet
+// Mock BindingGroup
 // ============================================================================
 
 #[cfg(test)]
 #[derive(Debug)]
-pub struct MockDescriptorSet {
+pub struct MockBindingGroup {
     pub name: String,
+    pub set_index: u32,
 }
 
 #[cfg(test)]
-impl MockDescriptorSet {
-    pub fn new(name: String) -> Self {
-        Self { name }
+impl MockBindingGroup {
+    pub fn new(name: String, set_index: u32) -> Self {
+        Self { name, set_index }
     }
 }
 
 #[cfg(test)]
-impl DescriptorSet for MockDescriptorSet {}
+impl BindingGroup for MockBindingGroup {
+    fn set_index(&self) -> u32 { self.set_index }
+}
 
 // ============================================================================
 // Mock Renderer
@@ -488,6 +495,18 @@ impl Renderer for MockRenderer {
         Ok(Arc::new(MockRenderPass::new()))
     }
 
+    fn create_binding_group(
+        &self,
+        _pipeline: &Arc<dyn Pipeline>,
+        set_index: u32,
+        _resources: &[BindingResource],
+    ) -> Result<Arc<dyn BindingGroup>> {
+        Ok(Arc::new(MockBindingGroup::new(
+            format!("binding_group_set{}", set_index),
+            set_index,
+        )))
+    }
+
     fn create_swapchain(&self, _window: &Window) -> Result<Box<dyn Swapchain>> {
         Ok(Box::new(MockSwapchain::new(3)))
     }
@@ -503,17 +522,6 @@ impl Renderer for MockRenderer {
         _image_index: u32,
     ) -> Result<()> {
         Ok(())
-    }
-
-    fn create_descriptor_set_for_texture(
-        &self,
-        _texture: &Arc<dyn Texture>,
-    ) -> Result<Arc<dyn DescriptorSet>> {
-        Ok(Arc::new(MockDescriptorSet::new(format!("descriptor_set_for_texture"))))
-    }
-
-    fn get_descriptor_set_layout_handle(&self) -> u64 {
-        0xDEADBEEF // Fake handle
     }
 
     fn wait_idle(&self) -> Result<()> {

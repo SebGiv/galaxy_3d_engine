@@ -78,7 +78,7 @@ fn create_variant(
                 vertex_layout: create_simple_vertex_layout(),
                 topology,
                 push_constant_ranges: vec![],
-                descriptor_set_layouts: vec![],
+                binding_group_layouts: vec![],
                 rasterization: Default::default(),
                 depth_stencil: Default::default(),
                 color_blend: ColorBlendState {

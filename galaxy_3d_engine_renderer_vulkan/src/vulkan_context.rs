@@ -41,12 +41,10 @@ pub struct GpuContext {
     instance: ash::Instance,
 
     /// Debug utils loader (for validation layers)
-    #[allow(dead_code)]
-    debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
+    pub(crate) debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
 
     /// Debug messenger handle
-    #[allow(dead_code)]
-    debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
+    pub(crate) debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
 
 impl GpuContext {

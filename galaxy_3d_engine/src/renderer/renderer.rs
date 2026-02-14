@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use winit::window::Window;
 
 use crate::renderer::{
-    Buffer, Texture, Shader, Pipeline,
+    Buffer, Texture, Shader, Pipeline, BindingGroup,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
+    BindingResource,
     CommandList, RenderPass, RenderTarget, Swapchain,
-    RenderPassDesc, RenderTargetDesc, DescriptorSet,
+    RenderPassDesc, RenderTargetDesc,
     Framebuffer, FramebufferDesc,
 };
 
@@ -307,33 +308,26 @@ pub trait Renderer: Send + Sync {
         image_index: u32,
     ) -> Result<()>;
 
-    /// Create a descriptor set for a texture
+    /// Create an immutable binding group (descriptor set) for a pipeline
     ///
-    /// Descriptor sets group together resources (textures, uniform buffers, etc.)
-    /// that shaders can access. This method creates a descriptor set specifically
-    /// for binding a single texture.
+    /// The binding group layout is deduced from the pipeline at the given set index.
+    /// The pool is managed internally by the renderer.
     ///
     /// # Arguments
     ///
-    /// * `texture` - Texture to create descriptor set for
+    /// * `pipeline` - Pipeline that defines the expected layout
+    /// * `set_index` - Set index (0 = per-frame, 1 = per-material, etc.)
+    /// * `resources` - Concrete resources to bind (must match the layout)
     ///
     /// # Returns
     ///
-    /// A shared pointer to the created descriptor set
-    fn create_descriptor_set_for_texture(
+    /// A shared pointer to the created binding group
+    fn create_binding_group(
         &self,
-        texture: &Arc<dyn Texture>,
-    ) -> Result<Arc<dyn DescriptorSet>>;
-
-    /// Get descriptor set layout handle
-    ///
-    /// Returns the descriptor set layout as a u64 handle that can be used
-    /// in pipeline creation. This avoids exposing backend-specific types.
-    ///
-    /// # Returns
-    ///
-    /// A u64 handle representing the descriptor set layout
-    fn get_descriptor_set_layout_handle(&self) -> u64;
+        pipeline: &Arc<dyn Pipeline>,
+        set_index: u32,
+        resources: &[BindingResource],
+    ) -> Result<Arc<dyn BindingGroup>>;
 
     /// Wait for all GPU operations to complete
     fn wait_idle(&self) -> Result<()>;
