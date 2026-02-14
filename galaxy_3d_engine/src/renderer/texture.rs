@@ -1,6 +1,7 @@
 /// Texture trait, texture descriptor, texture info, and mipmap types
 
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::engine_err;
 
 /// Texture format enumeration
 ///
@@ -259,9 +260,8 @@ pub trait Texture: Send + Sync {
     /// - mip_level >= mip_levels
     /// - data size doesn't match expected size for the mip level
     fn update(&self, _layer: u32, _mip_level: u32, _data: &[u8]) -> Result<()> {
-        Err(Error::BackendError(
-            "update not supported by this backend".to_string()
-        ))
+        Err(engine_err!("galaxy3d::render",
+            "update not supported by this backend"))
     }
 }
 

@@ -26,7 +26,7 @@ use std::mem::ManuallyDrop;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
-use galaxy_3d_engine::{engine_error, engine_warn, engine_bail, engine_err, engine_warn_err};
+use galaxy_3d_engine::{engine_error, engine_bail, engine_bail_warn, engine_err, engine_warn_err};
 
 use crate::vulkan_texture::Texture;
 use crate::vulkan_buffer::Buffer;
@@ -1883,8 +1883,8 @@ impl Renderer for VulkanRenderer {
         unsafe {
             // Ensure code is properly aligned for u32
             if desc.code.len() % 4 != 0 {
-                engine_warn!("galaxy3d::vulkan", "Shader code not 4-byte aligned (size: {} bytes)", desc.code.len());
-                return Err(Error::InvalidResource("Shader code must be aligned to 4 bytes".to_string()));
+                engine_bail_warn!("galaxy3d::vulkan",
+                    "Shader code not 4-byte aligned (size: {} bytes)", desc.code.len());
             }
 
             // Convert to u32 slice for SPIR-V
