@@ -899,8 +899,8 @@ impl Renderer for VulkanRenderer {
                     })
                     .load_op(self.load_op_to_vk(color_attachment.load_op))
                     .store_op(self.store_op_to_vk(color_attachment.store_op))
-                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    .stencil_load_op(self.load_op_to_vk(color_attachment.stencil_load_op))
+                    .stencil_store_op(self.store_op_to_vk(color_attachment.stencil_store_op))
                     .initial_layout(self.image_layout_to_vk(color_attachment.initial_layout))
                     .final_layout(self.image_layout_to_vk(color_attachment.final_layout)));
 
@@ -922,8 +922,8 @@ impl Renderer for VulkanRenderer {
                     })
                     .load_op(self.load_op_to_vk(depth_attachment.load_op))
                     .store_op(self.store_op_to_vk(depth_attachment.store_op))
-                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    .stencil_load_op(self.load_op_to_vk(depth_attachment.stencil_load_op))
+                    .stencil_store_op(self.store_op_to_vk(depth_attachment.stencil_store_op))
                     .initial_layout(self.image_layout_to_vk(depth_attachment.initial_layout))
                     .final_layout(self.image_layout_to_vk(depth_attachment.final_layout)));
 

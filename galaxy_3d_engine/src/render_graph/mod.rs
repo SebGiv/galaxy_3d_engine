@@ -15,4 +15,4 @@ pub use pass_action::{PassAction, FullscreenAction, CustomAction};
 pub use render_graph::RenderGraph;
 pub use render_graph_manager::RenderGraphManager;
 pub use render_pass::RenderPass;
-pub use render_target::RenderTarget;
+pub use render_target::{RenderTarget, TargetOps};

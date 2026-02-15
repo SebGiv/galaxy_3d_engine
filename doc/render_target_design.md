@@ -581,9 +581,10 @@ graph.set_output("geometry", "screen")?;
 
 | Item | Description | Impact |
 |------|-------------|--------|
-| **Clear mode configurable** | Clear / Load / DontCare par target | Permet de superposer des rendus (UI sur game) sans effacer |
+| ~~**Clear mode configurable**~~ | ~~Clear / Load / DontCare par target~~ | **Implémenté** (2026-02-15) — `TargetOps` enum (Color / DepthStencil), per-target clear values, LoadOp/StoreOp indépendants pour depth et stencil |
 | **Multi-attachment** | Targets avec couleur + depth + stencil | Nécessaire pour le rendu 3D correct |
 | **Viewport configurable** | Viewport partiel (split-screen, minimap) | Plusieurs vues dans un même target |
+| **Resource pooling** | Pool de textures/framebuffers réutilisables au resize | Évite de recréer tout le render graph au resize — approche standard des moteurs modernes (Unreal RDG, Frostbite Frame Graph). Actuellement le graph est entièrement recréé, ce qui est acceptable tant que le nombre de passes/targets reste faible |
 
 ### Priorité basse
 

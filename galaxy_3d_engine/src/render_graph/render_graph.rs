@@ -17,7 +17,7 @@ use crate::renderer;
 use crate::resource;
 use super::pass_action::PassAction;
 use super::render_pass::RenderPass;
-use super::render_target::RenderTarget;
+use super::render_target::{RenderTarget, TargetOps};
 
 pub struct RenderGraph {
     /// Render passes (nodes) stored by index
@@ -75,6 +75,7 @@ impl RenderGraph {
     ///
     /// References a resource texture at a specific array layer and mip level.
     /// The GPU render target view is created immediately from the texture.
+    /// Load/store/clear ops are auto-detected from the texture usage.
     ///
     /// Returns the index of the newly added target.
     ///
@@ -215,6 +216,196 @@ impl RenderGraph {
         Ok(())
     }
 
+    // ===== TARGET OPS (PER-TARGET CLEAR/LOAD/STORE) =====
+
+    /// Set the clear color for a color target (RGBA)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a color target.
+    pub fn set_clear_color(&mut self, target_id: usize, color: [f32; 4]) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::Color { clear_color, .. } => {
+                *clear_color = color;
+                Ok(())
+            }
+            TargetOps::DepthStencil { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a depth/stencil target, not a color target", target_id);
+            }
+        }
+    }
+
+    /// Set the load operation for a color target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a color target.
+    pub fn set_color_load_op(&mut self, target_id: usize, op: renderer::LoadOp) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::Color { load_op, .. } => {
+                *load_op = op;
+                Ok(())
+            }
+            TargetOps::DepthStencil { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a depth/stencil target, not a color target", target_id);
+            }
+        }
+    }
+
+    /// Set the store operation for a color target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a color target.
+    pub fn set_color_store_op(&mut self, target_id: usize, op: renderer::StoreOp) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::Color { store_op, .. } => {
+                *store_op = op;
+                Ok(())
+            }
+            TargetOps::DepthStencil { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a depth/stencil target, not a color target", target_id);
+            }
+        }
+    }
+
+    /// Set the depth clear value for a depth/stencil target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a depth/stencil target.
+    pub fn set_depth_clear(&mut self, target_id: usize, depth: f32) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::DepthStencil { depth_clear, .. } => {
+                *depth_clear = depth;
+                Ok(())
+            }
+            TargetOps::Color { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a color target, not a depth/stencil target", target_id);
+            }
+        }
+    }
+
+    /// Set the stencil clear value for a depth/stencil target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a depth/stencil target.
+    pub fn set_stencil_clear(&mut self, target_id: usize, stencil: u32) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::DepthStencil { stencil_clear, .. } => {
+                *stencil_clear = stencil;
+                Ok(())
+            }
+            TargetOps::Color { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a color target, not a depth/stencil target", target_id);
+            }
+        }
+    }
+
+    /// Set the depth load operation for a depth/stencil target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a depth/stencil target.
+    pub fn set_depth_load_op(&mut self, target_id: usize, op: renderer::LoadOp) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::DepthStencil { depth_load_op, .. } => {
+                *depth_load_op = op;
+                Ok(())
+            }
+            TargetOps::Color { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a color target, not a depth/stencil target", target_id);
+            }
+        }
+    }
+
+    /// Set the depth store operation for a depth/stencil target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a depth/stencil target.
+    pub fn set_depth_store_op(&mut self, target_id: usize, op: renderer::StoreOp) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::DepthStencil { depth_store_op, .. } => {
+                *depth_store_op = op;
+                Ok(())
+            }
+            TargetOps::Color { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a color target, not a depth/stencil target", target_id);
+            }
+        }
+    }
+
+    /// Set the stencil load operation for a depth/stencil target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a depth/stencil target.
+    pub fn set_stencil_load_op(&mut self, target_id: usize, op: renderer::LoadOp) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::DepthStencil { stencil_load_op, .. } => {
+                *stencil_load_op = op;
+                Ok(())
+            }
+            TargetOps::Color { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a color target, not a depth/stencil target", target_id);
+            }
+        }
+    }
+
+    /// Set the stencil store operation for a depth/stencil target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target index is out of bounds or if the
+    /// target is not a depth/stencil target.
+    pub fn set_stencil_store_op(&mut self, target_id: usize, op: renderer::StoreOp) -> Result<()> {
+        let target = self.target_mut(target_id)?;
+        match target.ops_mut() {
+            TargetOps::DepthStencil { stencil_store_op, .. } => {
+                *stencil_store_op = op;
+                Ok(())
+            }
+            TargetOps::Color { .. } => {
+                engine_bail!("galaxy3d::RenderGraph",
+                    "Target {} is a color target, not a depth/stencil target", target_id);
+            }
+        }
+    }
+
+    /// Get a mutable reference to a target by index (internal helper)
+    fn target_mut(&mut self, target_id: usize) -> Result<&mut RenderTarget> {
+        let target_count = self.targets.len();
+        self.targets.get_mut(target_id)
+            .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
+                "RenderTarget index {} out of bounds (count: {})", target_id, target_count))
+    }
+
     // ===== COMPILE =====
 
     /// Resolve the graph: topological sort, GPU render passes, framebuffers,
@@ -263,7 +454,6 @@ impl RenderGraph {
             for &target_id in &outputs {
                 let target = &self.targets[target_id];
                 let rt = target.renderer_render_target().clone();
-                let usage = target.texture().renderer_texture().info().usage;
 
                 // Use dimensions from the first output target
                 if fb_width == 0 {
@@ -271,28 +461,35 @@ impl RenderGraph {
                     fb_height = rt.height();
                 }
 
-                match usage {
-                    renderer::TextureUsage::DepthStencil => {
-                        depth_attachment_desc = Some(renderer::AttachmentDesc {
-                            format: rt.format(),
-                            samples: 1,
-                            load_op: renderer::LoadOp::Clear,
-                            store_op: renderer::StoreOp::DontCare,
-                            initial_layout: renderer::ImageLayout::Undefined,
-                            final_layout: renderer::ImageLayout::DepthStencilAttachment,
-                        });
-                        depth_target = Some(rt);
-                    }
-                    _ => {
+                match target.ops() {
+                    TargetOps::Color { load_op, store_op, .. } => {
                         color_attachment_descs.push(renderer::AttachmentDesc {
                             format: rt.format(),
                             samples: 1,
-                            load_op: renderer::LoadOp::Clear,
-                            store_op: renderer::StoreOp::Store,
+                            load_op: *load_op,
+                            store_op: *store_op,
+                            stencil_load_op: renderer::LoadOp::DontCare,
+                            stencil_store_op: renderer::StoreOp::DontCare,
                             initial_layout: renderer::ImageLayout::Undefined,
                             final_layout: renderer::ImageLayout::ColorAttachment,
                         });
                         color_targets.push(rt);
+                    }
+                    TargetOps::DepthStencil {
+                        depth_load_op, depth_store_op,
+                        stencil_load_op, stencil_store_op, ..
+                    } => {
+                        depth_attachment_desc = Some(renderer::AttachmentDesc {
+                            format: rt.format(),
+                            samples: 1,
+                            load_op: *depth_load_op,
+                            store_op: *depth_store_op,
+                            stencil_load_op: *stencil_load_op,
+                            stencil_store_op: *stencil_store_op,
+                            initial_layout: renderer::ImageLayout::Undefined,
+                            final_layout: renderer::ImageLayout::DepthStencilAttachment,
+                        });
+                        depth_target = Some(rt);
                     }
                 }
             }
@@ -424,7 +621,7 @@ impl RenderGraph {
                     "Pass {} has no renderer framebuffer (not compiled?)", pass_idx))?
                 .clone();
 
-            // Build clear values: color attachments first, then depth
+            // Build clear values from per-target ops
             let clear_values = self.build_clear_values(pass_idx);
 
             self.command_lists[frame].begin_render_pass(&rp, &fb, &clear_values)?;
@@ -458,26 +655,27 @@ impl RenderGraph {
         Ok(&*self.command_lists[self.current_frame])
     }
 
-    /// Build clear values for a pass based on its output targets
+    /// Build clear values for a pass based on its output targets' ops.
     ///
-    /// Color attachments first (matching compile() order), then depth.
+    /// Color attachments first (matching compile() order), then depth/stencil.
     fn build_clear_values(&self, pass_idx: usize) -> Vec<renderer::ClearValue> {
         let pass = &self.passes[pass_idx];
         let mut clear_values = Vec::new();
 
         // Color attachments first
         for &target_id in pass.outputs() {
-            let usage = self.targets[target_id].texture().renderer_texture().info().usage;
-            if usage != renderer::TextureUsage::DepthStencil {
-                clear_values.push(renderer::ClearValue::Color([0.0, 0.0, 0.0, 1.0]));
+            if let TargetOps::Color { clear_color, .. } = self.targets[target_id].ops() {
+                clear_values.push(renderer::ClearValue::Color(*clear_color));
             }
         }
 
-        // Depth attachment last
+        // Depth/stencil attachment last
         for &target_id in pass.outputs() {
-            let usage = self.targets[target_id].texture().renderer_texture().info().usage;
-            if usage == renderer::TextureUsage::DepthStencil {
-                clear_values.push(renderer::ClearValue::DepthStencil { depth: 1.0, stencil: 0 });
+            if let TargetOps::DepthStencil { depth_clear, stencil_clear, .. } = self.targets[target_id].ops() {
+                clear_values.push(renderer::ClearValue::DepthStencil {
+                    depth: *depth_clear,
+                    stencil: *stencil_clear,
+                });
             }
         }
 
