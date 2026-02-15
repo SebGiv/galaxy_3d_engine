@@ -9,7 +9,7 @@ use crate::renderer::{
     RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
     BufferDesc, BufferUsage, TextureDesc, TextureFormat,
     TextureUsage, MipmapMode, ShaderDesc, ShaderStage, PipelineDesc,
-    RenderPassDesc, RenderTargetDesc, FramebufferDesc,
+    RenderPassDesc, FramebufferDesc,
     Viewport, Rect2D, ClearValue,
     IndexType, VertexLayout, VertexBinding, VertexAttribute,
     BufferFormat, VertexInputRate, PrimitiveTopology,
@@ -283,10 +283,8 @@ fn test_mock_swapchain_creation() {
 fn test_mock_swapchain_acquire_next_image() {
     let mut swapchain = MockSwapchain::new(3);
 
-    let (index, render_target) = swapchain.acquire_next_image().unwrap();
+    let index = swapchain.acquire_next_image().unwrap();
     assert_eq!(index, 0);
-    assert_eq!(render_target.width(), 800);
-    assert_eq!(render_target.height(), 600);
 }
 
 #[test]
@@ -469,23 +467,6 @@ fn test_mock_renderer_create_command_list() {
 
     let _cmd_list = renderer.create_command_list().unwrap();
     // CommandList is a boxed trait, can't easily inspect its contents
-}
-
-#[test]
-fn test_mock_renderer_create_render_target() {
-    let renderer = MockRenderer::new();
-
-    let desc = RenderTargetDesc {
-        width: 1024,
-        height: 768,
-        format: TextureFormat::R8G8B8A8_UNORM,
-        samples: 1,
-        usage: TextureUsage::RenderTarget,
-    };
-
-    let render_target: Arc<dyn RenderTarget> = renderer.create_render_target(&desc).unwrap();
-    assert_eq!(render_target.width(), 1024);
-    assert_eq!(render_target.height(), 768);
 }
 
 #[test]

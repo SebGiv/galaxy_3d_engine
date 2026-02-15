@@ -1,7 +1,7 @@
 /// BindingGroup trait and binding group descriptor
 ///
 /// A BindingGroup is an immutable set of GPU resource bindings (textures, buffers, samplers).
-/// It is Galaxy3D's abstraction over Vulkan Descriptor Sets, inspired by WebGPU's GPUBindGroup.
+/// It is Galaxy3D's abstraction over GPU descriptor sets, inspired by WebGPU's GPUBindGroup.
 ///
 /// Key properties:
 /// - Immutable after creation (no race conditions)
@@ -70,7 +70,7 @@ pub struct BindingSlotDesc {
 
 /// Description of a BindingGroup layout (blueprint for a set of bindings)
 ///
-/// This replaces raw `VkDescriptorSetLayout` handles in the abstract renderer layer.
+/// This replaces raw descriptor set layout handles in the abstract renderer layer.
 /// The backend creates the actual GPU layout object from this description.
 #[derive(Debug, Clone)]
 pub struct BindingGroupLayoutDesc {
@@ -98,9 +98,9 @@ pub enum BindingResource<'a> {
 
 /// An immutable set of GPU resource bindings.
 ///
-/// Maps to a `VkDescriptorSet` in Vulkan, but the layout and pool
-/// are managed internally by the renderer. Once created, a BindingGroup
-/// cannot be modified — create a new one to change resources.
+/// The layout and pool are managed internally by the renderer.
+/// Once created, a BindingGroup cannot be modified — create a new one
+/// to change resources.
 pub trait BindingGroup: Send + Sync {
     /// Returns the set index this BindingGroup was created for
     fn set_index(&self) -> u32;

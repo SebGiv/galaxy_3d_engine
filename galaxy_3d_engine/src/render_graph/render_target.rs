@@ -1,53 +1,69 @@
 /// Render target edge in a render graph.
 ///
 /// High-level description of a rendering surface that connects
-/// passes in the DAG. This is a graph edge — not to be confused
-/// with `renderer::RenderTarget` which is the low-level GPU render
-/// target (image view + dimensions).
+/// passes in the DAG. References a specific view (layer + mip)
+/// of a resource::Texture, and holds the resolved GPU render target.
 ///
 /// A render target can be written by at most one pass (single writer)
 /// and read by multiple passes (multiple readers).
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use crate::error::Result;
 use crate::renderer;
 use crate::resource;
 
-/// Describes which part of a resource texture to render to
-pub struct TextureTargetView {
-    /// The resource texture to render to
-    pub texture: Arc<resource::Texture>,
-    /// Array layer index (0 for simple textures)
-    pub layer: u32,
-    /// Mip level to render to (0 for full resolution)
-    pub mip_level: u32,
-}
-
-/// What a render target points to
-pub enum RenderTargetKind {
-    /// Render to the swapchain (acquires next image at execution time)
-    Swapchain(Arc<Mutex<dyn renderer::Swapchain>>),
-    /// Render to a specific view of a resource texture
-    Texture(TextureTargetView),
-}
-
 pub struct RenderTarget {
-    /// What this target points to
-    kind: RenderTargetKind,
+    /// The resource texture this target references
+    texture: Arc<resource::Texture>,
+    /// Array layer index (0 for simple textures)
+    layer: u32,
+    /// Mip level (0 for full resolution)
+    mip_level: u32,
+    /// Resolved GPU render target (image view targeting this layer/mip)
+    renderer_render_target: Arc<dyn renderer::RenderTarget>,
     /// Pass index that writes to this target (at most one)
     written_by: Option<usize>,
 }
 
 impl RenderTarget {
-    pub(crate) fn new(kind: RenderTargetKind) -> Self {
-        Self {
-            kind,
+    pub(crate) fn new(
+        texture: Arc<resource::Texture>,
+        layer: u32,
+        mip_level: u32,
+        renderer: &dyn renderer::Renderer,
+    ) -> Result<Self> {
+        let renderer_render_target = renderer.create_render_target_texture(
+            texture.renderer_texture().as_ref(),
+            layer,
+            mip_level,
+        )?;
+        Ok(Self {
+            texture,
+            layer,
+            mip_level,
+            renderer_render_target,
             written_by: None,
-        }
+        })
     }
 
-    /// Get the kind of this render target
-    pub fn kind(&self) -> &RenderTargetKind {
-        &self.kind
+    /// Get the resource texture this target references
+    pub fn texture(&self) -> &Arc<resource::Texture> {
+        &self.texture
+    }
+
+    /// Get the array layer index
+    pub fn layer(&self) -> u32 {
+        self.layer
+    }
+
+    /// Get the mip level
+    pub fn mip_level(&self) -> u32 {
+        self.mip_level
+    }
+
+    /// Get the resolved GPU render target
+    pub fn renderer_render_target(&self) -> &Arc<dyn renderer::RenderTarget> {
+        &self.renderer_render_target
     }
 
     /// Get the pass index that writes to this target

@@ -1,6 +1,6 @@
 /// RenderTarget trait - represents a render target (texture or swapchain image)
 
-use crate::renderer::{TextureFormat, TextureUsage};
+use crate::renderer::TextureFormat;
 
 /// Render target trait
 ///
@@ -14,19 +14,4 @@ pub trait RenderTarget: Send + Sync {
 
     /// Get the pixel format of the render target
     fn format(&self) -> TextureFormat;
-}
-
-/// Descriptor for creating a render target
-#[derive(Debug, Clone)]
-pub struct RenderTargetDesc {
-    /// Width in pixels
-    pub width: u32,
-    /// Height in pixels
-    pub height: u32,
-    /// Pixel format
-    pub format: TextureFormat,
-    /// Usage flags
-    pub usage: TextureUsage,
-    /// Number of samples (1 = no MSAA, 2/4/8/etc = MSAA)
-    pub samples: u32,
 }

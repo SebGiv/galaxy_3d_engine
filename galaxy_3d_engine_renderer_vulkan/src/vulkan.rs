@@ -8,7 +8,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Shader as RendererShader, Pipeline as RendererPipeline,
     BindingGroup as RendererBindingGroup,
     Framebuffer as RendererFramebuffer, FramebufferDesc,
-    RenderTargetDesc, RenderPassDesc,
+    RenderPassDesc,
     TextureDesc, TextureData, TextureInfo, BufferDesc, ShaderDesc, PipelineDesc,
     BindingResource, BindingType, ShaderStageFlags,
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
@@ -749,112 +749,7 @@ impl Renderer for VulkanRenderer {
         Ok(Box::new(cmd_list))
     }
 
-    fn create_render_target(&self, desc: &RenderTargetDesc) -> Result<Arc<dyn RendererRenderTarget>> {
-        unsafe {
-            let format = self.format_to_vk(desc.format);
-
-            // Determine usage flags
-            let mut usage_flags = vk::ImageUsageFlags::empty();
-            match desc.usage {
-                TextureUsage::Sampled => {
-                    usage_flags |= vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
-                }
-                TextureUsage::RenderTarget => {
-                    usage_flags |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
-                }
-                TextureUsage::SampledAndRenderTarget => {
-                    usage_flags |= vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST;
-                }
-                TextureUsage::DepthStencil => {
-                    usage_flags |= vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT;
-                }
-            }
-
-            // Create image
-            let image_create_info = vk::ImageCreateInfo::default()
-                .image_type(vk::ImageType::TYPE_2D)
-                .format(format)
-                .extent(vk::Extent3D {
-                    width: desc.width,
-                    height: desc.height,
-                    depth: 1,
-                })
-                .mip_levels(1)
-                .array_layers(1)
-                .samples(match desc.samples {
-                    1 => vk::SampleCountFlags::TYPE_1,
-                    2 => vk::SampleCountFlags::TYPE_2,
-                    4 => vk::SampleCountFlags::TYPE_4,
-                    8 => vk::SampleCountFlags::TYPE_8,
-                    _ => vk::SampleCountFlags::TYPE_1,
-                })
-                .tiling(vk::ImageTiling::OPTIMAL)
-                .usage(usage_flags)
-                .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                .initial_layout(vk::ImageLayout::UNDEFINED);
-
-            let image = self.device.create_image(&image_create_info, None)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create image for render target: {:?}", e))?;
-
-            // Allocate memory
-            let requirements = self.device.get_image_memory_requirements(image);
-
-            let allocation = self.allocator.lock().unwrap().allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-                name: "render_target",
-                requirements,
-                location: gpu_allocator::MemoryLocation::GpuOnly,
-                linear: false,
-                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
-            })
-            .map_err(|_e| {
-                let size_mb = requirements.size as f64 / (1024.0 * 1024.0);
-                engine_error!("galaxy3d::vulkan", "Out of GPU memory for render target (required: {:.2} MB)", size_mb);
-                Error::OutOfMemory
-            })?;
-
-            // Bind memory
-            self.device.bind_image_memory(image, allocation.memory(), allocation.offset())
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to bind image memory for render target: {:?}", e))?;
-
-            // Create image view
-            let aspect_mask = if matches!(desc.usage, TextureUsage::DepthStencil) {
-                vk::ImageAspectFlags::DEPTH
-            } else {
-                vk::ImageAspectFlags::COLOR
-            };
-
-            let view_create_info = vk::ImageViewCreateInfo::default()
-                .image(image)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(format)
-                .components(vk::ComponentMapping {
-                    r: vk::ComponentSwizzle::IDENTITY,
-                    g: vk::ComponentSwizzle::IDENTITY,
-                    b: vk::ComponentSwizzle::IDENTITY,
-                    a: vk::ComponentSwizzle::IDENTITY,
-                })
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                });
-
-            let view = self.device.create_image_view(&view_create_info, None)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create image view for render target: {:?}", e))?;
-
-            Ok(Arc::new(RenderTarget::new_texture_target(
-                desc.width,
-                desc.height,
-                desc.format,
-                view,
-                (*self.device).clone(),
-            )))
-        }
-    }
-
-    fn create_render_target_view(
+    fn create_render_target_texture(
         &self,
         texture: &dyn RendererTexture,
         layer: u32,
@@ -869,7 +764,7 @@ impl Renderer for VulkanRenderer {
             | TextureUsage::DepthStencil => {}
             _ => {
                 engine_bail!("galaxy3d::vulkan",
-                    "create_render_target_view: texture usage {:?} is not compatible \
+                    "create_render_target_texture: texture usage {:?} is not compatible \
                      with render target (expected RenderTarget, SampledAndRenderTarget, \
                      or DepthStencil)", info.usage);
             }
@@ -878,14 +773,14 @@ impl Renderer for VulkanRenderer {
         // Validate layer
         if layer >= info.array_layers {
             engine_bail!("galaxy3d::vulkan",
-                "create_render_target_view: layer {} out of range (array_layers = {})",
+                "create_render_target_texture: layer {} out of range (array_layers = {})",
                 layer, info.array_layers);
         }
 
         // Validate mip level
         if mip_level >= info.mip_levels {
             engine_bail!("galaxy3d::vulkan",
-                "create_render_target_view: mip_level {} out of range (mip_levels = {})",
+                "create_render_target_texture: mip_level {} out of range (mip_levels = {})",
                 mip_level, info.mip_levels);
         }
 
@@ -1219,8 +1114,27 @@ impl Renderer for VulkanRenderer {
                 vk::ImageViewType::TYPE_2D
             };
 
-            // Image usage flags - add TRANSFER_SRC if generating mipmaps
-            let mut usage_flags = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+            // Image usage flags based on declared TextureUsage
+            let mut usage_flags = match desc.usage {
+                TextureUsage::Sampled => {
+                    vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST
+                }
+                TextureUsage::RenderTarget => {
+                    vk::ImageUsageFlags::COLOR_ATTACHMENT
+                        | vk::ImageUsageFlags::TRANSFER_SRC
+                        | vk::ImageUsageFlags::TRANSFER_DST
+                }
+                TextureUsage::SampledAndRenderTarget => {
+                    vk::ImageUsageFlags::SAMPLED
+                        | vk::ImageUsageFlags::COLOR_ATTACHMENT
+                        | vk::ImageUsageFlags::TRANSFER_SRC
+                        | vk::ImageUsageFlags::TRANSFER_DST
+                }
+                TextureUsage::DepthStencil => {
+                    vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                        | vk::ImageUsageFlags::TRANSFER_DST
+                }
+            };
             if matches!(desc.mipmap, MipmapMode::Generate { .. }) && mip_levels > 1 {
                 usage_flags |= vk::ImageUsageFlags::TRANSFER_SRC;
             }
@@ -1801,8 +1715,10 @@ impl Renderer for VulkanRenderer {
                     self.allocator.lock().unwrap().free(staging_alloc)
                         .map_err(|_e| engine_warn_err!("galaxy3d::vulkan", "Failed to free staging buffer allocation during texture upload"))?;
                 }
-            } else {
-                // No data to upload — transition directly to SHADER_READ_ONLY_OPTIMAL
+            } else if matches!(desc.usage, TextureUsage::Sampled | TextureUsage::SampledAndRenderTarget) {
+                // No data to upload — transition to SHADER_READ_ONLY_OPTIMAL
+                // (only for sampled textures; RenderTarget/DepthStencil stay UNDEFINED
+                // and the render pass handles the initial layout transition)
                 let command_pool_create_info = vk::CommandPoolCreateInfo::default()
                     .queue_family_index(self.graphics_queue_family)
                     .flags(vk::CommandPoolCreateFlags::TRANSIENT);

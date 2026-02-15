@@ -1,7 +1,7 @@
 /// Mock Renderer for unit tests (no GPU required)
 ///
 /// This mock renderer allows testing ResourceManager and other components
-/// without requiring a real GPU or Vulkan backend.
+/// without requiring a real GPU or graphics backend.
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,7 @@ use crate::renderer::{
     RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
     BufferDesc, TextureDesc, ShaderDesc, ShaderStage, PipelineDesc,
     BindingResource,
-    RenderPassDesc, RenderTargetDesc, FramebufferDesc, Viewport, Rect2D,
+    RenderPassDesc, FramebufferDesc, Viewport, Rect2D,
     ClearValue, IndexType, TextureInfo, TextureUsage,
 };
 #[cfg(test)]
@@ -318,8 +318,17 @@ impl MockSwapchain {
 
 #[cfg(test)]
 impl Swapchain for MockSwapchain {
-    fn acquire_next_image(&mut self) -> Result<(u32, Arc<dyn RenderTarget>)> {
-        Ok((0, Arc::new(MockRenderTarget::new(800, 600))))
+    fn acquire_next_image(&mut self) -> Result<u32> {
+        Ok(0)
+    }
+
+    fn record_present_blit(
+        &self,
+        _cmd: &mut dyn CommandList,
+        _src: &dyn Texture,
+        _image_index: u32,
+    ) -> Result<()> {
+        Ok(())
     }
 
     fn present(&mut self, _image_index: u32) -> Result<()> {
@@ -451,11 +460,7 @@ impl Renderer for MockRenderer {
         Ok(Box::new(MockCommandList::new()))
     }
 
-    fn create_render_target(&self, desc: &RenderTargetDesc) -> Result<Arc<dyn RenderTarget>> {
-        Ok(Arc::new(MockRenderTarget::new(desc.width, desc.height)))
-    }
-
-    fn create_render_target_view(
+    fn create_render_target_texture(
         &self,
         texture: &dyn Texture,
         layer: u32,
@@ -468,18 +473,18 @@ impl Renderer for MockRenderer {
             | TextureUsage::DepthStencil => {}
             _ => {
                 engine_bail!("galaxy3d::mock",
-                    "create_render_target_view: incompatible texture usage {:?}",
+                    "create_render_target_texture: incompatible texture usage {:?}",
                     info.usage);
             }
         }
         if layer >= info.array_layers {
             engine_bail!("galaxy3d::mock",
-                "create_render_target_view: layer {} out of range (array_layers = {})",
+                "create_render_target_texture: layer {} out of range (array_layers = {})",
                 layer, info.array_layers);
         }
         if mip_level >= info.mip_levels {
             engine_bail!("galaxy3d::mock",
-                "create_render_target_view: mip_level {} out of range (mip_levels = {})",
+                "create_render_target_texture: mip_level {} out of range (mip_levels = {})",
                 mip_level, info.mip_levels);
         }
         let w = (info.width >> mip_level).max(1);

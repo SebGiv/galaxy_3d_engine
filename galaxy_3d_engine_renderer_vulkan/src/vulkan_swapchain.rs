@@ -1,12 +1,18 @@
 /// Swapchain - Vulkan implementation of RendererSwapchain trait
 
 use galaxy_3d_engine::galaxy3d::{Result, Error};
-use galaxy_3d_engine::galaxy3d::render::{Swapchain as RendererSwapchain, RenderTarget as RendererRenderTarget, TextureFormat};
-use galaxy_3d_engine::{engine_error, engine_err};
+use galaxy_3d_engine::galaxy3d::render::{
+    Swapchain as RendererSwapchain,
+    CommandList as RendererCommandList,
+    Texture as RendererTexture,
+    TextureFormat,
+};
+use galaxy_3d_engine::{engine_error, engine_err, engine_bail};
 use ash::vk;
 use std::sync::Arc;
 
-use crate::vulkan_render_target::RenderTarget;
+use crate::vulkan_command_list::CommandList as VulkanCommandList;
+use crate::vulkan_texture::Texture as VulkanTexture;
 
 /// Vulkan swapchain implementation
 ///
@@ -32,9 +38,6 @@ pub struct Swapchain {
     swapchain_image_views: Vec<vk::ImageView>,
     swapchain_format: vk::Format,
     swapchain_extent: vk::Extent2D,
-
-    /// Render targets (one per swapchain image)
-    render_targets: Vec<Arc<dyn RendererRenderTarget>>,
 
     /// Synchronization primitives
     /// One semaphore per frame in flight (for acquire)
@@ -104,7 +107,7 @@ impl Swapchain {
                 .image_color_space(surface_format.color_space)
                 .image_extent(swapchain_extent)
                 .image_array_layers(1)
-                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
                 .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .pre_transform(surface_capabilities.current_transform)
                 .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -155,19 +158,6 @@ impl Swapchain {
                     Error::InitializationFailed(format!("Failed to create image views: {:?}", e))
                 })?;
 
-            // Create render targets
-            let render_targets: Vec<Arc<dyn RendererRenderTarget>> = swapchain_image_views
-                .iter()
-                .map(|&image_view| {
-                    Arc::new(RenderTarget::new_swapchain_target(
-                        swapchain_extent.width,
-                        swapchain_extent.height,
-                        vk_format_to_format(surface_format.format),
-                        image_view,
-                    )) as Arc<dyn RendererRenderTarget>
-                })
-                .collect();
-
             // Create synchronization primitives
             let image_count = swapchain_images.len();
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
@@ -209,7 +199,6 @@ impl Swapchain {
                 swapchain_image_views,
                 swapchain_format: surface_format.format,
                 swapchain_extent,
-                render_targets,
                 image_available_semaphores,
                 render_finished_semaphores,
                 current_frame: 0,
@@ -246,9 +235,8 @@ impl Swapchain {
 }
 
 impl RendererSwapchain for Swapchain {
-    fn acquire_next_image(&mut self) -> Result<(u32, Arc<dyn RendererRenderTarget>)> {
+    fn acquire_next_image(&mut self) -> Result<u32> {
         unsafe {
-            // Acquire next image
             let (image_index, _is_suboptimal) = self
                 .swapchain_loader
                 .acquire_next_image(
@@ -267,7 +255,150 @@ impl RendererSwapchain for Swapchain {
                     }
                 })?;
 
-            Ok((image_index, self.render_targets[image_index as usize].clone()))
+            Ok(image_index)
+        }
+    }
+
+    fn record_present_blit(
+        &self,
+        cmd: &mut dyn RendererCommandList,
+        src: &dyn RendererTexture,
+        image_index: u32,
+    ) -> Result<()> {
+        if image_index as usize >= self.swapchain_images.len() {
+            engine_bail!("galaxy3d::vulkan",
+                "record_present_blit: image_index {} out of range (count: {})",
+                image_index, self.swapchain_images.len());
+        }
+
+        unsafe {
+            // Downcast command list to access Vulkan command buffer
+            let vk_cmd = cmd as *mut dyn RendererCommandList as *mut VulkanCommandList;
+            let vk_cmd = &*vk_cmd;
+
+            // Downcast source texture to access Vulkan image
+            let vk_texture = src as *const dyn RendererTexture as *const VulkanTexture;
+            let vk_texture = &*vk_texture;
+
+            let src_image = vk_texture.image;
+            let dst_image = self.swapchain_images[image_index as usize];
+            let cb = vk_cmd.command_buffer();
+
+            let src_info = src.info();
+            let dst_width = self.swapchain_extent.width;
+            let dst_height = self.swapchain_extent.height;
+
+            // Transition src: COLOR_ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL
+            // Transition dst: UNDEFINED → TRANSFER_DST_OPTIMAL
+            let barriers = [
+                vk::ImageMemoryBarrier::default()
+                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(src_image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ),
+                vk::ImageMemoryBarrier::default()
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(dst_image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .src_access_mask(vk::AccessFlags::empty())
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE),
+            ];
+
+            self.device.cmd_pipeline_barrier(
+                cb,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[], &[], &barriers,
+            );
+
+            // Blit source texture to swapchain image
+            let region = vk::ImageBlit {
+                src_subresource: vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                src_offsets: [
+                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                    vk::Offset3D {
+                        x: src_info.width as i32,
+                        y: src_info.height as i32,
+                        z: 1,
+                    },
+                ],
+                dst_subresource: vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                dst_offsets: [
+                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                    vk::Offset3D {
+                        x: dst_width as i32,
+                        y: dst_height as i32,
+                        z: 1,
+                    },
+                ],
+            };
+
+            self.device.cmd_blit_image(
+                cb,
+                src_image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                dst_image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[region],
+                vk::Filter::LINEAR,
+            );
+
+            // Transition dst: TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR
+            let barrier_present = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(dst_image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::empty());
+
+            self.device.cmd_pipeline_barrier(
+                cb,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                vk::DependencyFlags::empty(),
+                &[], &[], &[barrier_present],
+            );
+
+            Ok(())
         }
     }
 
@@ -311,7 +442,6 @@ impl RendererSwapchain for Swapchain {
                 self.device.destroy_image_view(*image_view, None);
             }
             self.swapchain_image_views.clear();
-            self.render_targets.clear();
 
             // Query surface capabilities with new window size
             let surface_capabilities = self.surface_loader
@@ -353,7 +483,7 @@ impl RendererSwapchain for Swapchain {
                 .image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
                 .image_extent(extent)
                 .image_array_layers(1)
-                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
                 .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .pre_transform(surface_capabilities.current_transform)
                 .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -407,16 +537,6 @@ impl RendererSwapchain for Swapchain {
                         Error::InitializationFailed(format!("Failed to create image view: {:?}", e))
                     })?;
                 self.swapchain_image_views.push(image_view);
-            }
-
-            // Recreate render targets
-            for &image_view in &self.swapchain_image_views {
-                self.render_targets.push(Arc::new(RenderTarget::new_swapchain_target(
-                    extent.width,
-                    extent.height,
-                    vk_format_to_format(self.swapchain_format),
-                    image_view,
-                )) as Arc<dyn RendererRenderTarget>);
             }
 
             Ok(())

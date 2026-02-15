@@ -1,7 +1,7 @@
 /// Framebuffer trait - groups render target attachments for a render pass
 ///
 /// A framebuffer binds together color and depth/stencil attachments
-/// that a render pass will render into. In Vulkan, wraps a VkFramebuffer.
+/// that a render pass will render into.
 ///
 /// Created once and reused each frame. Must be recreated only when
 /// attachments change (e.g., window resize).

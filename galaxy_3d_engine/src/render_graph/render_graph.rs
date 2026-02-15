@@ -9,14 +9,15 @@
 ///
 /// Render graphs can only be created via `RenderGraphManager::create_render_graph()`.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use crate::error::Result;
 use crate::engine_bail;
 use crate::renderer;
 use crate::resource;
+use super::pass_action::PassAction;
 use super::render_pass::RenderPass;
-use super::render_target::{RenderTarget, RenderTargetKind, TextureTargetView};
+use super::render_target::RenderTarget;
 
 pub struct RenderGraph {
     /// Render passes (nodes) stored by index
@@ -27,6 +28,12 @@ pub struct RenderGraph {
     targets: Vec<RenderTarget>,
     /// Target name to index mapping
     target_names: HashMap<String, usize>,
+    /// Sequential execution order (filled by compile)
+    execution_order: Vec<usize>,
+    /// Command lists for double/triple buffering (created by compile)
+    command_lists: Vec<Box<dyn renderer::CommandList>>,
+    /// Current frame index (points to the active command list)
+    current_frame: usize,
 }
 
 impl RenderGraph {
@@ -37,6 +44,9 @@ impl RenderGraph {
             pass_names: HashMap::new(),
             targets: Vec::new(),
             target_names: HashMap::new(),
+            execution_order: Vec::new(),
+            command_lists: Vec::new(),
+            current_frame: 0,
         }
     }
 
@@ -61,47 +71,24 @@ impl RenderGraph {
         Ok(id)
     }
 
-    /// Add a swapchain render target (edge) to the graph
-    ///
-    /// At execution time, `acquire_next_image()` is called on the swapchain
-    /// to get the current frame's render target.
-    ///
-    /// Returns the index of the newly added target.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a target with the same name already exists.
-    pub fn add_swapchain_target(
-        &mut self,
-        name: &str,
-        swapchain: Arc<Mutex<dyn renderer::Swapchain>>,
-    ) -> Result<usize> {
-        if self.target_names.contains_key(name) {
-            engine_bail!("galaxy3d::RenderGraph",
-                "RenderTarget '{}' already exists in this graph", name);
-        }
-
-        let id = self.targets.len();
-        self.targets.push(RenderTarget::new(RenderTargetKind::Swapchain(swapchain)));
-        self.target_names.insert(name.to_string(), id);
-        Ok(id)
-    }
-
-    /// Add a texture render target (edge) to the graph
+    /// Add a render target (edge) to the graph
     ///
     /// References a resource texture at a specific array layer and mip level.
+    /// The GPU render target view is created immediately from the texture.
     ///
     /// Returns the index of the newly added target.
     ///
     /// # Errors
     ///
-    /// Returns an error if a target with the same name already exists.
-    pub fn add_texture_target(
+    /// Returns an error if a target with the same name already exists,
+    /// or if the GPU render target view creation fails.
+    pub fn add_target(
         &mut self,
         name: &str,
         texture: Arc<resource::Texture>,
         layer: u32,
         mip_level: u32,
+        renderer: &dyn renderer::Renderer,
     ) -> Result<usize> {
         if self.target_names.contains_key(name) {
             engine_bail!("galaxy3d::RenderGraph",
@@ -109,11 +96,7 @@ impl RenderGraph {
         }
 
         let id = self.targets.len();
-        self.targets.push(RenderTarget::new(RenderTargetKind::Texture(TextureTargetView {
-            texture,
-            layer,
-            mip_level,
-        })));
+        self.targets.push(RenderTarget::new(texture, layer, mip_level, renderer)?);
         self.target_names.insert(name.to_string(), id);
         Ok(id)
     }
@@ -213,6 +196,299 @@ impl RenderGraph {
     /// Get a target index by name
     pub fn target_id(&self, name: &str) -> Option<usize> {
         self.target_names.get(name).copied()
+    }
+
+    // ===== ACTION =====
+
+    /// Set the action for a pass by index
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pass index is out of bounds.
+    pub fn set_action(&mut self, pass_id: usize, action: Box<dyn PassAction>) -> Result<()> {
+        let pass_count = self.passes.len();
+        let pass = self.passes.get_mut(pass_id)
+            .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
+                "RenderPass index {} out of bounds (count: {})", pass_id, pass_count))?;
+
+        pass.set_action(action);
+        Ok(())
+    }
+
+    // ===== COMPILE =====
+
+    /// Resolve the graph: topological sort, GPU render passes, framebuffers,
+    /// and command lists.
+    ///
+    /// This method:
+    /// 1. Computes the execution order via topological sort (Kahn's algorithm)
+    /// 2. For each pass with outputs, creates a `renderer::RenderPass`
+    ///    and a `renderer::Framebuffer` from its output targets
+    /// 3. Creates `frames_in_flight` command lists for double/triple buffering
+    ///
+    /// Call once after building the graph. Call `execute()` each frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a cycle is detected, if GPU object creation fails,
+    /// or if `frames_in_flight` is 0.
+    pub fn compile(
+        &mut self,
+        renderer: &dyn renderer::Renderer,
+        frames_in_flight: usize,
+    ) -> Result<()> {
+        if frames_in_flight == 0 {
+            engine_bail!("galaxy3d::RenderGraph",
+                "frames_in_flight must be at least 1");
+        }
+
+        // Topological sort
+        self.execution_order = self.topological_sort()?;
+
+        // Create GPU render passes and framebuffers
+        for pass_idx in 0..self.passes.len() {
+            let outputs: Vec<usize> = self.passes[pass_idx].outputs().to_vec();
+
+            if outputs.is_empty() {
+                continue;
+            }
+
+            let mut color_attachment_descs = Vec::new();
+            let mut color_targets = Vec::new();
+            let mut depth_attachment_desc = None;
+            let mut depth_target = None;
+            let mut fb_width = 0u32;
+            let mut fb_height = 0u32;
+
+            for &target_id in &outputs {
+                let target = &self.targets[target_id];
+                let rt = target.renderer_render_target().clone();
+                let usage = target.texture().renderer_texture().info().usage;
+
+                // Use dimensions from the first output target
+                if fb_width == 0 {
+                    fb_width = rt.width();
+                    fb_height = rt.height();
+                }
+
+                match usage {
+                    renderer::TextureUsage::DepthStencil => {
+                        depth_attachment_desc = Some(renderer::AttachmentDesc {
+                            format: rt.format(),
+                            samples: 1,
+                            load_op: renderer::LoadOp::Clear,
+                            store_op: renderer::StoreOp::DontCare,
+                            initial_layout: renderer::ImageLayout::Undefined,
+                            final_layout: renderer::ImageLayout::DepthStencilAttachment,
+                        });
+                        depth_target = Some(rt);
+                    }
+                    _ => {
+                        color_attachment_descs.push(renderer::AttachmentDesc {
+                            format: rt.format(),
+                            samples: 1,
+                            load_op: renderer::LoadOp::Clear,
+                            store_op: renderer::StoreOp::Store,
+                            initial_layout: renderer::ImageLayout::Undefined,
+                            final_layout: renderer::ImageLayout::ColorAttachment,
+                        });
+                        color_targets.push(rt);
+                    }
+                }
+            }
+
+            // Create GPU render pass
+            let render_pass_desc = renderer::RenderPassDesc {
+                color_attachments: color_attachment_descs,
+                depth_stencil_attachment: depth_attachment_desc,
+            };
+            let render_pass = renderer.create_render_pass(&render_pass_desc)?;
+
+            // Create GPU framebuffer
+            let fb_desc = renderer::FramebufferDesc {
+                render_pass: &render_pass,
+                color_attachments: color_targets,
+                depth_stencil_attachment: depth_target,
+                width: fb_width,
+                height: fb_height,
+            };
+            let framebuffer = renderer.create_framebuffer(&fb_desc)?;
+
+            self.passes[pass_idx].set_renderer_render_pass(render_pass);
+            self.passes[pass_idx].set_renderer_framebuffer(framebuffer);
+        }
+
+        // Create command lists for double/triple buffering
+        self.command_lists.clear();
+        for _ in 0..frames_in_flight {
+            self.command_lists.push(renderer.create_command_list()?);
+        }
+        // Initialize so that first execute() advances to index 0
+        self.current_frame = frames_in_flight - 1;
+
+        Ok(())
+    }
+
+    /// Topological sort using Kahn's algorithm
+    ///
+    /// Returns the pass indices in dependency order.
+    fn topological_sort(&self) -> Result<Vec<usize>> {
+        let pass_count = self.passes.len();
+        let mut in_degree = vec![0u32; pass_count];
+        let mut successors = vec![Vec::new(); pass_count];
+
+        // Build dependency graph: for each pass input, find the writer pass
+        for pass_idx in 0..pass_count {
+            for &input_target_id in self.passes[pass_idx].inputs() {
+                if let Some(writer) = self.targets[input_target_id].written_by() {
+                    in_degree[pass_idx] += 1;
+                    successors[writer].push(pass_idx);
+                }
+            }
+        }
+
+        // Start with all passes that have no dependencies
+        let mut queue: VecDeque<usize> = (0..pass_count)
+            .filter(|&i| in_degree[i] == 0)
+            .collect();
+
+        let mut order = Vec::with_capacity(pass_count);
+
+        while let Some(pass_idx) = queue.pop_front() {
+            order.push(pass_idx);
+            for &succ in &successors[pass_idx] {
+                in_degree[succ] -= 1;
+                if in_degree[succ] == 0 {
+                    queue.push_back(succ);
+                }
+            }
+        }
+
+        if order.len() != pass_count {
+            engine_bail!("galaxy3d::RenderGraph",
+                "Cycle detected: {} passes could not be ordered (total: {})",
+                pass_count - order.len(), pass_count);
+        }
+
+        Ok(order)
+    }
+
+    // ===== EXECUTE =====
+
+    /// Execute the compiled graph: begin, all passes, post-passes callback, end.
+    ///
+    /// Records a complete frame into the current command list:
+    /// 1. Advances to the next command list (double buffering)
+    /// 2. Calls `cmd.begin()`
+    /// 3. For each pass (topological order): begin_render_pass → action → end_render_pass
+    /// 4. Calls `post_passes(cmd)` for extra commands (e.g. swapchain blit)
+    /// 5. Calls `cmd.end()`
+    ///
+    /// After execute(), call `command_list()` to get the recorded command list
+    /// for submission.
+    ///
+    /// Must be called after `compile()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if compile() was not called, or if any recording fails.
+    pub fn execute<F>(&mut self, post_passes: F) -> Result<()>
+    where
+        F: FnOnce(&mut dyn renderer::CommandList) -> Result<()>,
+    {
+        if self.command_lists.is_empty() {
+            engine_bail!("galaxy3d::RenderGraph",
+                "No command lists — call compile() before execute()");
+        }
+        if self.execution_order.is_empty() && !self.passes.is_empty() {
+            engine_bail!("galaxy3d::RenderGraph",
+                "Graph not compiled — call compile() before execute()");
+        }
+
+        // Advance to next command list
+        let frame = (self.current_frame + 1) % self.command_lists.len();
+        self.current_frame = frame;
+
+        self.command_lists[frame].begin()?;
+
+        // Execute all passes in topological order
+        let order = self.execution_order.clone();
+
+        for &pass_idx in &order {
+            let rp = self.passes[pass_idx].renderer_render_pass()
+                .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
+                    "Pass {} has no renderer render pass (not compiled?)", pass_idx))?
+                .clone();
+            let fb = self.passes[pass_idx].renderer_framebuffer()
+                .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
+                    "Pass {} has no renderer framebuffer (not compiled?)", pass_idx))?
+                .clone();
+
+            // Build clear values: color attachments first, then depth
+            let clear_values = self.build_clear_values(pass_idx);
+
+            self.command_lists[frame].begin_render_pass(&rp, &fb, &clear_values)?;
+
+            if let Some(action) = self.passes[pass_idx].action_mut() {
+                action.execute(&mut *self.command_lists[frame])?;
+            }
+
+            self.command_lists[frame].end_render_pass()?;
+        }
+
+        // Post-passes commands (e.g. swapchain blit)
+        post_passes(&mut *self.command_lists[frame])?;
+
+        self.command_lists[frame].end()?;
+        Ok(())
+    }
+
+    /// Get the current command list (the one recorded by the last execute() call)
+    ///
+    /// Use this after `execute()` to submit the recorded commands.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if compile() was not called.
+    pub fn command_list(&self) -> Result<&dyn renderer::CommandList> {
+        if self.command_lists.is_empty() {
+            engine_bail!("galaxy3d::RenderGraph",
+                "No command lists — call compile() first");
+        }
+        Ok(&*self.command_lists[self.current_frame])
+    }
+
+    /// Build clear values for a pass based on its output targets
+    ///
+    /// Color attachments first (matching compile() order), then depth.
+    fn build_clear_values(&self, pass_idx: usize) -> Vec<renderer::ClearValue> {
+        let pass = &self.passes[pass_idx];
+        let mut clear_values = Vec::new();
+
+        // Color attachments first
+        for &target_id in pass.outputs() {
+            let usage = self.targets[target_id].texture().renderer_texture().info().usage;
+            if usage != renderer::TextureUsage::DepthStencil {
+                clear_values.push(renderer::ClearValue::Color([0.0, 0.0, 0.0, 1.0]));
+            }
+        }
+
+        // Depth attachment last
+        for &target_id in pass.outputs() {
+            let usage = self.targets[target_id].texture().renderer_texture().info().usage;
+            if usage == renderer::TextureUsage::DepthStencil {
+                clear_values.push(renderer::ClearValue::DepthStencil { depth: 1.0, stencil: 0 });
+            }
+        }
+
+        clear_values
+    }
+
+    // ===== QUERY =====
+
+    /// Get the execution order (available after compile)
+    pub fn execution_order(&self) -> &[usize] {
+        &self.execution_order
     }
 
     // ===== COUNTS =====

@@ -1,22 +1,33 @@
 /// Swapchain trait - for window presentation
 
-use std::sync::Arc;
 use crate::error::Result;
-use crate::renderer::{RenderTarget, TextureFormat};
+use crate::renderer::{CommandList, Texture, TextureFormat};
 
 /// Swapchain for presenting rendered images to a window
 ///
 /// Manages a set of images that are presented to the screen in sequence.
 /// Completely separated from rendering logic.
 pub trait Swapchain: Send + Sync {
-    /// Acquire the next image from the swapchain
+    /// Acquire the next available swapchain image index
+    fn acquire_next_image(&mut self) -> Result<u32>;
+
+    /// Record a blit from the final rendered texture to a swapchain image
     ///
-    /// # Returns
+    /// Copies the source texture into the swapchain image at the given index,
+    /// handling layout transitions and format conversion.
+    /// Must be called while the command list is recording and outside a render pass.
     ///
-    /// A tuple of (image_index, render_target) where:
-    /// - image_index: Index of the acquired image (used for present)
-    /// - render_target: The render target to render into
-    fn acquire_next_image(&mut self) -> Result<(u32, Arc<dyn RenderTarget>)>;
+    /// # Arguments
+    ///
+    /// * `cmd` - Command list to record the blit into
+    /// * `src` - Source texture (the final rendered output)
+    /// * `image_index` - Swapchain image index (from acquire_next_image)
+    fn record_present_blit(
+        &self,
+        cmd: &mut dyn CommandList,
+        src: &dyn Texture,
+        image_index: u32,
+    ) -> Result<()>;
 
     /// Present the rendered image to the screen
     ///

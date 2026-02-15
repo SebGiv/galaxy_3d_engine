@@ -10,7 +10,7 @@ use crate::renderer::{
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
     BindingResource,
     CommandList, RenderPass, RenderTarget, Swapchain,
-    RenderPassDesc, RenderTargetDesc,
+    RenderPassDesc,
     Framebuffer, FramebufferDesc,
 };
 
@@ -216,18 +216,7 @@ pub trait Renderer: Send + Sync {
     /// A boxed command list
     fn create_command_list(&self) -> Result<Box<dyn CommandList>>;
 
-    /// Create a render target (texture that can be rendered to)
-    ///
-    /// # Arguments
-    ///
-    /// * `desc` - Render target descriptor
-    ///
-    /// # Returns
-    ///
-    /// A shared pointer to the created render target
-    fn create_render_target(&self, desc: &RenderTargetDesc) -> Result<Arc<dyn RenderTarget>>;
-
-    /// Create a render target view from an existing texture
+    /// Create a render target from an existing texture
     ///
     /// Creates an image view suitable for framebuffer attachment,
     /// targeting a specific layer and mip level of the texture.
@@ -236,7 +225,7 @@ pub trait Renderer: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `texture` - The texture to create a render target view from
+    /// * `texture` - The texture to create a render target from
     /// * `layer` - Array layer index (0 for simple textures)
     /// * `mip_level` - Mip level (0 for full resolution)
     ///
@@ -244,7 +233,7 @@ pub trait Renderer: Send + Sync {
     ///
     /// Returns an error if the texture usage is incompatible,
     /// or if layer/mip_level are out of bounds.
-    fn create_render_target_view(
+    fn create_render_target_texture(
         &self,
         texture: &dyn Texture,
         layer: u32,
