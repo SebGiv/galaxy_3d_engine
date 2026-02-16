@@ -1,7 +1,8 @@
 /// Pipeline trait and pipeline descriptor
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use crate::renderer::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc};
+use crate::renderer::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc, BindingType, ShaderStageFlags};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,14 +434,158 @@ pub struct PipelineDesc {
     pub multisample: MultisampleState,
 }
 
+// ============================================================================
+// Pipeline reflection — scalar and member types
+// ============================================================================
+
+/// Scalar kind for reflected types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalarKind {
+    Float32,
+    Float64,
+    Int32,
+    UInt32,
+    Bool,
+}
+
+/// Type of a reflected member inside a uniform/storage buffer or push constant block
+#[derive(Debug, Clone)]
+pub enum ReflectedMemberType {
+    /// Scalar (float, int, uint, bool)
+    Scalar(ScalarKind),
+    /// Vector (kind, component count) — vec2, vec3, vec4
+    Vector(ScalarKind, u32),
+    /// Matrix (kind, columns, rows) — mat4, mat3x2
+    Matrix(ScalarKind, u32, u32),
+    /// Array (None count = runtime-sized, e.g. SSBO last member)
+    Array {
+        element_type: Box<ReflectedMemberType>,
+        count: Option<u32>,
+        stride: Option<u32>,
+    },
+    /// Nested struct
+    Struct(Vec<ReflectedMember>),
+}
+
+/// A reflected member inside a uniform buffer, storage buffer, or push constant block
+#[derive(Debug, Clone)]
+pub struct ReflectedMember {
+    /// Member name from shader debug info
+    pub name: String,
+    /// Byte offset from the start of the block
+    pub offset: u32,
+    /// Size in bytes (None if runtime-sized)
+    pub size: Option<u32>,
+    /// Type of this member
+    pub member_type: ReflectedMemberType,
+}
+
+// ============================================================================
+// Pipeline reflection — bindings and push constants
+// ============================================================================
+
+/// A single reflected binding extracted from compiled shader bytecode.
+#[derive(Debug, Clone)]
+pub struct ReflectedBinding {
+    /// Binding name from shader debug info (e.g., "texSampler", "CameraData")
+    pub name: String,
+    /// Binding group index
+    pub set: u32,
+    /// Binding index within the group
+    pub binding: u32,
+    /// Type of resource at this binding
+    pub binding_type: BindingType,
+    /// Shader stages that access this binding
+    pub stage_flags: ShaderStageFlags,
+    /// Internal members (populated for uniform/storage buffers, empty for textures/samplers)
+    pub members: Vec<ReflectedMember>,
+}
+
+/// A reflected push constant block extracted from compiled shader bytecode.
+#[derive(Debug, Clone)]
+pub struct ReflectedPushConstant {
+    /// Block name from shader debug info
+    pub name: String,
+    /// Shader stages that access this push constant
+    pub stage_flags: ShaderStageFlags,
+    /// Total size in bytes (None if runtime-sized)
+    pub size: Option<u32>,
+    /// Internal members
+    pub members: Vec<ReflectedMember>,
+}
+
+// ============================================================================
+// Pipeline reflection — merged data
+// ============================================================================
+
+/// Shader reflection data for a compiled pipeline.
+/// Merges vertex + fragment shader bindings into a single lookup table.
+pub struct PipelineReflection {
+    bindings: Vec<ReflectedBinding>,
+    binding_names: HashMap<String, usize>,
+    push_constants: Vec<ReflectedPushConstant>,
+}
+
+impl PipelineReflection {
+    /// Create from reflected bindings and push constants (used by backends)
+    pub fn new(bindings: Vec<ReflectedBinding>, push_constants: Vec<ReflectedPushConstant>) -> Self {
+        let binding_names = bindings.iter().enumerate()
+            .map(|(i, b)| (b.name.clone(), i))
+            .collect();
+        Self { bindings, binding_names, push_constants }
+    }
+
+    /// Create an empty reflection (no bindings)
+    pub fn empty() -> Self {
+        Self { bindings: Vec::new(), binding_names: HashMap::new(), push_constants: Vec::new() }
+    }
+
+    /// Access by index (hot path, O(1))
+    pub fn binding(&self, index: usize) -> Option<&ReflectedBinding> {
+        self.bindings.get(index)
+    }
+
+    /// Access by name (lookup)
+    pub fn binding_by_name(&self, name: &str) -> Option<&ReflectedBinding> {
+        let idx = self.binding_names.get(name)?;
+        self.bindings.get(*idx)
+    }
+
+    /// Name → index resolution
+    pub fn binding_index(&self, name: &str) -> Option<usize> {
+        self.binding_names.get(name).copied()
+    }
+
+    /// Total number of reflected bindings
+    pub fn binding_count(&self) -> usize {
+        self.bindings.len()
+    }
+
+    /// Push constant blocks
+    pub fn push_constants(&self) -> &[ReflectedPushConstant] {
+        &self.push_constants
+    }
+
+    /// Number of push constant blocks
+    pub fn push_constant_count(&self) -> usize {
+        self.push_constants.len()
+    }
+}
+
+// ============================================================================
+// Pipeline trait
+// ============================================================================
+
 /// Pipeline resource trait
 ///
-/// Implemented by backend-specific pipeline types (e.g., VulkanPipeline).
+/// Implemented by backend-specific pipeline types.
 /// The pipeline is automatically destroyed when dropped.
 /// The pipeline stores its binding group layouts internally (Option B design).
 pub trait Pipeline: Send + Sync {
     /// Returns the number of binding group layouts in this pipeline
     fn binding_group_layout_count(&self) -> u32;
+    /// Returns the shader reflection data for this pipeline
+    fn reflection(&self) -> &PipelineReflection;
 }
 
 #[cfg(test)]

@@ -1,6 +1,9 @@
 /// Pipeline - Vulkan implementation of RendererPipeline trait
 
-use galaxy_3d_engine::galaxy3d::render::Pipeline as RendererPipeline;
+use galaxy_3d_engine::galaxy3d::render::{
+    Pipeline as RendererPipeline,
+    PipelineReflection,
+};
 use ash::vk;
 
 /// Vulkan pipeline implementation
@@ -17,11 +20,16 @@ pub struct Pipeline {
     pub(crate) descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     /// Vulkan device (for cleanup)
     pub(crate) device: ash::Device,
+    /// SPIR-V reflection data (merged from vertex + fragment shaders)
+    pub(crate) reflection: PipelineReflection,
 }
 
 impl RendererPipeline for Pipeline {
     fn binding_group_layout_count(&self) -> u32 {
         self.descriptor_set_layouts.len() as u32
+    }
+    fn reflection(&self) -> &PipelineReflection {
+        &self.reflection
     }
 }
 

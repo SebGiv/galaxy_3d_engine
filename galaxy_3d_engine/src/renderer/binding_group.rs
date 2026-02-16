@@ -49,6 +49,9 @@ impl ShaderStageFlags {
         Self(flags)
     }
 
+    /// Create from raw bits
+    pub fn from_bits(bits: u32) -> Self { Self(bits) }
+
     pub fn contains_vertex(&self) -> bool { self.0 & 0x01 != 0 }
     pub fn contains_fragment(&self) -> bool { self.0 & 0x02 != 0 }
     pub fn contains_compute(&self) -> bool { self.0 & 0x04 != 0 }

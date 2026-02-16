@@ -16,6 +16,7 @@ use crate::renderer::{
     BindingResource,
     RenderPassDesc, FramebufferDesc, Viewport, Rect2D,
     ClearValue, IndexType, TextureInfo, TextureUsage,
+    PipelineReflection,
 };
 #[cfg(test)]
 use crate::error::Result;
@@ -122,6 +123,11 @@ impl MockPipeline {
 #[cfg(test)]
 impl Pipeline for MockPipeline {
     fn binding_group_layout_count(&self) -> u32 { 0 }
+    fn reflection(&self) -> &PipelineReflection {
+        static EMPTY: std::sync::LazyLock<PipelineReflection> =
+            std::sync::LazyLock::new(PipelineReflection::empty);
+        &EMPTY
+    }
 }
 
 // ============================================================================

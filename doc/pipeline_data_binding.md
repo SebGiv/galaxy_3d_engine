@@ -36,6 +36,14 @@
    - 15.4 [Relation avec les slots de Pipeline](#154-relation-avec-les-slots-de-pipeline)
    - 15.5 [Ce qui reste en dehors du BindingGroup](#155-ce-qui-reste-en-dehors-du-bindinggroup)
    - 15.6 [API envisagée](#156-api-envisagée)
+16. [Réflexion SPIR-V — mapping nom → binding](#16-réflexion-spir-v--mapping-nom--binding)
+   - 16.1 [Problématique](#161-problématique)
+   - 16.2 [Comment SPIR-V préserve les noms](#162-comment-spir-v-préserve-les-noms)
+   - 16.3 [Choix architectural : Option B (réflexion à la création du Pipeline)](#163-choix-architectural--option-b-réflexion-à-la-création-du-pipeline)
+   - 16.4 [Structures de données](#164-structures-de-données)
+   - 16.5 [Flux d'implémentation](#165-flux-dimplémentation)
+   - 16.6 [Lien avec Material](#166-lien-avec-material)
+   - 16.7 [Dépendance spirv-reflect](#167-dépendance-spirv-reflect)
 
 ---
 
@@ -1523,6 +1531,204 @@ pub enum BindingResource<'a> {
 
 ---
 
+## 16. Réflexion SPIR-V — mapping nom → binding
+
+> **Statut** : Design validé, non implémenté
+> **Date** : 2026-02-15
+
+### 16.1 Problématique
+
+Actuellement, les `BindingGroupLayoutDesc` sont spécifiés **manuellement** lors de la création
+d'un pipeline. L'appelant doit connaître à l'avance les numéros de set et de binding :
+
+```rust
+// Situation actuelle : tout est hardcodé
+BindingGroupLayoutDesc {
+    entries: vec![BindingSlotDesc {
+        binding: 0,                              // hardcodé
+        binding_type: BindingType::CombinedImageSampler,
+        count: 1,
+        stage_flags: ShaderStageFlags::FRAGMENT,
+    }],
+}
+```
+
+Le problème : si le shader change (ajout d'un binding, réorganisation), le code Rust doit
+être mis à jour manuellement. Il n'y a aucun moyen de demander "quel est le binding de
+`texSampler` ?" au pipeline.
+
+### 16.2 Comment SPIR-V préserve les noms
+
+Le GLSL compilé en SPIR-V conserve les noms des variables via des instructions `OpName`
+dans le bytecode. Ces noms ne sont pas utilisés par le GPU mais sont accessibles par des
+outils de réflexion.
+
+Exemple — pour ce shader :
+
+```glsl
+layout(set = 0, binding = 0) uniform sampler2DArray texSampler;
+```
+
+Le bytecode SPIR-V contient :
+
+| Instruction SPIR-V | Donnée |
+|---------------------|--------|
+| `OpName` | `"texSampler"` |
+| `OpDecorate ... DescriptorSet` | `0` |
+| `OpDecorate ... Binding` | `0` |
+| Type | `OpTypeSampledImage` (combined image sampler) |
+
+Une bibliothèque de réflexion peut parser ce bytecode et extraire :
+`"texSampler" → { set: 0, binding: 0, type: CombinedImageSampler, stage: Fragment }`
+
+**Important** : Vulkan lui-même n'expose **aucune API de réflexion**. Ni `VkPipeline`, ni
+`VkShaderModule` ne permettent de récupérer ces métadonnées. Il faut parser le bytecode
+SPIR-V directement.
+
+### 16.3 Choix architectural : parsing au Shader, fusion au Pipeline
+
+Quatre options ont été évaluées :
+
+| Option | Point d'insertion | Verdict |
+|--------|------------------|---------|
+| A — Parsing + merge au `create_pipeline()` | Stocker le bytecode SPIR-V dans Shader, parser au pipeline | Re-parse si shader partagé |
+| **B — Parsing au `create_shader()`, merge au `create_pipeline()`** | **Chaque shader stocke sa réflexion (interne backend)** | **✅ Retenu** |
+| C — Couche `resource::*` | Parsing avant le renderer | Responsabilité mal placée |
+| D — Exposer la réflexion sur le trait `Shader` | Réflexion publique per-shader | Complexifie le trait `Shader` |
+
+**Pourquoi Option B** :
+
+1. **Un shader est souvent partagé** : le même vertex shader sert dans plusieurs pipelines
+   (shadow pass, depth pass, color pass...). Avec l'option A, on re-parse le même bytecode
+   à chaque `create_pipeline()`. Avec B, on parse **une seule fois** à `create_shader()`
+2. **Moins de mémoire** : on jette le bytecode SPIR-V après le parsing, on ne garde que
+   les métadonnées compactes (quelques dizaines d'octets vs plusieurs KB de bytecode)
+3. **Le parsing appartient au shader** : c'est le shader qui déclare les bindings, pas le
+   pipeline. Le pipeline ne fait que combiner deux shaders
+4. **Le trait `Shader` reste inchangé** : la réflexion per-shader est `pub(crate)` dans
+   `VulkanShader`, seul le trait `Pipeline` expose la réflexion fusionnée publiquement
+5. **Séparation** : la couche `resource` n'a pas à manipuler des concepts GPU (sets, bindings)
+
+### 16.4 Structures de données
+
+Structures définies dans `renderer/pipeline.rs` (abstraites, pas Vulkan-spécifiques) :
+
+```rust
+/// SPIR-V reflection data for a compiled pipeline.
+/// Merges vertex + fragment shader bindings.
+pub struct PipelineReflection {
+    bindings: Vec<ReflectedBinding>,
+    binding_names: HashMap<String, usize>,  // pattern Vec+HashMap
+}
+
+/// A single reflected binding extracted from SPIR-V bytecode.
+pub struct ReflectedBinding {
+    pub name: String,
+    pub set: u32,
+    pub binding: u32,
+    pub binding_type: BindingType,       // réutilise le type existant
+    pub stage_flags: ShaderStageFlags,   // Vertex | Fragment | les deux
+}
+```
+
+Le trait `Pipeline` gagne une méthode :
+
+```rust
+pub trait Pipeline: Send + Sync {
+    fn binding_group_layout_count(&self) -> u32;
+    fn reflection(&self) -> &PipelineReflection;  // nouveau
+}
+```
+
+Accès par nom ou par index (pattern standard du projet) :
+
+```rust
+impl PipelineReflection {
+    /// Access by index (hot path, O(1))
+    pub fn binding(&self, index: usize) -> Option<&ReflectedBinding>;
+
+    /// Access by name (lookup)
+    pub fn binding_by_name(&self, name: &str) -> Option<&ReflectedBinding>;
+
+    /// Name → index resolution
+    pub fn binding_index(&self, name: &str) -> Option<usize>;
+
+    /// Total number of reflected bindings
+    pub fn binding_count(&self) -> usize;
+}
+```
+
+### 16.5 Flux d'implémentation
+
+```
+create_shader(ShaderDesc { code: &[u8], stage: Vertex, ... })
+    │  → créer vk::ShaderModule (comme avant)
+    │  → spirq : parser le bytecode SPIR-V
+    │  → stocker Vec<ReflectedBinding> dans VulkanShader (pub(crate))
+    │  → jeter le bytecode SPIR-V (pas conservé en mémoire)
+    ▼
+
+create_pipeline(PipelineDesc { vertex_shader, fragment_shader, ... })
+    │  → downcast les deux VulkanShader
+    │  → fusionner les Vec<ReflectedBinding> (union, merge stage_flags)
+    │  → construire PipelineReflection (Vec + HashMap)
+    │  → stocker dans VulkanPipeline
+    ▼
+
+Arc<dyn Pipeline>
+    │  → pipeline.reflection().binding_by_name("texSampler")
+    │     → Some(ReflectedBinding { set: 0, binding: 0, ... })
+```
+
+**Fusion des réflexions** : quand un binding apparaît dans les deux shaders (même set +
+même binding), les `stage_flags` sont combinés (`Vertex | Fragment`). Si le même
+(set, binding) a des types différents entre vertex et fragment → erreur.
+
+### 16.6 Lien avec Material
+
+La réflexion permet au `Material` de résoudre ses noms de slots vers des bindings GPU :
+
+```
+resource::Material                     renderer::Pipeline (via réflexion)
+  texture_slot "texSampler"  ──────►  name="texSampler" → set=0, binding=0
+  param "roughness"          ──────►  name="roughness"  → set=1, binding=0 (UBO member)
+```
+
+À terme, le moteur pourrait :
+1. Lire les noms des texture slots du Material
+2. Les résoudre via `pipeline.reflection().binding_by_name(name)`
+3. Créer automatiquement les `BindingGroup` correspondants
+
+Cela éliminerait la spécification manuelle des bindings.
+
+### 16.7 Dépendance spirq
+
+Le crate **`spirq`** (pur Rust, activement maintenu) a été retenu pour la réflexion SPIR-V.
+
+**Pourquoi `spirq`** (et pas `rspirv-reflect`) :
+
+| Critère | `rspirv-reflect` | `spirq` |
+|---------|-------------------|---------|
+| Bindings (nom, set, binding, type) | Oui | Oui |
+| Membres internes UBO/SSBO (noms, types, offsets, strides) | **Non** | **Oui** |
+| Pur Rust | Oui | Oui |
+| Maintenu activement | Oui | Oui |
+
+`rspirv-reflect` suffirait pour le mapping nom → (set, binding), mais ne permet pas
+d'extraire les membres internes des UBO/SSBO. Or cette information sera nécessaire
+quand le moteur auto-remplira des uniform buffers à partir des paramètres de Material.
+Choisir `spirq` dès maintenant évite une migration future et la dette technique associée.
+
+**Note** : `spirq` définit ses propres `DescriptorType` — une table de conversion vers
+les types `ash`/Vulkan est nécessaire (un `match` d'environ 10 lignes, écrit une fois).
+
+**Intégration** :
+- `spirq` est ajouté au crate **backend Vulkan** (`galaxy_3d_engine_renderer_vulkan`)
+- Le crate core (`galaxy_3d_engine`) définit les structures abstraites (`PipelineReflection`,
+  `ReflectedBinding`) sans dépendance à `spirq`
+
+---
+
 ## Références
 
 - **Vulkan Specification** : Chapters 14 (Resource Descriptors), Push Constants, Uniform Buffers
@@ -1531,3 +1737,5 @@ pub enum BindingResource<'a> {
 - **Sascha Willems** : Vulkan descriptor set examples
 - Voir aussi : [materials_and_passes.md](materials_and_passes.md) pour l'architecture Material/Pipeline/Passes
 - Voir aussi : [rendering_techniques.md](rendering_techniques.md) pour les techniques d'optimisation du rendu
+- **SPIR-V Specification** : [Khronos SPIR-V Registry](https://registry.khronos.org/SPIR-V/) — OpName, OpDecorate
+- **spirq** : [GitHub](https://github.com/PENGUINLIONG/spirq-rs) — bibliothèque de réflexion SPIR-V pure Rust (retenu pour Galaxy3D)

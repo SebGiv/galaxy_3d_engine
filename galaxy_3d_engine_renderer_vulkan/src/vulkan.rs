@@ -11,6 +11,8 @@ use galaxy_3d_engine::galaxy3d::render::{
     RenderPassDesc,
     TextureDesc, TextureData, TextureInfo, BufferDesc, ShaderDesc, PipelineDesc,
     BindingResource, BindingType, ShaderStageFlags,
+    ReflectedBinding, ReflectedPushConstant, ReflectedMember, ReflectedMemberType,
+    ScalarKind, PipelineReflection,
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
     RendererStats, VertexInputRate,
@@ -518,6 +520,196 @@ impl VulkanRenderer {
             ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
             ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
         }
+    }
+
+    /// Convert renderer ShaderStage to ShaderStageFlags
+    fn shader_stage_to_flags(stage: ShaderStage) -> ShaderStageFlags {
+        match stage {
+            ShaderStage::Vertex => ShaderStageFlags::VERTEX,
+            ShaderStage::Fragment => ShaderStageFlags::FRAGMENT,
+            ShaderStage::Compute => ShaderStageFlags::COMPUTE,
+        }
+    }
+
+    /// Parse SPIR-V bytecode and extract reflected bindings and push constants using spirq
+    fn reflect_shader(code: &[u32], stage_flags: ShaderStageFlags)
+        -> Result<(Vec<ReflectedBinding>, Vec<ReflectedPushConstant>)>
+    {
+        let entry_points = spirq::ReflectConfig::new()
+            .spv(code)
+            .ref_all_rscs(true)
+            .reflect()
+            .map_err(|e| engine_err!("galaxy3d::vulkan",
+                "SPIR-V reflection failed: {:?}", e))?;
+
+        let mut bindings = Vec::new();
+        let mut push_constants = Vec::new();
+
+        for entry_point in &entry_points {
+            for var in entry_point.vars.iter() {
+                match var {
+                    spirq::var::Variable::Descriptor {
+                        name, desc_bind, desc_ty, ty, ..
+                    } => {
+                        let binding_type = Self::spirq_desc_type_to_binding_type(desc_ty.clone())?;
+                        let members = Self::spirq_type_to_members(ty);
+                        bindings.push(ReflectedBinding {
+                            name: name.clone().unwrap_or_default(),
+                            set: desc_bind.set(),
+                            binding: desc_bind.bind(),
+                            binding_type,
+                            stage_flags,
+                            members,
+                        });
+                    }
+                    spirq::var::Variable::PushConstant { name, ty } => {
+                        let members = Self::spirq_type_to_members(ty);
+                        push_constants.push(ReflectedPushConstant {
+                            name: name.clone().unwrap_or_default(),
+                            stage_flags,
+                            size: ty.nbyte().map(|s| s as u32),
+                            members,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok((bindings, push_constants))
+    }
+
+    /// Convert spirq descriptor type to renderer BindingType
+    fn spirq_desc_type_to_binding_type(desc_ty: spirq::ty::DescriptorType) -> Result<BindingType> {
+        use spirq::ty::DescriptorType;
+        match desc_ty {
+            DescriptorType::UniformBuffer() => Ok(BindingType::UniformBuffer),
+            DescriptorType::StorageBuffer(..) => Ok(BindingType::StorageBuffer),
+            DescriptorType::CombinedImageSampler() => Ok(BindingType::CombinedImageSampler),
+            DescriptorType::SampledImage() => Ok(BindingType::CombinedImageSampler),
+            DescriptorType::Sampler() => Ok(BindingType::CombinedImageSampler),
+            other => {
+                engine_bail!("galaxy3d::vulkan",
+                    "Unsupported SPIR-V descriptor type: {:?}", other);
+            }
+        }
+    }
+
+    /// Convert a spirq ScalarType to our ScalarKind
+    fn spirq_scalar_to_kind(scalar_ty: &spirq::ty::ScalarType) -> ScalarKind {
+        use spirq::ty::ScalarType;
+        match scalar_ty {
+            ScalarType::Float { bits: 64 } => ScalarKind::Float64,
+            ScalarType::Float { .. } => ScalarKind::Float32,
+            ScalarType::Integer { is_signed: true, .. } => ScalarKind::Int32,
+            ScalarType::Integer { is_signed: false, .. } => ScalarKind::UInt32,
+            ScalarType::Boolean => ScalarKind::Bool,
+            ScalarType::Void => ScalarKind::Float32,
+        }
+    }
+
+    /// Recursively convert a spirq Type to our ReflectedMemberType
+    fn spirq_type_to_reflected(ty: &spirq::ty::Type) -> ReflectedMemberType {
+        use spirq::ty::Type;
+        match ty {
+            Type::Scalar(s) => ReflectedMemberType::Scalar(Self::spirq_scalar_to_kind(s)),
+            Type::Vector(v) => ReflectedMemberType::Vector(
+                Self::spirq_scalar_to_kind(&v.scalar_ty),
+                v.nscalar,
+            ),
+            Type::Matrix(m) => ReflectedMemberType::Matrix(
+                Self::spirq_scalar_to_kind(&m.vector_ty.scalar_ty),
+                m.nvector,
+                m.vector_ty.nscalar,
+            ),
+            Type::Array(a) => ReflectedMemberType::Array {
+                element_type: Box::new(Self::spirq_type_to_reflected(&a.element_ty)),
+                count: a.nelement,
+                stride: a.stride.map(|s| s as u32),
+            },
+            Type::Struct(st) => {
+                let members = st.members.iter().map(|m| {
+                    ReflectedMember {
+                        name: m.name.clone().unwrap_or_default(),
+                        offset: m.offset.unwrap_or(0) as u32,
+                        size: m.ty.nbyte().map(|s| s as u32),
+                        member_type: Self::spirq_type_to_reflected(&m.ty),
+                    }
+                }).collect();
+                ReflectedMemberType::Struct(members)
+            }
+            // Fallback for image/sampler types (shouldn't appear inside struct members)
+            _ => ReflectedMemberType::Scalar(ScalarKind::Float32),
+        }
+    }
+
+    /// Extract reflected members from a spirq Type (populated for UBO/SSBO structs)
+    fn spirq_type_to_members(ty: &spirq::ty::Type) -> Vec<ReflectedMember> {
+        if let spirq::ty::Type::Struct(st) = ty {
+            st.members.iter().map(|m| {
+                ReflectedMember {
+                    name: m.name.clone().unwrap_or_default(),
+                    offset: m.offset.unwrap_or(0) as u32,
+                    size: m.ty.nbyte().map(|s| s as u32),
+                    member_type: Self::spirq_type_to_reflected(&m.ty),
+                }
+            }).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Merge reflected bindings from vertex + fragment shaders into a PipelineReflection
+    fn merge_shader_reflections(desc: &PipelineDesc) -> Result<PipelineReflection> {
+        let vk_vs = unsafe { &*(Arc::as_ptr(&desc.vertex_shader) as *const Shader) };
+        let vk_fs = unsafe { &*(Arc::as_ptr(&desc.fragment_shader) as *const Shader) };
+
+        // Merge bindings
+        let mut merged: Vec<ReflectedBinding> = Vec::new();
+
+        for binding in &vk_vs.reflected_bindings {
+            merged.push(binding.clone());
+        }
+
+        for fs_binding in &vk_fs.reflected_bindings {
+            if let Some(existing) = merged.iter_mut()
+                .find(|b| b.set == fs_binding.set && b.binding == fs_binding.binding)
+            {
+                if existing.binding_type != fs_binding.binding_type {
+                    engine_bail!("galaxy3d::vulkan",
+                        "Binding '{}' (set={}, binding={}) has different types in vertex ({:?}) and fragment ({:?})",
+                        existing.name, existing.set, existing.binding,
+                        existing.binding_type, fs_binding.binding_type);
+                }
+                existing.stage_flags = ShaderStageFlags::from_bits(
+                    existing.stage_flags.bits() | fs_binding.stage_flags.bits()
+                );
+            } else {
+                merged.push(fs_binding.clone());
+            }
+        }
+
+        // Merge push constants
+        let mut push_constants: Vec<ReflectedPushConstant> = Vec::new();
+
+        for pc in &vk_vs.reflected_push_constants {
+            push_constants.push(pc.clone());
+        }
+
+        for fs_pc in &vk_fs.reflected_push_constants {
+            if let Some(existing) = push_constants.iter_mut()
+                .find(|p| p.name == fs_pc.name)
+            {
+                // Same push constant block in both stages: merge stage_flags
+                existing.stage_flags = ShaderStageFlags::from_bits(
+                    existing.stage_flags.bits() | fs_pc.stage_flags.bits()
+                );
+            } else {
+                push_constants.push(fs_pc.clone());
+            }
+        }
+
+        Ok(PipelineReflection::new(merged, push_constants))
     }
 
     /// Convert PrimitiveTopology to Vulkan topology
@@ -1870,11 +2062,18 @@ impl Renderer for VulkanRenderer {
             let module = self.device.create_shader_module(&create_info, None)
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create shader module: {:?}", e))?;
 
+            // SPIR-V reflection via spirq
+            let stage_flags = Self::shader_stage_to_flags(desc.stage);
+            let (reflected_bindings, reflected_push_constants) =
+                Self::reflect_shader(code_u32, stage_flags)?;
+
             Ok(Arc::new(Shader {
                 module,
                 stage: self.shader_stage_to_vk(desc.stage),
                 entry_point: desc.entry_point.clone(),
                 device: (*self.device).clone(),
+                reflected_bindings,
+                reflected_push_constants,
             }))
         }
     }
@@ -2132,11 +2331,15 @@ impl Renderer for VulkanRenderer {
             // Destroy temporary render pass
             self.device.destroy_render_pass(temp_render_pass, None);
 
+            // Merge SPIR-V reflections from vertex + fragment shaders
+            let reflection = Self::merge_shader_reflections(&desc)?;
+
             Ok(Arc::new(Pipeline {
                 pipeline,
                 pipeline_layout: layout,
                 descriptor_set_layouts,
                 device: (*self.device).clone(),
+                reflection,
             }))
         }
     }
