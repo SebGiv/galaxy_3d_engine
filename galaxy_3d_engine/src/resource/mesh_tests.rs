@@ -159,10 +159,7 @@ fn create_test_material(pipeline: &Arc<Pipeline>, value: f32) -> Arc<Material> {
 
 /// Extract the "value" param from a material as f32
 fn material_value(material: &Arc<Material>) -> f32 {
-    match material.param("value").unwrap() {
-        ParamValue::Float(v) => *v,
-        _ => panic!("Expected Float param"),
-    }
+    material.param_by_name("value").unwrap().as_float().unwrap()
 }
 
 // ============================================================================

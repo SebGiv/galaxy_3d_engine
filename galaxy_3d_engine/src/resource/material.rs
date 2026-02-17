@@ -9,7 +9,7 @@
 /// Architecture:
 /// - Pipeline reference: which shader family to use (variant selected at render time)
 /// - Texture slots: named texture bindings with optional layer/region targeting
-/// - Parameters: named scalar/vector values (roughness, base_color, etc.)
+/// - Parameters: named scalar/vector/matrix values (roughness, base_color, etc.)
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use crate::error::Result;
 use crate::{engine_bail, engine_err};
 use crate::resource::texture::Texture;
 use crate::resource::pipeline::Pipeline;
+use crate::renderer::SamplerType;
 
 // ===== REFERENCE TYPES =====
 
@@ -49,6 +50,18 @@ pub enum ParamValue {
     Vec4([f32; 4]),
     Int(i32),
     UInt(u32),
+    Bool(bool),
+    Mat3([[f32; 3]; 3]),
+    Mat4([[f32; 4]; 4]),
+}
+
+// ===== MATERIAL PARAMETER =====
+
+/// A named parameter in the material
+#[derive(Debug, Clone)]
+pub struct MaterialParam {
+    name: String,
+    value: ParamValue,
 }
 
 // ===== MATERIAL TEXTURE SLOT =====
@@ -61,6 +74,7 @@ pub struct MaterialTextureSlot {
     texture: Arc<Texture>,
     layer: Option<u32>,
     region: Option<u32>,
+    sampler_type: SamplerType,
 }
 
 // ===== MATERIAL =====
@@ -73,7 +87,7 @@ pub struct Material {
     pipeline: Arc<Pipeline>,
     textures: Vec<MaterialTextureSlot>,
     texture_names: HashMap<String, usize>,
-    params: Vec<(String, ParamValue)>,
+    params: Vec<MaterialParam>,
     param_names: HashMap<String, usize>,
 }
 
@@ -92,6 +106,7 @@ pub struct MaterialTextureSlotDesc {
     pub texture: Arc<Texture>,
     pub layer: Option<LayerRef>,
     pub region: Option<RegionRef>,
+    pub sampler_type: SamplerType,
 }
 
 // ===== MATERIAL IMPLEMENTATION =====
@@ -183,6 +198,7 @@ impl Material {
                 texture: slot_desc.texture,
                 layer: resolved_layer,
                 region: resolved_region,
+                sampler_type: slot_desc.sampler_type,
             });
         }
 
@@ -192,7 +208,7 @@ impl Material {
 
         for (vec_index, (name, value)) in desc.params.into_iter().enumerate() {
             param_names.insert(name.clone(), vec_index);
-            params.push((name, value));
+            params.push(MaterialParam { name, value });
         }
 
         Ok(Self {
@@ -211,17 +227,27 @@ impl Material {
         &self.pipeline
     }
 
-    // ===== TEXTURE ACCESS =====
+    // ===== TEXTURE SLOT ACCESS =====
+
+    /// Get texture slot by index
+    pub fn texture_slot(&self, index: usize) -> Option<&MaterialTextureSlot> {
+        self.textures.get(index)
+    }
 
     /// Get texture slot by name
-    pub fn texture_slot(&self, name: &str) -> Option<&MaterialTextureSlot> {
+    pub fn texture_slot_by_name(&self, name: &str) -> Option<&MaterialTextureSlot> {
         let idx = self.texture_names.get(name)?;
         self.textures.get(*idx)
     }
 
-    /// Get texture slot by index
-    pub fn texture_slot_at(&self, index: usize) -> Option<&MaterialTextureSlot> {
-        self.textures.get(index)
+    /// Get texture slot index from name
+    pub fn texture_slot_id(&self, name: &str) -> Option<usize> {
+        self.texture_names.get(name).copied()
+    }
+
+    /// Get all texture slots as a slice
+    pub fn texture_slots(&self) -> &[MaterialTextureSlot] {
+        &self.textures
     }
 
     /// Get number of texture slots
@@ -231,20 +257,116 @@ impl Material {
 
     // ===== PARAM ACCESS =====
 
-    /// Get parameter value by name
-    pub fn param(&self, name: &str) -> Option<&ParamValue> {
-        let idx = self.param_names.get(name)?;
-        self.params.get(*idx).map(|(_, v)| v)
+    /// Get parameter by index
+    pub fn param(&self, index: usize) -> Option<&MaterialParam> {
+        self.params.get(index)
     }
 
-    /// Get parameter name and value by index
-    pub fn param_at(&self, index: usize) -> Option<(&str, &ParamValue)> {
-        self.params.get(index).map(|(n, v)| (n.as_str(), v))
+    /// Get parameter by name
+    pub fn param_by_name(&self, name: &str) -> Option<&MaterialParam> {
+        let idx = self.param_names.get(name)?;
+        self.params.get(*idx)
+    }
+
+    /// Get parameter index from name
+    pub fn param_id(&self, name: &str) -> Option<usize> {
+        self.param_names.get(name).copied()
+    }
+
+    /// Get all parameters as a slice
+    pub fn params(&self) -> &[MaterialParam] {
+        &self.params
     }
 
     /// Get number of parameters
     pub fn param_count(&self) -> usize {
         self.params.len()
+    }
+}
+
+// ===== MATERIAL PARAM ACCESSORS =====
+
+impl MaterialParam {
+    /// Get parameter name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get parameter value
+    pub fn value(&self) -> &ParamValue {
+        &self.value
+    }
+
+    /// Get as float (returns None if not a Float)
+    pub fn as_float(&self) -> Option<f32> {
+        match self.value {
+            ParamValue::Float(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as vec2 (returns None if not a Vec2)
+    pub fn as_vec2(&self) -> Option<[f32; 2]> {
+        match self.value {
+            ParamValue::Vec2(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as vec3 (returns None if not a Vec3)
+    pub fn as_vec3(&self) -> Option<[f32; 3]> {
+        match self.value {
+            ParamValue::Vec3(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as vec4 (returns None if not a Vec4)
+    pub fn as_vec4(&self) -> Option<[f32; 4]> {
+        match self.value {
+            ParamValue::Vec4(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as int (returns None if not an Int)
+    pub fn as_int(&self) -> Option<i32> {
+        match self.value {
+            ParamValue::Int(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as uint (returns None if not a UInt)
+    pub fn as_uint(&self) -> Option<u32> {
+        match self.value {
+            ParamValue::UInt(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as bool (returns None if not a Bool)
+    pub fn as_bool(&self) -> Option<bool> {
+        match self.value {
+            ParamValue::Bool(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as mat3 (returns None if not a Mat3)
+    pub fn as_mat3(&self) -> Option<[[f32; 3]; 3]> {
+        match self.value {
+            ParamValue::Mat3(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as mat4 (returns None if not a Mat4)
+    pub fn as_mat4(&self) -> Option<[[f32; 4]; 4]> {
+        match self.value {
+            ParamValue::Mat4(v) => Some(v),
+            _ => None,
+        }
     }
 }
 
@@ -269,6 +391,11 @@ impl MaterialTextureSlot {
     /// Get the resolved region index (None = whole layer)
     pub fn region(&self) -> Option<u32> {
         self.region
+    }
+
+    /// Get the sampler type for this texture slot
+    pub fn sampler_type(&self) -> SamplerType {
+        self.sampler_type
     }
 }
 

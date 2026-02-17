@@ -1,17 +1,22 @@
 /// Render instance types for the scene system.
 ///
 /// A RenderInstance is a flattened, GPU-ready representation of a resource::Mesh.
-/// It extracts all renderer-level objects (buffers, pipelines, descriptor sets)
+/// It extracts all renderer-level objects (buffers, pipelines, binding groups)
 /// from the resource hierarchy into a flat structure optimized for rendering.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use glam::{Vec3, Mat4};
 use slotmap::new_key_type;
 use crate::error::Result;
 use crate::engine_err;
 use crate::renderer::{
+    self,
     Buffer,
     Pipeline as RendererPipeline,
+    BindingGroup,
+    BindingResource,
+    BindingType,
     PrimitiveTopology,
 };
 use crate::resource::material::ParamValue;
@@ -51,12 +56,42 @@ pub const FLAG_CAST_SHADOW: u64    = 1 << 1;
 pub const FLAG_RECEIVE_SHADOW: u64 = 1 << 2;
 // Bits 3-63 reserved for future extensions
 
+// ===== RESOLVED PUSH CONSTANT =====
+
+/// A resolved push constant value ready for GPU submission
+///
+/// Pre-resolved at RenderInstance creation time from MaterialParam
+/// and pipeline reflection data.
+pub struct ResolvedPushConstant {
+    /// Byte offset in the push constant block
+    offset: u32,
+    /// Size in bytes
+    size: u32,
+    /// The parameter value
+    value: ParamValue,
+}
+
+// ===== RENDER PASS =====
+
+/// A single rendering pass with pre-resolved GPU bindings
+///
+/// Contains a pipeline and all bindings (binding groups + push constants)
+/// resolved from the Material against the pipeline's reflection data.
+pub struct RenderPass {
+    /// The renderer pipeline for this pass
+    pipeline: Arc<dyn RendererPipeline>,
+    /// Binding groups (textures, UBOs) per set index
+    binding_groups: Vec<Arc<dyn BindingGroup>>,
+    /// Pre-resolved push constant values with byte offsets
+    push_constants: Vec<ResolvedPushConstant>,
+}
+
 // ===== RENDER SUBMESH =====
 
 /// A single drawable submesh within a RenderLOD.
 ///
-/// Contains all data needed for a single draw call:
-/// buffer offsets, pipeline bindings, descriptor sets, and material parameters.
+/// Contains geometry offsets and one RenderPass per pipeline pass.
+/// Each RenderPass holds its own pipeline, binding groups, and push constants.
 pub struct RenderSubMesh {
     /// Base vertex offset in the shared vertex buffer
     vertex_offset: u32,
@@ -68,10 +103,8 @@ pub struct RenderSubMesh {
     index_count: u32,
     /// Primitive topology (TriangleList, LineList, etc.)
     topology: PrimitiveTopology,
-    /// Renderer pipelines, one per pass of the selected variant
-    passes: Vec<Arc<dyn RendererPipeline>>,
-    /// Material parameters for push constants
-    params: Vec<(String, ParamValue)>,
+    /// Rendering passes with pre-resolved bindings
+    passes: Vec<RenderPass>,
 }
 
 // ===== RENDER LOD =====
@@ -113,7 +146,8 @@ impl RenderInstance {
     /// Create a RenderInstance from a resource::Mesh
     ///
     /// Extracts all renderer-level objects from the resource hierarchy
-    /// into a flat structure optimized for rendering.
+    /// into a flat structure optimized for rendering. Resolves binding groups
+    /// and push constants against pipeline reflection data.
     ///
     /// # Arguments
     ///
@@ -121,11 +155,13 @@ impl RenderInstance {
     /// * `world_matrix` - World transform matrix
     /// * `bounding_box` - AABB in local space
     /// * `variant_index` - Pipeline variant to use (0 = default)
+    /// * `renderer` - Renderer for creating binding groups
     pub(crate) fn from_mesh(
         mesh: &Mesh,
         world_matrix: Mat4,
         bounding_box: AABB,
         variant_index: usize,
+        renderer: &Arc<Mutex<dyn renderer::Renderer>>,
     ) -> Result<Self> {
         let geometry = mesh.geometry();
         let geom_mesh = mesh.geometry_mesh();
@@ -173,15 +209,67 @@ impl RenderInstance {
                         .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
                             "Pass index {} out of range in variant {}",
                             pass_idx, variant_index))?;
-                    passes.push(Arc::clone(pass.renderer_pipeline()));
-                }
 
-                // Clone material parameters
-                let mut params = Vec::with_capacity(material.param_count());
-                for p_idx in 0..material.param_count() {
-                    if let Some((name, value)) = material.param_at(p_idx) {
-                        params.push((name.to_string(), value.clone()));
+                    let renderer_pipeline = pass.renderer_pipeline();
+                    let reflection = renderer_pipeline.reflection();
+
+                    // ========== RESOLVE PUSH CONSTANTS ==========
+                    let mut push_constants = Vec::new();
+                    for pc_block in reflection.push_constants() {
+                        for member in &pc_block.members {
+                            if let Some(param) = material.param_by_name(&member.name) {
+                                push_constants.push(ResolvedPushConstant {
+                                    offset: member.offset,
+                                    size: member.size.unwrap_or(0),
+                                    value: param.value().clone(),
+                                });
+                            }
+                        }
                     }
+
+                    // ========== RESOLVE BINDING GROUPS ==========
+                    // Group texture bindings by set index
+                    let mut sets: BTreeMap<u32, Vec<(u32, BindingResource)>> = BTreeMap::new();
+
+                    for binding_idx in 0..reflection.binding_count() {
+                        let binding = reflection.binding(binding_idx).unwrap();
+
+                        if binding.binding_type == BindingType::CombinedImageSampler {
+                            if let Some(slot) = material.texture_slot_by_name(&binding.name) {
+                                let renderer_texture = slot.texture().renderer_texture();
+                                sets.entry(binding.set)
+                                    .or_default()
+                                    .push((binding.binding, BindingResource::SampledTexture(
+                                        renderer_texture.as_ref(),
+                                        slot.sampler_type(),
+                                    )));
+                            }
+                        }
+                    }
+
+                    // Create binding groups for each set
+                    let mut binding_groups = Vec::new();
+                    let renderer_lock = renderer.lock().unwrap();
+                    for (set_index, mut resources) in sets {
+                        // Sort by binding index to match layout order
+                        resources.sort_by_key(|(binding, _)| *binding);
+                        let resource_refs: Vec<BindingResource> = resources.into_iter()
+                            .map(|(_, r)| r)
+                            .collect();
+                        let bg = renderer_lock.create_binding_group(
+                            renderer_pipeline,
+                            set_index,
+                            &resource_refs,
+                        )?;
+                        binding_groups.push(bg);
+                    }
+                    drop(renderer_lock);
+
+                    passes.push(RenderPass {
+                        pipeline: Arc::clone(renderer_pipeline),
+                        binding_groups,
+                        push_constants,
+                    });
                 }
 
                 sub_meshes.push(RenderSubMesh {
@@ -191,7 +279,6 @@ impl RenderInstance {
                     index_count: geom_submesh.index_count(),
                     topology: geom_submesh.topology(),
                     passes,
-                    params,
                 });
             }
 
@@ -318,14 +405,47 @@ impl RenderSubMesh {
         self.topology
     }
 
-    /// Get pipeline passes
-    pub fn passes(&self) -> &[Arc<dyn RendererPipeline>] {
+    /// Get rendering passes
+    pub fn passes(&self) -> &[RenderPass] {
         &self.passes
     }
+}
 
-    /// Get material parameters
-    pub fn params(&self) -> &[(String, ParamValue)] {
-        &self.params
+// ===== RENDER PASS ACCESSORS =====
+
+impl RenderPass {
+    /// Get the renderer pipeline
+    pub fn pipeline(&self) -> &Arc<dyn RendererPipeline> {
+        &self.pipeline
+    }
+
+    /// Get the binding groups
+    pub fn binding_groups(&self) -> &[Arc<dyn BindingGroup>] {
+        &self.binding_groups
+    }
+
+    /// Get the resolved push constants
+    pub fn push_constants(&self) -> &[ResolvedPushConstant] {
+        &self.push_constants
+    }
+}
+
+// ===== RESOLVED PUSH CONSTANT ACCESSORS =====
+
+impl ResolvedPushConstant {
+    /// Get the byte offset in the push constant block
+    pub fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    /// Get the size in bytes
+    pub fn size(&self) -> u32 {
+        self.size
+    }
+
+    /// Get the parameter value
+    pub fn value(&self) -> &ParamValue {
+        &self.value
     }
 }
 

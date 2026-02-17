@@ -1701,6 +1701,10 @@ resource::Material                     renderer::Pipeline (via réflexion)
 
 Cela éliminerait la spécification manuelle des bindings.
 
+Le design détaillé de l'intégration Material ↔ réflexion (validation des slots, résolution
+set/binding, séparation UBO/push constants, validation de type) est documenté dans
+[materials_and_passes.md, section 10](materials_and_passes.md#10-refactoring-material--intégration-avec-la-réflexion-pipeline).
+
 ### 16.7 Dépendance spirq
 
 Le crate **`spirq`** (pur Rust, activement maintenu) a été retenu pour la réflexion SPIR-V.

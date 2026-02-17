@@ -41,9 +41,10 @@ fn test_integration_scene_manager_lifecycle() {
 
     // Use scene manager: create scenes
     {
+        let renderer_arc = Engine::renderer("main").unwrap();
         let mut sm = sm_arc.lock().unwrap();
-        sm.create_scene("game").unwrap();
-        sm.create_scene("ui").unwrap();
+        sm.create_scene("game", renderer_arc.clone()).unwrap();
+        sm.create_scene("ui", renderer_arc.clone()).unwrap();
         assert_eq!(sm.scene_count(), 2);
 
         // Get a scene

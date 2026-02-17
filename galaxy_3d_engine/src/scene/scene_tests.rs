@@ -128,7 +128,7 @@ fn create_test_mesh(geometry: &Arc<Geometry>, material: &Arc<Material>) -> Mesh 
     Mesh::from_desc(desc).unwrap()
 }
 
-/// Helper: create all resources and return (geometry, pipeline, material, mesh)
+/// Helper: create all resources and return (renderer, geometry, pipeline, material, mesh)
 fn setup_resources() -> (
     Arc<Mutex<dyn crate::renderer::Renderer>>,
     Arc<Geometry>,
@@ -150,7 +150,8 @@ fn setup_resources() -> (
 
 #[test]
 fn test_scene_new_is_empty() {
-    let scene = Scene::new();
+    let renderer = create_mock_renderer();
+    let scene = Scene::new(renderer);
     assert_eq!(scene.render_instance_count(), 0);
 }
 
@@ -160,8 +161,8 @@ fn test_scene_new_is_empty() {
 
 #[test]
 fn test_create_render_instance() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -173,8 +174,8 @@ fn test_create_render_instance() {
 
 #[test]
 fn test_create_multiple_render_instances() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::X), create_test_aabb(), 0,
@@ -202,8 +203,8 @@ fn test_create_multiple_render_instances() {
 
 #[test]
 fn test_create_render_instance_returns_unique_keys() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -221,8 +222,8 @@ fn test_create_render_instance_returns_unique_keys() {
 
 #[test]
 fn test_remove_render_instance() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -237,8 +238,8 @@ fn test_remove_render_instance() {
 
 #[test]
 fn test_remove_render_instance_key_becomes_invalid() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -253,8 +254,8 @@ fn test_remove_render_instance_key_becomes_invalid() {
 
 #[test]
 fn test_remove_nonexistent_key_returns_none() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -270,8 +271,8 @@ fn test_remove_nonexistent_key_returns_none() {
 
 #[test]
 fn test_remove_does_not_invalidate_other_keys() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::X), create_test_aabb(), 0,
@@ -295,8 +296,8 @@ fn test_remove_does_not_invalidate_other_keys() {
 
 #[test]
 fn test_slot_reuse_after_remove() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -322,8 +323,8 @@ fn test_slot_reuse_after_remove() {
 
 #[test]
 fn test_render_instance_access() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key = scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)),
@@ -337,8 +338,8 @@ fn test_render_instance_access() {
 
 #[test]
 fn test_render_instance_mut_access() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -362,8 +363,8 @@ fn test_render_instance_mut_access() {
 
 #[test]
 fn test_render_instances_iteration() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::X), create_test_aabb(), 0,
@@ -383,8 +384,8 @@ fn test_render_instances_iteration() {
 
 #[test]
 fn test_render_instances_mut_iteration() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -406,8 +407,8 @@ fn test_render_instances_mut_iteration() {
 
 #[test]
 fn test_iteration_after_removal() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let _key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -429,7 +430,8 @@ fn test_iteration_after_removal() {
 
 #[test]
 fn test_iteration_empty_scene() {
-    let scene = Scene::new();
+    let renderer = create_mock_renderer();
+    let scene = Scene::new(renderer);
     let count = scene.render_instances().count();
     assert_eq!(count, 0);
 }
@@ -440,8 +442,8 @@ fn test_iteration_empty_scene() {
 
 #[test]
 fn test_clear() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -461,8 +463,8 @@ fn test_clear() {
 
 #[test]
 fn test_clear_then_add() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
 
     scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -485,8 +487,8 @@ fn test_clear_then_add() {
 
 #[test]
 fn test_many_instances() {
-    let (_, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new();
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
     let mut keys = Vec::new();
 
     // Add 100 instances

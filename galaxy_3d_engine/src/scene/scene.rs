@@ -3,9 +3,11 @@
 /// Uses a SlotMap for O(1) insert/remove with stable keys.
 /// Instances are stored contiguously for cache-friendly iteration.
 
+use std::sync::{Arc, Mutex};
 use slotmap::SlotMap;
 use glam::Mat4;
 use crate::error::Result;
+use crate::renderer;
 use crate::resource::mesh::Mesh;
 use super::render_instance::{
     RenderInstance, RenderInstanceKey, AABB,
@@ -15,15 +17,19 @@ use super::render_instance::{
 ///
 /// Instances are managed via stable keys (RenderInstanceKey).
 /// Keys remain valid even after other instances are removed.
+/// The scene holds a reference to the Renderer for creating GPU binding groups.
 pub struct Scene {
+    /// Renderer for creating GPU resources (binding groups)
+    renderer: Arc<Mutex<dyn renderer::Renderer>>,
     /// Render instances stored in a slot map for O(1) insert/remove
     render_instances: SlotMap<RenderInstanceKey, RenderInstance>,
 }
 
 impl Scene {
     /// Create a new empty scene (internal: only via SceneManager)
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Self {
         Self {
+            renderer,
             render_instances: SlotMap::with_key(),
         }
     }
@@ -31,6 +37,7 @@ impl Scene {
     /// Create a RenderInstance from a Mesh and add it to the scene
     ///
     /// Returns a stable key that remains valid until the instance is removed.
+    /// Resolves binding groups and push constants against pipeline reflection.
     ///
     /// # Arguments
     ///
@@ -46,7 +53,7 @@ impl Scene {
         variant_index: usize,
     ) -> Result<RenderInstanceKey> {
         let instance = RenderInstance::from_mesh(
-            mesh, world_matrix, bounding_box, variant_index,
+            mesh, world_matrix, bounding_box, variant_index, &self.renderer,
         )?;
         let key = self.render_instances.insert(instance);
         Ok(key)

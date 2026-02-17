@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail};
+use crate::renderer;
 use super::scene::Scene;
 
 /// Scene manager singleton (managed by Engine)
@@ -32,13 +33,17 @@ impl SceneManager {
     /// # Errors
     ///
     /// Returns an error if a scene with the same name already exists.
-    pub fn create_scene(&mut self, name: &str) -> Result<Arc<Mutex<Scene>>> {
+    pub fn create_scene(
+        &mut self,
+        name: &str,
+        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    ) -> Result<Arc<Mutex<Scene>>> {
         if self.scenes.contains_key(name) {
             engine_bail!("galaxy3d::SceneManager",
                 "Scene '{}' already exists", name);
         }
 
-        let scene = Arc::new(Mutex::new(Scene::new()));
+        let scene = Arc::new(Mutex::new(Scene::new(renderer)));
         self.scenes.insert(name.to_string(), Arc::clone(&scene));
         Ok(scene)
     }

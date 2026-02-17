@@ -24,7 +24,7 @@ pub use pipeline::{
     PipelineDesc, PipelineVariantDesc, PipelinePassDesc,
 };
 pub use material::{
-    Material, MaterialTextureSlot,
+    Material, MaterialTextureSlot, MaterialParam,
     MaterialDesc, MaterialTextureSlotDesc,
     LayerRef, RegionRef, ParamValue,
 };

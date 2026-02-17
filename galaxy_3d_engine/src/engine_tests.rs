@@ -743,13 +743,14 @@ fn test_scene_manager_retrieval_success() {
 fn test_scene_manager_returned_is_usable() {
     setup();
 
+    let renderer = Engine::create_renderer("test_sm_usable", MockRenderer::new()).unwrap();
     Engine::create_scene_manager().unwrap();
 
     let sm = Engine::scene_manager().unwrap();
 
     // Lock and use the scene manager
     let mut guard = sm.lock().unwrap();
-    let scene = guard.create_scene("test_scene");
+    let scene = guard.create_scene("test_scene", renderer);
     assert!(scene.is_ok());
 }
 
@@ -838,10 +839,11 @@ fn test_full_engine_lifecycle_with_scene_manager() {
 
     // Use scene manager
     {
+        let renderer = Engine::renderer("test_full_sm").unwrap();
         let sm = Engine::scene_manager().unwrap();
         let mut guard = sm.lock().unwrap();
-        guard.create_scene("main").unwrap();
-        guard.create_scene("ui").unwrap();
+        guard.create_scene("main", renderer.clone()).unwrap();
+        guard.create_scene("ui", renderer.clone()).unwrap();
         assert_eq!(guard.scene_count(), 2);
     }
 

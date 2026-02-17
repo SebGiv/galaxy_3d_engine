@@ -17,6 +17,14 @@
 7. [Gestion des passes dans le système de rendu](#7-gestion-des-passes-dans-le-système-de-rendu)
 8. [Comment les moteurs modernes gèrent ça](#8-comment-les-moteurs-modernes-gèrent-ça)
 9. [Recommandations pour Galaxy3D](#9-recommandations-pour-galaxy3d)
+10. [Refactoring Material : intégration avec la réflexion pipeline](#10-refactoring-material--intégration-avec-la-réflexion-pipeline)
+   - 10.1 [État actuel et problèmes](#101-état-actuel-et-problèmes)
+   - 10.2 [Objectif : Material validé et pré-résolu à la création](#102-objectif--material-validé-et-pré-résolu-à-la-création)
+   - 10.3 [Changements prévus sur MaterialTextureSlot](#103-changements-prévus-sur-materialtextureslot)
+   - 10.4 [Séparation des paramètres : UBO members vs push constant members](#104-séparation-des-paramètres--ubo-members-vs-push-constant-members)
+   - 10.5 [Validation de type à la création](#105-validation-de-type-à-la-création)
+   - 10.6 [Flux de résolution à la création](#106-flux-de-résolution-à-la-création)
+   - 10.7 [Comparaison avec Unity et Unreal](#107-comparaison-avec-unity-et-unreal)
 
 ---
 
@@ -742,6 +750,136 @@ pub enum MaterialParam {
 2. **Extension PipelineVariant** avec `Vec<PipelinePass>` — transformer le champ unique en liste
 3. **Pipeline mono-passe** standard forward — couvre 90% des cas
 4. **Pipelines multi-passe** (toon outline, glass) — ajoutés selon les besoins
+
+---
+
+## 10. Refactoring Material : intégration avec la réflexion pipeline
+
+> **Statut** : Design en cours
+> **Date** : 2026-02-16
+> **Prérequis** : Section 16 de [pipeline_data_binding.md](pipeline_data_binding.md) (réflexion SPIR-V)
+
+### 10.1 État actuel et problèmes
+
+Le `resource::Material` actuel est un sac de données nommées sans lien avec la réflexion :
+
+```
+Material
+├── pipeline: Arc<Pipeline>
+├── textures: Vec<MaterialTextureSlot>      (nom → texture + layer/region)
+│   └── name, texture, layer, region
+├── texture_names: HashMap<String, usize>
+├── params: Vec<(String, ParamValue)>       (nom → Float/Vec2/.../UInt)
+└── param_names: HashMap<String, usize>
+```
+
+Problèmes identifiés :
+
+1. **Aucune validation contre le shader** — on peut créer un texture slot `"foo"` qui n'existe
+   pas dans le pipeline. Aucune erreur tant qu'on ne fait pas le binding GPU
+2. **Pas de résolution set/binding** — les noms (`"texSampler"`, `"roughness"`) ne sont pas
+   résolus vers les coordonnées GPU `(set, binding)`. Le code de rendu devra faire cette
+   résolution à chaque frame
+3. **Pas de distinction params vs UBO vs push constants** — `params` est un `Vec` flat.
+   Or dans le shader, les paramètres vivent soit dans un uniform buffer (set/binding + offset),
+   soit dans des push constants (offset seul). Le Material ne fait aucune distinction
+4. **Pas de validation de type** — on pourrait mettre un `Float` pour un paramètre qui est
+   un `Vec4` dans le shader. Aucune vérification
+
+### 10.2 Objectif : Material validé et pré-résolu à la création
+
+Grâce à `PipelineReflection` (cf. [pipeline_data_binding.md, section 16](pipeline_data_binding.md#16-réflexion-spir-v--mapping-nom--binding)),
+le Material peut être validé dès `from_desc()` :
+
+- Chaque texture slot → vérifié dans la réflexion (existe ? est-ce un sampler ?)
+- Chaque paramètre → localisé dans un UBO ou push constant (set/binding + offset)
+- Types croisés → `ParamValue::Float` vérifié contre `ReflectedMember::Scalar(Float32)`
+
+### 10.3 Changements prévus sur MaterialTextureSlot
+
+Le slot stockera les coordonnées GPU résolues :
+
+```
+MaterialTextureSlot (actuel)        MaterialTextureSlot (futur)
+├── name: String                    ├── name: String
+├── texture: Arc<Texture>           ├── texture: Arc<Texture>
+├── layer: Option<u32>              ├── layer: Option<u32>
+└── region: Option<u32>             ├── region: Option<u32>
+                                    ├── set: u32          ← résolu via réflexion
+                                    └── binding: u32      ← résolu via réflexion
+```
+
+Validation à la création :
+
+```
+MaterialDesc.textures["texSampler"]
+  → pipeline.reflection().binding_by_name("texSampler")
+  → Vérifie : existe ? binding_type == CombinedImageSampler ?
+  → Stocke (set, binding) dans le slot
+```
+
+### 10.4 Séparation des paramètres : UBO members vs push constant members
+
+Actuellement `params` est un `Vec` flat. Le shader distingue deux destinations :
+
+- **Uniform buffer members** : `set/binding` + `offset` dans le buffer
+- **Push constant members** : `offset` dans le push constant range
+
+La réflexion fournit cette information :
+
+- `ReflectedBinding.members` → pour les UBO/SSBO
+- `ReflectedPushConstant.members` → pour les push constants
+
+Le Material doit séparer les paramètres en deux catégories résolues, chacune
+avec le nom, la valeur, et les coordonnées GPU (set/binding/offset ou offset seul).
+
+### 10.5 Validation de type à la création
+
+Croisement `ParamValue` ↔ `ReflectedMemberType` :
+
+| ParamValue       | ReflectedMemberType attendu |
+|------------------|-----------------------------|
+| `Float(f32)`     | `Scalar(Float32)`           |
+| `Vec2([f32; 2])` | `Vector(Float32, 2)`        |
+| `Vec3([f32; 3])` | `Vector(Float32, 3)`        |
+| `Vec4([f32; 4])` | `Vector(Float32, 4)`        |
+| `Int(i32)`       | `Scalar(Int32)`             |
+| `UInt(u32)`      | `Scalar(UInt32)`            |
+
+Si le type ne correspond pas → `engine_bail!` à la création du Material.
+
+### 10.6 Flux de résolution à la création
+
+```
+MaterialDesc
+  ├── pipeline: Arc<Pipeline>
+  ├── textures: [("texSampler", texture, layer, region)]
+  └── params: [("roughness", Float(0.5)), ("base_color", Vec3(...))]
+
+from_desc():
+  1. Pour chaque pass du pipeline (variant 0 par défaut) :
+     reflection = pass.renderer_pipeline().reflection()
+
+  2. Pour chaque texture slot :
+     binding = reflection.binding_by_name(slot.name)
+     → Erreur si absent ou si binding_type n'est pas un sampler
+     → Stocker (set, binding) dans MaterialTextureSlot
+
+  3. Pour chaque paramètre :
+     Chercher dans reflection.bindings (membres UBO)
+     Chercher dans reflection.push_constants (membres push constant)
+     → Erreur si introuvable ou si type incompatible
+     → Stocker la destination résolue
+```
+
+### 10.7 Comparaison avec Unity et Unreal
+
+| Aspect                    | Unity              | Unreal             | Galaxy3D (prévu)          |
+|---------------------------|--------------------|--------------------|---------------------------|
+| Validation paramètres     | Éditeur seulement  | Éditeur seulement  | À la création (code)      |
+| Résolution noms → GPU     | Runtime (shader)   | Runtime (material)  | À la création (réflexion) |
+| Distinction UBO/push const| Non exposé         | Non exposé          | Explicite via réflexion   |
+| Détection type mismatch   | Warning éditeur    | Warning éditeur     | `engine_bail!` à la création |
 
 ---
 

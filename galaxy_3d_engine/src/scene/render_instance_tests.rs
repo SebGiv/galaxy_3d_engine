@@ -8,7 +8,7 @@ use super::*;
 use crate::renderer::mock_renderer::{MockRenderer, MockShader};
 use crate::renderer::{
     PrimitiveTopology, BufferFormat, TextureFormat, TextureUsage,
-    MipmapMode, TextureData,
+    MipmapMode, TextureData, SamplerType,
     VertexLayout, VertexBinding, VertexAttribute,
     VertexInputRate, IndexType,
 };
@@ -241,6 +241,7 @@ fn create_test_material_with_texture(
             texture: texture.clone(),
             layer: None,
             region: None,
+            sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
@@ -382,7 +383,7 @@ fn test_from_mesh_basic() {
     let matrix = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
     let aabb = create_test_aabb();
 
-    let instance = RenderInstance::from_mesh(&mesh, matrix, aabb, 0).unwrap();
+    let instance = RenderInstance::from_mesh(&mesh, matrix, aabb, 0, &renderer).unwrap();
 
     assert_eq!(*instance.world_matrix(), matrix);
     assert_eq!(instance.variant_index(), 0);
@@ -399,7 +400,7 @@ fn test_from_mesh_lod_count() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // Mesh has 2 LODs
@@ -418,7 +419,7 @@ fn test_from_mesh_submesh_count_per_lod() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // LOD 0: body + head = 2 submeshes
@@ -436,7 +437,7 @@ fn test_from_mesh_extracts_geometry_data() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // LOD 0, submesh 0 = "body": vertex_offset=0, vertex_count=4, index_offset=0, index_count=6
@@ -471,7 +472,7 @@ fn test_from_mesh_extracts_pipeline_passes() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // Single variant, single pass → 1 pass per submesh
@@ -488,7 +489,7 @@ fn test_from_mesh_multi_pass_pipeline() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // Multi-pass variant → 2 passes per submesh
@@ -497,7 +498,7 @@ fn test_from_mesh_multi_pass_pipeline() {
 }
 
 #[test]
-fn test_from_mesh_extracts_params() {
+fn test_from_mesh_render_pass_structure() {
     let renderer = create_mock_renderer();
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
@@ -505,23 +506,24 @@ fn test_from_mesh_extracts_params() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
-    // Material has param "color" = Vec4([1.0, 0.5, 0.2, 1.0])
+    // Each submesh has passes with pipeline, binding groups, push constants
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.params().len(), 1);
-    assert_eq!(sm.params()[0].0, "color");
-    match &sm.params()[0].1 {
-        ParamValue::Vec4(v) => {
-            assert_eq!(*v, [1.0, 0.5, 0.2, 1.0]);
-        }
-        _ => panic!("Expected Vec4 param"),
-    }
+    assert_eq!(sm.passes().len(), 1);
+
+    let pass = &sm.passes()[0];
+    // Pipeline should be set
+    assert!(pass.pipeline().as_ref().reflection().binding_count() == 0);
+    // No matching push constants in mock reflection → empty
+    assert!(pass.push_constants().is_empty());
+    // No matching texture bindings in mock reflection → empty
+    assert!(pass.binding_groups().is_empty());
 }
 
 #[test]
-fn test_from_mesh_material_with_multiple_params() {
+fn test_from_mesh_material_with_texture_no_matching_reflection() {
     let renderer = create_mock_renderer();
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
@@ -530,14 +532,16 @@ fn test_from_mesh_material_with_multiple_params() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
-    // Material has params "roughness" and "metallic"
+    // Material has textures and params, but mock reflection has no matching bindings
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.params().len(), 2);
-    assert_eq!(sm.params()[0].0, "roughness");
-    assert_eq!(sm.params()[1].0, "metallic");
+    assert_eq!(sm.passes().len(), 1);
+    // No CombinedImageSampler bindings in mock → no binding groups created
+    assert!(sm.passes()[0].binding_groups().is_empty());
+    // No push constant members in mock → no push constants resolved
+    assert!(sm.passes()[0].push_constants().is_empty());
 }
 
 #[test]
@@ -549,7 +553,7 @@ fn test_from_mesh_non_indexed_geometry() {
     let mesh = create_non_indexed_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // No index buffer
@@ -570,7 +574,7 @@ fn test_from_mesh_indexed_geometry_has_buffers() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // Has both vertex and index buffer
@@ -587,7 +591,7 @@ fn test_from_mesh_variant_index_selection() {
 
     // Use variant 1 ("shadow")
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 1,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 1, &renderer,
     ).unwrap();
 
     assert_eq!(instance.variant_index(), 1);
@@ -605,7 +609,7 @@ fn test_from_mesh_default_flags() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // Default flags = FLAG_VISIBLE only
@@ -626,7 +630,7 @@ fn test_from_mesh_stores_bounding_box() {
         max: Vec3::new(5.0, 10.0, 5.0),
     };
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, aabb, 0,
+        &mesh, Mat4::IDENTITY, aabb, 0, &renderer,
     ).unwrap();
 
     assert_eq!(instance.bounding_box().min, Vec3::new(-5.0, 0.0, -5.0));
@@ -647,7 +651,7 @@ fn test_from_mesh_invalid_variant_index() {
 
     // Variant index 99 does not exist
     let result = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 99,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 99, &renderer,
     );
     assert!(result.is_err());
 }
@@ -665,7 +669,7 @@ fn test_set_world_matrix() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     assert_eq!(*instance.world_matrix(), Mat4::IDENTITY);
@@ -684,7 +688,7 @@ fn test_set_flags() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     let new_flags = FLAG_VISIBLE | FLAG_CAST_SHADOW | FLAG_RECEIVE_SHADOW;
@@ -701,7 +705,7 @@ fn test_set_visible_true() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // Start visible
@@ -727,7 +731,7 @@ fn test_set_visible_preserves_other_flags() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     // Set multiple flags
@@ -758,7 +762,7 @@ fn test_render_lod_sub_mesh_access() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     let lod = instance.lod(0).unwrap();
@@ -781,7 +785,7 @@ fn test_render_submesh_all_accessors() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
     ).unwrap();
 
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
@@ -796,8 +800,10 @@ fn test_render_submesh_all_accessors() {
     // Pipeline passes
     assert_eq!(sm.passes().len(), 1);
 
-    // Params
-    assert_eq!(sm.params().len(), 2);
+    // RenderPass structure
+    let pass = &sm.passes()[0];
+    assert!(pass.binding_groups().is_empty());
+    assert!(pass.push_constants().is_empty());
 }
 
 // ============================================================================
