@@ -1133,14 +1133,29 @@ impl Renderer for VulkanRenderer {
                 subpass = subpass.depth_stencil_attachment(depth_ref);
             }
 
-            // Subpass dependency
+            // Subpass dependency — include depth stages when depth attachment is present
+            let has_depth = depth_attachment_ref.is_some();
+            let (stage_mask, access_mask) = if has_depth {
+                (
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                )
+            } else {
+                (
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                )
+            };
+
             let dependency = vk::SubpassDependency::default()
                 .src_subpass(vk::SUBPASS_EXTERNAL)
                 .dst_subpass(0)
-                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .src_stage_mask(stage_mask)
                 .src_access_mask(vk::AccessFlags::empty())
-                .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+                .dst_stage_mask(stage_mask)
+                .dst_access_mask(access_mask);
 
             // Create render pass
             let render_pass_info = vk::RenderPassCreateInfo::default()
@@ -1331,6 +1346,13 @@ impl Renderer for VulkanRenderer {
                 usage_flags |= vk::ImageUsageFlags::TRANSFER_SRC;
             }
 
+            // Depth/stencil textures need DEPTH aspect, all others use COLOR
+            let aspect_mask = if matches!(desc.usage, TextureUsage::DepthStencil) {
+                vk::ImageAspectFlags::DEPTH
+            } else {
+                vk::ImageAspectFlags::COLOR
+            };
+
             // Create image
             let image_create_info = vk::ImageCreateInfo::default()
                 .image_type(vk::ImageType::TYPE_2D)
@@ -1383,7 +1405,7 @@ impl Renderer for VulkanRenderer {
                     a: vk::ComponentSwizzle::IDENTITY,
                 })
                 .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    aspect_mask,
                     base_mip_level: 0,
                     level_count: mip_levels,
                     base_array_layer: 0,
@@ -1446,7 +1468,7 @@ impl Renderer for VulkanRenderer {
                     .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                     .image(image)
                     .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        aspect_mask,
                         base_mip_level: 0,
                         level_count: mip_levels,
                         base_array_layer: 0,
@@ -1510,7 +1532,7 @@ impl Renderer for VulkanRenderer {
                         .buffer_row_length(0)
                         .buffer_image_height(0)
                         .image_subresource(vk::ImageSubresourceLayers {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            aspect_mask,
                             mip_level: 0,
                             base_array_layer: *layer_index,
                             layer_count: 1,
@@ -1552,7 +1574,7 @@ impl Renderer for VulkanRenderer {
                                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                                 .image(image)
                                 .subresource_range(vk::ImageSubresourceRange {
-                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    aspect_mask,
                                     base_mip_level: src_mip,
                                     level_count: 1,
                                     base_array_layer: 0,
@@ -1574,7 +1596,7 @@ impl Renderer for VulkanRenderer {
                             // Blit from src_mip to dst_mip
                             let blit = vk::ImageBlit::default()
                                 .src_subresource(vk::ImageSubresourceLayers {
-                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    aspect_mask,
                                     mip_level: src_mip,
                                     base_array_layer: 0,
                                     layer_count: array_layers,
@@ -1588,7 +1610,7 @@ impl Renderer for VulkanRenderer {
                                     },
                                 ])
                                 .dst_subresource(vk::ImageSubresourceLayers {
-                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    aspect_mask,
                                     mip_level: mip,
                                     base_array_layer: 0,
                                     layer_count: array_layers,
@@ -1620,7 +1642,7 @@ impl Renderer for VulkanRenderer {
                                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                                 .image(image)
                                 .subresource_range(vk::ImageSubresourceRange {
-                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                    aspect_mask,
                                     base_mip_level: src_mip,
                                     level_count: 1,
                                     base_array_layer: 0,
@@ -1648,7 +1670,7 @@ impl Renderer for VulkanRenderer {
                             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                             .image(image)
                             .subresource_range(vk::ImageSubresourceRange {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                aspect_mask,
                                 base_mip_level: mip_levels - 1,
                                 level_count: 1,
                                 base_array_layer: 0,
@@ -1721,7 +1743,7 @@ impl Renderer for VulkanRenderer {
                                         .buffer_row_length(0)
                                         .buffer_image_height(0)
                                         .image_subresource(vk::ImageSubresourceLayers {
-                                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                                            aspect_mask,
                                             mip_level,
                                             base_array_layer: 0,
                                             layer_count: array_layers,
@@ -1803,7 +1825,7 @@ impl Renderer for VulkanRenderer {
                                             .buffer_row_length(0)
                                             .buffer_image_height(0)
                                             .image_subresource(vk::ImageSubresourceLayers {
-                                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                                aspect_mask,
                                                 mip_level,
                                                 base_array_layer: layer_data.layer,
                                                 layer_count: 1,
@@ -1837,7 +1859,7 @@ impl Renderer for VulkanRenderer {
                             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                             .image(image)
                             .subresource_range(vk::ImageSubresourceRange {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                aspect_mask,
                                 base_mip_level: 0,
                                 level_count: mip_levels,
                                 base_array_layer: 0,
@@ -1865,7 +1887,7 @@ impl Renderer for VulkanRenderer {
                             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                             .image(image)
                             .subresource_range(vk::ImageSubresourceRange {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                aspect_mask,
                                 base_mip_level: 0,
                                 level_count: mip_levels,
                                 base_array_layer: 0,
@@ -1940,7 +1962,7 @@ impl Renderer for VulkanRenderer {
                     .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                     .image(image)
                     .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        aspect_mask,
                         base_mip_level: 0,
                         level_count: mip_levels,
                         base_array_layer: 0,
@@ -2085,35 +2107,75 @@ impl Renderer for VulkanRenderer {
 
         unsafe {
             // Create a temporary render pass for pipeline creation
-            // TODO: Pipeline should be created with an explicit render pass
+            // Must include depth attachment when depth/stencil testing is enabled
             let color_attachment = vk::AttachmentDescription::default()
-                .format(vk::Format::B8G8R8A8_SRGB) // Hardcoded for now
+                .format(vk::Format::B8G8R8A8_SRGB)
                 .samples(vk::SampleCountFlags::TYPE_1)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .store_op(vk::AttachmentStoreOp::STORE)
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
             let color_attachment_ref = vk::AttachmentReference::default()
                 .attachment(0)
                 .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-            let subpass = vk::SubpassDescription::default()
+            let needs_depth = desc.depth_stencil.depth_test_enable
+                || desc.depth_stencil.stencil_test_enable;
+
+            let mut attachments = vec![color_attachment];
+
+            let depth_attachment_ref = vk::AttachmentReference::default()
+                .attachment(1)
+                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+            if needs_depth {
+                let depth_attachment = vk::AttachmentDescription::default()
+                    .format(vk::Format::D32_SFLOAT)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED)
+                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+                attachments.push(depth_attachment);
+            }
+
+            let mut subpass = vk::SubpassDescription::default()
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                 .color_attachments(std::slice::from_ref(&color_attachment_ref));
+
+            if needs_depth {
+                subpass = subpass.depth_stencil_attachment(&depth_attachment_ref);
+            }
+
+            let dst_stage = if needs_depth {
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+            } else {
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+            };
+            let dst_access = if needs_depth {
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+            } else {
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+            };
 
             let dependency = vk::SubpassDependency::default()
                 .src_subpass(vk::SUBPASS_EXTERNAL)
                 .dst_subpass(0)
-                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
                 .src_access_mask(vk::AccessFlags::empty())
-                .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
+                .dst_stage_mask(dst_stage)
+                .dst_access_mask(dst_access);
 
             let render_pass_info = vk::RenderPassCreateInfo::default()
-                .attachments(std::slice::from_ref(&color_attachment))
+                .attachments(&attachments)
                 .subpasses(std::slice::from_ref(&subpass))
                 .dependencies(std::slice::from_ref(&dependency));
 
