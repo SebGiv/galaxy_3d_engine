@@ -247,11 +247,9 @@ impl RendererSwapchain for Swapchain {
                 )
                 .map_err(|e| {
                     if e == vk::Result::ERROR_OUT_OF_DATE_KHR {
-                        engine_error!("galaxy3d::vulkan", "Swapchain out of date during acquire");
-                        Error::BackendError("Swapchain out of date".to_string())
+                        engine_err!("galaxy3d::vulkan", "Swapchain out of date during acquire")
                     } else {
-                        engine_error!("galaxy3d::vulkan", "Failed to acquire next swapchain image: {:?}", e);
-                        Error::BackendError(format!("Failed to acquire next image: {:?}", e))
+                        engine_err!("galaxy3d::vulkan", "Failed to acquire next swapchain image: {:?}", e)
                     }
                 })?;
 

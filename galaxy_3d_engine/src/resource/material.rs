@@ -55,6 +55,23 @@ pub enum ParamValue {
     Mat4([[f32; 4]; 4]),
 }
 
+impl ParamValue {
+    /// Convert to raw bytes for GPU push constants
+    pub fn as_bytes(&self) -> Vec<u8> {
+        match self {
+            ParamValue::Float(v) => v.to_ne_bytes().to_vec(),
+            ParamValue::Vec2(v) => v.iter().flat_map(|f| f.to_ne_bytes()).collect(),
+            ParamValue::Vec3(v) => v.iter().flat_map(|f| f.to_ne_bytes()).collect(),
+            ParamValue::Vec4(v) => v.iter().flat_map(|f| f.to_ne_bytes()).collect(),
+            ParamValue::Int(v) => v.to_ne_bytes().to_vec(),
+            ParamValue::UInt(v) => v.to_ne_bytes().to_vec(),
+            ParamValue::Bool(v) => (if *v { 1u32 } else { 0u32 }).to_ne_bytes().to_vec(),
+            ParamValue::Mat3(v) => v.iter().flat_map(|row| row.iter().flat_map(|f| f.to_ne_bytes())).collect(),
+            ParamValue::Mat4(v) => v.iter().flat_map(|col| col.iter().flat_map(|f| f.to_ne_bytes())).collect(),
+        }
+    }
+}
+
 // ===== MATERIAL PARAMETER =====
 
 /// A named parameter in the material

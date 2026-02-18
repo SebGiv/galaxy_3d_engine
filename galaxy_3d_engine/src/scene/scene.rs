@@ -7,11 +7,24 @@ use std::sync::{Arc, Mutex};
 use slotmap::SlotMap;
 use glam::Mat4;
 use crate::error::Result;
-use crate::renderer;
+use crate::renderer::{self, CommandList, ShaderStage};
 use crate::resource::mesh::Mesh;
+use crate::camera::{Camera, RenderView};
 use super::render_instance::{
     RenderInstance, RenderInstanceKey, AABB,
 };
+
+/// Convert a Mat4 to a byte slice (64 bytes, column-major).
+///
+/// Safe for glam::Mat4 which is `#[repr(C)]` containing only f32 values.
+fn mat4_as_bytes(m: &Mat4) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(
+            m as *const Mat4 as *const u8,
+            std::mem::size_of::<Mat4>(),
+        )
+    }
+}
 
 /// A renderable scene containing RenderInstances.
 ///
@@ -107,6 +120,103 @@ impl Scene {
     /// Remove all render instances
     pub fn clear(&mut self) {
         self.render_instances.clear();
+    }
+
+    /// Cull visible instances against the camera's frustum.
+    ///
+    /// Returns a RenderView containing a camera snapshot and the keys
+    /// of all visible instances. The RenderView is ephemeral (one frame)
+    /// and can be shared across multiple render passes.
+    ///
+    /// V1: returns ALL instances (no actual frustum culling).
+    pub fn frustum_cull(&self, camera: &Camera) -> RenderView {
+        let visible_instances: Vec<RenderInstanceKey> =
+            self.render_instances.keys().collect();
+        RenderView::new(camera.clone(), visible_instances)
+    }
+
+    /// Draw visible instances from a RenderView into a command list.
+    ///
+    /// Must be called within an active render pass (between begin_render_pass
+    /// and end_render_pass). Sets viewport and scissor from the camera.
+    ///
+    /// V1: Uses LOD 0, pushes MVP (offset 0) and Model (offset 64) matrices
+    /// as vertex shader push constants (128 bytes total).
+    pub fn draw(
+        &self,
+        view: &RenderView,
+        cmd: &mut dyn CommandList,
+    ) -> Result<()> {
+        let camera = view.camera();
+        let view_proj = camera.view_projection_matrix();
+
+        // Dynamic state from camera
+        cmd.set_viewport(*camera.viewport())?;
+        cmd.set_scissor(camera.effective_scissor())?;
+
+        for &key in view.visible_instances() {
+            let instance = match self.render_instances.get(key) {
+                Some(inst) => inst,
+                None => continue, // removed between cull and draw
+            };
+
+            let model = *instance.world_matrix();
+            let mvp = view_proj * model;
+
+            // Bind shared buffers
+            cmd.bind_vertex_buffer(instance.vertex_buffer(), 0)?;
+            if let Some(ib) = instance.index_buffer() {
+                cmd.bind_index_buffer(ib, 0, instance.index_type())?;
+            }
+
+            // LOD 0 only (V1)
+            let lod = match instance.lod(0) {
+                Some(lod) => lod,
+                None => continue,
+            };
+
+            for sm_idx in 0..lod.sub_mesh_count() {
+                let sub_mesh = lod.sub_mesh(sm_idx).unwrap();
+
+                for pass in sub_mesh.passes() {
+                    cmd.bind_pipeline(pass.pipeline())?;
+
+                    // Material binding groups
+                    for (set_idx, bg) in pass.binding_groups().iter().enumerate() {
+                        cmd.bind_binding_group(pass.pipeline(), set_idx as u32, bg)?;
+                    }
+
+                    // Engine push constants: MVP (offset 0) + Model (offset 64)
+                    cmd.push_constants(
+                        &[ShaderStage::Vertex], 0, mat4_as_bytes(&mvp),
+                    )?;
+                    cmd.push_constants(
+                        &[ShaderStage::Vertex], 64, mat4_as_bytes(&model),
+                    )?;
+
+                    // Material push constants (at their reflected offsets)
+                    for pc in pass.push_constants() {
+                        let bytes = pc.value().as_bytes();
+                        cmd.push_constants(
+                            &[ShaderStage::Vertex], pc.offset(), &bytes,
+                        )?;
+                    }
+
+                    // Issue draw call
+                    if sub_mesh.index_count() > 0 {
+                        cmd.draw_indexed(
+                            sub_mesh.index_count(),
+                            sub_mesh.index_offset(),
+                            sub_mesh.vertex_offset() as i32,
+                        )?;
+                    } else {
+                        cmd.draw(sub_mesh.vertex_count(), sub_mesh.vertex_offset())?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

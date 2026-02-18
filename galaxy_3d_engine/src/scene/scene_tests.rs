@@ -521,3 +521,112 @@ fn test_many_instances() {
         assert!(scene.render_instance(keys[i]).is_none());
     }
 }
+
+// ============================================================================
+// Tests: Draw
+// ============================================================================
+
+use crate::renderer::mock_renderer::MockCommandList;
+use crate::renderer::Viewport;
+use crate::camera::{Camera, Frustum};
+
+fn create_test_camera() -> Camera {
+    let frustum = Frustum::from_view_projection(&Mat4::IDENTITY);
+    let viewport = Viewport {
+        x: 0.0,
+        y: 0.0,
+        width: 1920.0,
+        height: 1080.0,
+        min_depth: 0.0,
+        max_depth: 1.0,
+    };
+    Camera::new(Mat4::IDENTITY, Mat4::IDENTITY, frustum, viewport)
+}
+
+#[test]
+fn test_draw_empty_view() {
+    let renderer = create_mock_renderer();
+    let scene = Scene::new(renderer);
+    let camera = create_test_camera();
+    let view = scene.frustum_cull(&camera);
+
+    let mut cmd = MockCommandList::new();
+    scene.draw(&view, &mut cmd).unwrap();
+
+    // Only viewport + scissor, no draw calls
+    assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
+}
+
+#[test]
+fn test_draw_single_instance() {
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
+
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    let camera = create_test_camera();
+    let view = scene.frustum_cull(&camera);
+
+    let mut cmd = MockCommandList::new();
+    scene.draw(&view, &mut cmd).unwrap();
+
+    assert_eq!(cmd.commands, vec![
+        "set_viewport",
+        "set_scissor",
+        "bind_vertex_buffer",
+        "bind_index_buffer",
+        "bind_pipeline",
+        "push_constants",  // MVP
+        "push_constants",  // Model
+        "draw_indexed",
+    ]);
+}
+
+#[test]
+fn test_draw_skips_removed_instance() {
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
+
+    let key = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    let camera = create_test_camera();
+    // Cull while instance exists
+    let view = scene.frustum_cull(&camera);
+
+    // Remove instance after culling
+    scene.remove_render_instance(key);
+
+    let mut cmd = MockCommandList::new();
+    scene.draw(&view, &mut cmd).unwrap();
+
+    // Instance was skipped — only viewport + scissor
+    assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
+}
+
+#[test]
+fn test_draw_multiple_instances() {
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
+
+    scene.create_render_instance(
+        &mesh, Mat4::from_translation(Vec3::X), create_test_aabb(), 0,
+    ).unwrap();
+    scene.create_render_instance(
+        &mesh, Mat4::from_translation(Vec3::Y), create_test_aabb(), 0,
+    ).unwrap();
+
+    let camera = create_test_camera();
+    let view = scene.frustum_cull(&camera);
+
+    let mut cmd = MockCommandList::new();
+    scene.draw(&view, &mut cmd).unwrap();
+
+    // 2 instances: viewport + scissor + 2x (bind_vb, bind_ib, bind_pipeline, push x2, draw_indexed)
+    assert_eq!(cmd.commands.len(), 2 + 2 * 6);
+    assert_eq!(cmd.commands[0], "set_viewport");
+    assert_eq!(cmd.commands[1], "set_scissor");
+}

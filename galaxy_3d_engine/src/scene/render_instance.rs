@@ -128,6 +128,8 @@ pub struct RenderInstance {
     vertex_buffer: Arc<dyn Buffer>,
     /// Shared index buffer (from Geometry, None for non-indexed)
     index_buffer: Option<Arc<dyn Buffer>>,
+    /// Index type (U16 or U32), only meaningful if index_buffer is Some
+    index_type: renderer::IndexType,
     /// LOD levels (index 0 = most detailed)
     lods: Vec<RenderLOD>,
     /// World transform matrix (pre-computed by game engine)
@@ -166,9 +168,10 @@ impl RenderInstance {
         let geometry = mesh.geometry();
         let geom_mesh = mesh.geometry_mesh();
 
-        // Extract shared buffers from Geometry
+        // Extract shared buffers and index type from Geometry
         let vertex_buffer = Arc::clone(geometry.vertex_buffer());
         let index_buffer = geometry.index_buffer().map(Arc::clone);
+        let index_type = geometry.index_type();
 
         // Build RenderLODs from mesh LODs
         let mut lods = Vec::with_capacity(mesh.lod_count());
@@ -288,6 +291,7 @@ impl RenderInstance {
         Ok(Self {
             vertex_buffer,
             index_buffer,
+            index_type,
             lods,
             world_matrix,
             flags: FLAG_VISIBLE,
@@ -306,6 +310,11 @@ impl RenderInstance {
     /// Get the shared index buffer (None for non-indexed geometry)
     pub fn index_buffer(&self) -> Option<&Arc<dyn Buffer>> {
         self.index_buffer.as_ref()
+    }
+
+    /// Get the index type (U16 or U32, only meaningful if indexed)
+    pub fn index_type(&self) -> renderer::IndexType {
+        self.index_type
     }
 
     /// Get a LOD by index (0 = most detailed)

@@ -13,7 +13,11 @@ Ces règles sont **impératives** et doivent être suivies **à la lettre**, san
 
 ### Règle 1 - Langue de Communication
 
-**TOUJOURS parler en français** avec l'utilisateur.
+**TOUJOURS parler ET penser en français** avec l'utilisateur.
+
+Cela inclut :
+- Les réponses à l'utilisateur
+- Le raisonnement interne (thinking/réflexion)
 
 **Justification** : Le français est la langue maternelle et naturelle de l'utilisateur.
 

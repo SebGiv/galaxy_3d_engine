@@ -583,7 +583,7 @@ graph.set_output("geometry", "screen")?;
 |------|-------------|--------|
 | ~~**Clear mode configurable**~~ | ~~Clear / Load / DontCare par target~~ | **Implémenté** (2026-02-15) — `TargetOps` enum (Color / DepthStencil), per-target clear values, LoadOp/StoreOp indépendants pour depth et stencil |
 | **Multi-attachment** | Targets avec couleur + depth + stencil | Nécessaire pour le rendu 3D correct |
-| **Viewport configurable** | Viewport partiel (split-screen, minimap) | Plusieurs vues dans un même target |
+| **Viewport configurable** | Viewport sur la Camera (pas sur le render_graph::RenderPass). Split-screen = plusieurs cameras avec viewports différents dans un seul pass GPU | Voir [camera_design.md](camera_design.md) |
 | **Resource pooling** | Pool de textures/framebuffers réutilisables au resize | Évite de recréer tout le render graph au resize — approche standard des moteurs modernes (Unreal RDG, Frostbite Frame Graph). Actuellement le graph est entièrement recréé, ce qui est acceptable tant que le nombre de passes/targets reste faible |
 
 ### Priorité basse

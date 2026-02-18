@@ -26,6 +26,7 @@ pub mod log;
 pub mod renderer;
 pub mod resource;
 pub mod scene;
+pub mod camera;
 pub mod render_graph;
 
 // Main galaxy3d namespace module
@@ -58,6 +59,11 @@ pub mod galaxy3d {
     // Scene sub-module
     pub mod scene {
         pub use crate::scene::*;
+    }
+
+    // Camera sub-module
+    pub mod camera {
+        pub use crate::camera::*;
     }
 
     // Render graph sub-module
