@@ -170,6 +170,21 @@ Pour développer/coder, **s'inspirer et s'aider** des documents dans le dossier 
 
 ---
 
+### Règle 8 - Fix Moteur : Prendre du Recul
+
+**Justification** : Éviter les fixes "en dur" qui corrigent un symptôme dans une demo mais cassent les autres cas d'utilisation.
+
+**AVANT** tout fix dans le moteur (déclenché par un bug observé dans une demo) :
+
+1. **Analyser le problème de manière universelle** — pas seulement pour le cas qui l'a révélé
+2. **Ne jamais mettre de valeur en dur** dans un fix sans se poser la question : "est-ce que cette valeur doit être conditionnelle/dynamique ?"
+3. **Vérifier la cohérence** avec les fonctions similaires du moteur (ex: si `create_render_pass()` fait X, `create_pipeline()` doit faire la même chose)
+4. **Penser à tous les cas d'utilisation** : avec/sans depth, avec/sans blend, avec/sans MSAA, etc.
+
+**Interdit** : Hardcoder une valeur dans le moteur pour faire fonctionner une demo spécifique.
+
+---
+
 ## Référence Rapide
 
 | Situation | Action | Attente |
@@ -183,6 +198,7 @@ Pour développer/coder, **s'inspirer et s'aider** des documents dans le dossier 
 | Écrire du code | Tout en anglais | - |
 | Chemin d'erreur | Utiliser `engine_bail!`/`engine_err!` | - |
 | Communiquer | Toujours en français | - |
+| Fix moteur | Prendre du recul, jamais de valeur en dur | - |
 
 ---
 
@@ -204,6 +220,11 @@ Pour développer/coder, **s'inspirer et s'aider** des documents dans le dossier 
 - [ ] Commentaires pertinents en anglais
 - [ ] Documentation (///  //!) en anglais
 - [ ] Erreurs via `engine_bail!`/`engine_err!` (jamais de `Err(Error::...)` nu)
+
+### Fix Moteur
+- [ ] Le fix est universel (pas spécifique à une demo)
+- [ ] Aucune valeur hardcodée — tout est conditionnel/dynamique
+- [ ] Cohérence vérifiée avec les fonctions similaires du moteur
 
 ---
 

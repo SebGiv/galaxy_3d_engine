@@ -2168,8 +2168,7 @@ impl Renderer for VulkanRenderer {
             let dependency = vk::SubpassDependency::default()
                 .src_subpass(vk::SUBPASS_EXTERNAL)
                 .dst_subpass(0)
-                .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
+                .src_stage_mask(dst_stage)
                 .src_access_mask(vk::AccessFlags::empty())
                 .dst_stage_mask(dst_stage)
                 .dst_access_mask(dst_access);
