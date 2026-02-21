@@ -105,6 +105,12 @@ pub trait Buffer: Send + Sync {
     /// * `offset` - Offset into the buffer in bytes
     /// * `data` - Data to write
     fn update(&self, offset: u64, data: &[u8]) -> Result<()>;
+
+    /// Raw pointer to persistently mapped memory
+    ///
+    /// Returns None if the buffer is not CPU-accessible (device-local only).
+    /// The pointer remains valid for the lifetime of the buffer.
+    fn mapped_ptr(&self) -> Option<*mut u8>;
 }
 
 #[cfg(test)]

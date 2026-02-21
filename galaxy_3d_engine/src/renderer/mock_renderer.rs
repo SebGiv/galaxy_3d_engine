@@ -46,6 +46,10 @@ impl Buffer for MockBuffer {
     fn update(&self, _offset: u64, _data: &[u8]) -> Result<()> {
         Ok(())
     }
+
+    fn mapped_ptr(&self) -> Option<*mut u8> {
+        None
+    }
 }
 
 // ============================================================================

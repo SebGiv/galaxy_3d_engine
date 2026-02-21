@@ -8,6 +8,7 @@ pub mod geometry;
 pub mod pipeline;
 pub mod material;
 pub mod mesh;
+pub mod buffer;
 
 pub use resource_manager::ResourceManager;
 pub use texture::{
@@ -33,4 +34,7 @@ pub use mesh::{
     MeshDesc, MeshLODDesc, SubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
     mesh_desc_from_name_mapping,
+};
+pub use buffer::{
+    Buffer, BufferDesc, BufferKind, FieldType, FieldDesc,
 };

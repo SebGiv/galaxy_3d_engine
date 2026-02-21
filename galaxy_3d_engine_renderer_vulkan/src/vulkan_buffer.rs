@@ -64,6 +64,12 @@ impl RendererBuffer for Buffer {
             }
         }
     }
+
+    fn mapped_ptr(&self) -> Option<*mut u8> {
+        self.allocation.as_ref()
+            .and_then(|alloc| alloc.mapped_ptr())
+            .map(|ptr| ptr.as_ptr() as *mut u8)
+    }
 }
 
 impl Drop for Buffer {

@@ -22,6 +22,9 @@ use crate::resource::material::{
 use crate::resource::mesh::{
     Mesh, MeshDesc,
 };
+use crate::resource::buffer::{
+    Buffer, BufferDesc,
+};
 
 pub struct ResourceManager {
     textures: HashMap<String, Arc<Texture>>,
@@ -29,6 +32,7 @@ pub struct ResourceManager {
     pipelines: HashMap<String, Arc<Pipeline>>,
     materials: HashMap<String, Arc<Material>>,
     meshes: HashMap<String, Arc<Mesh>>,
+    buffers: HashMap<String, Arc<Buffer>>,
 }
 
 impl ResourceManager {
@@ -40,6 +44,7 @@ impl ResourceManager {
             pipelines: HashMap::new(),
             materials: HashMap::new(),
             meshes: HashMap::new(),
+            buffers: HashMap::new(),
         }
     }
 
@@ -493,6 +498,59 @@ impl ResourceManager {
     /// Get the number of registered meshes
     pub fn mesh_count(&self) -> usize {
         self.meshes.len()
+    }
+
+    // ===== BUFFER CREATION =====
+
+    /// Create a structured GPU buffer resource (UBO or SSBO)
+    ///
+    /// Computes the std140 layout from the field descriptors, allocates
+    /// the GPU buffer, and registers the resource.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for this buffer resource
+    /// * `desc` - Buffer descriptor with renderer, kind, fields, and element count
+    ///
+    pub fn create_buffer(&mut self, name: String, desc: BufferDesc) -> Result<Arc<Buffer>> {
+        if self.buffers.contains_key(&name) {
+            crate::engine_bail_warn!("galaxy3d::ResourceManager", "Buffer '{}' already exists", name);
+        }
+
+        let buffer = Buffer::from_desc(desc)?;
+        let buffer_arc = Arc::new(buffer);
+        self.buffers.insert(name.clone(), Arc::clone(&buffer_arc));
+
+        crate::engine_info!("galaxy3d::ResourceManager",
+            "Created {:?} buffer '{}' ({} elements, stride {} bytes, total {} bytes)",
+            buffer_arc.kind(), name, buffer_arc.count(),
+            buffer_arc.stride(), buffer_arc.size());
+
+        Ok(buffer_arc)
+    }
+
+    // ===== BUFFER ACCESS =====
+
+    /// Get a buffer by name
+    pub fn buffer(&self, name: &str) -> Option<&Arc<Buffer>> {
+        self.buffers.get(name)
+    }
+
+    /// Remove a buffer by name
+    ///
+    /// Returns `true` if the buffer was found and removed.
+    pub fn remove_buffer(&mut self, name: &str) -> bool {
+        if self.buffers.remove(name).is_some() {
+            crate::engine_info!("galaxy3d::ResourceManager", "Removed Buffer resource '{}'", name);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the number of registered buffers
+    pub fn buffer_count(&self) -> usize {
+        self.buffers.len()
     }
 }
 

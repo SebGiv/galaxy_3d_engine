@@ -358,6 +358,35 @@ fn test_render_instance_mut_access() {
 }
 
 // ============================================================================
+// Tests: render_instance_keys
+// ============================================================================
+
+#[test]
+fn test_render_instance_keys_empty() {
+    let renderer = create_mock_renderer();
+    let scene = Scene::new(renderer);
+    assert_eq!(scene.render_instance_keys().count(), 0);
+}
+
+#[test]
+fn test_render_instance_keys_returns_all() {
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
+
+    let key1 = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+    let key2 = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    let keys: Vec<_> = scene.render_instance_keys().collect();
+    assert_eq!(keys.len(), 2);
+    assert!(keys.contains(&key1));
+    assert!(keys.contains(&key2));
+}
+
+// ============================================================================
 // Tests: Iteration
 // ============================================================================
 
@@ -523,12 +552,14 @@ fn test_many_instances() {
 }
 
 // ============================================================================
-// Tests: Draw
+// Tests: Draw (via ForwardDrawer + BruteForceCuller)
 // ============================================================================
 
 use crate::renderer::mock_renderer::MockCommandList;
 use crate::renderer::Viewport;
 use crate::camera::{Camera, Frustum};
+use crate::scene::culler::{CameraCuller, BruteForceCuller};
+use crate::scene::drawer::{Drawer, ForwardDrawer};
 
 fn create_test_camera() -> Camera {
     let frustum = Frustum::from_view_projection(&Mat4::IDENTITY);
@@ -548,10 +579,13 @@ fn test_draw_empty_view() {
     let renderer = create_mock_renderer();
     let scene = Scene::new(renderer);
     let camera = create_test_camera();
-    let view = scene.frustum_cull(&camera);
+
+    let mut culler = BruteForceCuller::new();
+    let drawer = ForwardDrawer::new();
+    let view = culler.cull(&scene, &camera);
 
     let mut cmd = MockCommandList::new();
-    scene.draw(&view, &mut cmd).unwrap();
+    drawer.draw(&scene, &view, &mut cmd).unwrap();
 
     // Only viewport + scissor, no draw calls
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
@@ -567,10 +601,12 @@ fn test_draw_single_instance() {
     ).unwrap();
 
     let camera = create_test_camera();
-    let view = scene.frustum_cull(&camera);
+    let mut culler = BruteForceCuller::new();
+    let drawer = ForwardDrawer::new();
+    let view = culler.cull(&scene, &camera);
 
     let mut cmd = MockCommandList::new();
-    scene.draw(&view, &mut cmd).unwrap();
+    drawer.draw(&scene, &view, &mut cmd).unwrap();
 
     assert_eq!(cmd.commands, vec![
         "set_viewport",
@@ -594,14 +630,17 @@ fn test_draw_skips_removed_instance() {
     ).unwrap();
 
     let camera = create_test_camera();
+    let mut culler = BruteForceCuller::new();
+    let drawer = ForwardDrawer::new();
+
     // Cull while instance exists
-    let view = scene.frustum_cull(&camera);
+    let view = culler.cull(&scene, &camera);
 
     // Remove instance after culling
     scene.remove_render_instance(key);
 
     let mut cmd = MockCommandList::new();
-    scene.draw(&view, &mut cmd).unwrap();
+    drawer.draw(&scene, &view, &mut cmd).unwrap();
 
     // Instance was skipped — only viewport + scissor
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
@@ -620,10 +659,12 @@ fn test_draw_multiple_instances() {
     ).unwrap();
 
     let camera = create_test_camera();
-    let view = scene.frustum_cull(&camera);
+    let mut culler = BruteForceCuller::new();
+    let drawer = ForwardDrawer::new();
+    let view = culler.cull(&scene, &camera);
 
     let mut cmd = MockCommandList::new();
-    scene.draw(&view, &mut cmd).unwrap();
+    drawer.draw(&scene, &view, &mut cmd).unwrap();
 
     // 2 instances: viewport + scissor + 2x (bind_vb, bind_ib, bind_pipeline, push x2, draw_indexed)
     assert_eq!(cmd.commands.len(), 2 + 2 * 6);

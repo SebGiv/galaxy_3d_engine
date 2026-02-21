@@ -1,10 +1,14 @@
 //! Scene management module
 //!
-//! Provides scene and render instance management.
+//! Provides scene, render instance management, and rendering strategies
+//! (culling, drawing, updating).
 
 mod render_instance;
 mod scene;
 mod scene_manager;
+mod culler;
+mod drawer;
+mod updater;
 
 pub use render_instance::{
     RenderInstance, RenderInstanceKey, RenderLOD, RenderSubMesh,
@@ -13,3 +17,6 @@ pub use render_instance::{
 };
 pub use scene::Scene;
 pub use scene_manager::SceneManager;
+pub use culler::{CameraCuller, BruteForceCuller};
+pub use drawer::{Drawer, ForwardDrawer};
+pub use updater::{Updater, NoOpUpdater};

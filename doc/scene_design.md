@@ -21,8 +21,9 @@
 8. [Sélection de variant](#8-sélection-de-variant)
 9. [Transmission des paramètres au shader](#9-transmission-des-paramètres-au-shader)
 10. [Construction : from_mesh()](#10-construction--from_mesh)
-11. [Boucle de rendu](#11-boucle-de-rendu)
-12. [Itérations futures](#12-itérations-futures)
+11. [Stratégies de rendu — CameraCuller, Drawer, Updater](#11-stratégies-de-rendu--cameraculler-drawer-updater)
+12. [Boucle de rendu](#12-boucle-de-rendu)
+13. [Itérations futures](#13-itérations-futures)
 
 ---
 
@@ -86,11 +87,12 @@ Le moteur de jeu manipule des objets logiques avec des positions/rotations, calc
 
 ```rust
 pub struct Scene {
+    renderer: Arc<Mutex<dyn Renderer>>,
     render_instances: SlotMap<RenderInstanceKey, RenderInstance>,
-    // lights: Vec<Light>,    // Phase 2
-    // camera: Camera,        // Phase 2
 }
 ```
+
+La Scene est un **conteneur pur** de RenderInstances. Elle ne fait **ni culling ni drawing** — ces responsabilités sont déléguées à des objets de stratégie indépendants (voir [section 11](#11-stratégies-de-rendu--cameraculler-drawer-updater)).
 
 La Scene utilise un **SlotMap** (index générationnel) pour stocker les RenderInstances :
 
@@ -100,6 +102,10 @@ La Scene utilise un **SlotMap** (index générationnel) pour stocker les RenderI
 - **Sécurité générationnelle** — chaque clé contient un compteur de génération ; accéder à un slot réutilisé retourne `None` au lieu de données corrompues
 
 `Scene::new()` est `pub(crate)` — une Scene ne peut être créée que via `SceneManager::create_scene()`.
+
+### Accès aux clés
+
+`render_instance_keys()` retourne un itérateur sur toutes les clés, utilisé par les CameraCullers pour construire la liste des instances visibles.
 
 ### RenderInstanceKey
 
@@ -406,73 +412,143 @@ RenderInstance::builder(&mesh)
 
 ---
 
-## 11. Boucle de rendu
+## 11. Stratégies de rendu — CameraCuller, Drawer, Updater
 
-### Phase 1 — Direct Draw (Gouraud, pas de culling)
+La Scene est un conteneur passif. Trois responsabilités sont extraites en **traits indépendants** (Strategy pattern) :
 
-```
-pour chaque instance avec FLAG_VISIBLE:
-    bind vertex_buffer
-    bind index_buffer (si présent)
-    pour chaque submesh du LOD 0:
-        bind pipeline (passes[0])
-        bind descriptor_sets
-        push_constants(world_matrix + params)
-        if index_count > 0:
-            draw_indexed(index_count, 1, index_offset, vertex_offset, 0)
-        else:
-            draw(vertex_count, 1, vertex_offset, 0)
-```
+| Trait | Responsabilité | Mutabilité | Implémentation V1 |
+|-------|---------------|------------|-------------------|
+| `CameraCuller` | Déterminer les instances visibles | `&mut self` | `BruteForceCuller` (retourne tout) |
+| `Drawer` | Dessiner les instances visibles | `&self` | `ForwardDrawer` (draw séquentiel) |
+| `Updater` | Synchroniser les données vers le GPU | `&mut self` | `NoOpUpdater` (ne fait rien) |
 
-### Phase 2 — Frustum Culling
+### Principes de conception
 
-```
-calculer frustum planes depuis camera VP matrix
-pour chaque instance avec FLAG_VISIBLE:
-    world_aabb = transform(instance.bounding_box, instance.world_matrix)
-    si world_aabb intersecte frustum:
-        ... draw (comme phase 1)
+- **Objets indépendants** — gérés directement par l'utilisateur (pas par le SceneManager)
+- **Pas de référence stockée** vers la Scene — `&Scene` passé en paramètre à chaque appel (évite les deadlocks, permet la réutilisation sur plusieurs scènes)
+- **Typés statiquement** — pas de string magique, pas de registre nommé
+- **Composables** — l'utilisateur choisit librement ses stratégies dans sa game loop
+
+### CameraCuller
+
+```rust
+pub trait CameraCuller: Send + Sync {
+    fn cull(&mut self, scene: &Scene, camera: &Camera) -> RenderView;
+}
 ```
 
-### Phase 3 — Tri par pipeline (réduction state changes)
+`&mut self` permet aux implémentations stateful (Octree, BVH) de mettre à jour leur structure spatiale interne quand la scène change.
 
-```
-trier instances par (pipeline, material, vertex_buffer)
-pour chaque groupe de même pipeline:
-    bind pipeline une seule fois
-    pour chaque instance du groupe:
-        ... draw
+**Implémentations :**
+- `BruteForceCuller` — retourne toutes les instances (V1, O(n))
+- *Futur : `FrustumCuller` — test AABB vs frustum planes*
+- *Futur : `OctreeCuller` — culling hiérarchique via octree*
+
+### Drawer
+
+```rust
+pub trait Drawer: Send + Sync {
+    fn draw(&self, scene: &Scene, view: &RenderView, cmd: &mut dyn CommandList) -> Result<()>;
+}
 ```
 
-### Phase 4 — Instancing
+`&self` car le drawing est stateless. Un même Drawer peut être réutilisé sur plusieurs scènes et frames. Permet aussi de comparer deux stratégies de rendu en parallèle.
 
+**Implémentations :**
+- `ForwardDrawer` — draw séquentiel, LOD 0, push constants MVP + Model (V1)
+- *Futur : `SortedDrawer` — tri par pipeline/material pour réduire les state changes*
+- *Futur : `InstancedDrawer` — regroupement des instances identiques en draw instancé*
+
+### Updater
+
+```rust
+pub trait Updater: Send + Sync {
+    fn update(&mut self, scene: &Scene) -> Result<()>;
+}
 ```
-grouper instances identiques (même mesh + material + pipeline)
-pour chaque groupe:
-    bind une seule fois
-    draw_instanced(count = nombre d'instances)
-    (matrices dans un storage buffer)
+
+`&mut self` pour gérer l'état interne (dirty flags, allocations de buffers GPU).
+
+**Implémentations :**
+- `NoOpUpdater` — ne fait rien (V1)
+- *Futur : `SsboUpdater` — synchronise les world matrices vers un SSBO GPU*
+
+### Usage dans la game loop
+
+```rust
+let mut culler = BruteForceCuller::new();
+let drawer = ForwardDrawer::new();
+let mut updater = NoOpUpdater::new();
+
+// Game loop
+updater.update(&scene)?;
+let view = culler.cull(&scene, &camera);
+drawer.draw(&scene, &view, cmd)?;
 ```
+
+### Note d'intégration avec le render graph
+
+Le `Drawer` est capturé dans la `CustomAction` du render graph via `Arc<Mutex<dyn Drawer>>`. Le `CameraCuller` et l'`Updater` restent des `Box<dyn ...>` car ils sont appelés uniquement dans `render_frame()`.
 
 ---
 
-## 12. Itérations futures
+## 12. Boucle de rendu
+
+### Workflow actuel (V1)
+
+```
+// Game loop
+updater.update(&scene)?;                   // NoOpUpdater: ne fait rien
+let view = culler.cull(&scene, &camera);   // BruteForceCuller: retourne tout
+drawer.draw(&scene, &view, cmd)?;          // ForwardDrawer: draw séquentiel
+```
+
+Le `ForwardDrawer` exécute :
+```
+set_viewport(camera.viewport)
+set_scissor(camera.effective_scissor)
+pour chaque instance dans view.visible_instances:
+    bind vertex_buffer
+    bind index_buffer (si présent)
+    pour chaque submesh du LOD 0:
+        pour chaque pass:
+            bind pipeline
+            bind binding_groups
+            push_constants(MVP à offset 0, Model à offset 64)
+            push_constants(material params à leurs offsets réfléchis)
+            draw_indexed ou draw
+```
+
+### Évolutions prévues
+
+Les stratégies sont interchangeables sans modifier la game loop :
+
+| Stratégie | Remplacement | Gain |
+|-----------|-------------|------|
+| `BruteForceCuller` → `FrustumCuller` | Test AABB vs frustum planes | Éviter de dessiner les objets hors champ |
+| `ForwardDrawer` → `SortedDrawer` | Tri par pipeline/material | Réduire les state changes GPU |
+| `SortedDrawer` → `InstancedDrawer` | Draw instancé + SSBO | Performance massive pour scènes répétitives |
+| `NoOpUpdater` → `SsboUpdater` | Sync world matrices vers SSBO | Nécessaire pour l'instancing |
+
+---
+
+## 13. Itérations futures
 
 ### Priorité haute (nécessaire rapidement)
 
 | Item | Description | Impact |
 |------|-------------|--------|
 | **AABB auto-calculée** | Calculer l'AABB dans `Geometry::from_desc()` et la stocker dans `GeometryMesh` | Évite de passer l'AABB manuellement |
-| **Camera** | Structure Camera (view + projection matrices) dans la Scene | Nécessaire pour le frustum culling et le rendu correct |
-| **Lights** | Structure Light (directional, point, spot) dans la Scene | Nécessaire pour un éclairage Gouraud réaliste |
-| **Frustum culling** | Test AABB vs frustum planes | Performance : éviter de dessiner les objets hors champ |
+| **FrustumCuller** | Implémentation de `CameraCuller` avec test AABB vs frustum planes | Performance : éviter de dessiner les objets hors champ |
+| **Lights** | Structure Light (directional, point, spot) | Nécessaire pour un éclairage réaliste |
+| **SsboUpdater** | Implémentation de `Updater` synchronisant les world matrices vers un SSBO GPU | Prérequis pour l'instancing et les données partagées |
 
 ### Priorité moyenne (optimisation)
 
 | Item | Description | Impact |
 |------|-------------|--------|
-| **Tri par pipeline** | Trier les draw calls par pipeline/material | Réduire les state changes GPU |
-| **Sélection de variant par la boucle de rendu** | Le rendu choisit le variant selon le pass en cours | Shadow maps, multi-pass rendering |
+| **SortedDrawer** | Implémentation de `Drawer` avec tri par pipeline/material | Réduire les state changes GPU |
+| **Sélection de variant par le Drawer** | Le Drawer choisit le variant selon le pass en cours | Shadow maps, multi-pass rendering |
 | **Push constants layout standardisé** | Mapping fixe des offsets | Éviter la sérialisation dynamique |
 | **Uniform buffers (UBO)** | Descriptor sets pour données partagées (camera, lights) | Nécessaire pour passer camera/lights au shader |
 
@@ -480,12 +556,14 @@ pour chaque groupe:
 
 | Item | Description | Impact |
 |------|-------------|--------|
-| **Instancing** | Regrouper les instances identiques en un seul draw call | Performance massive pour scènes répétitives |
+| **InstancedDrawer** | Implémentation de `Drawer` avec draw instancé + SSBO | Performance massive pour scènes répétitives |
+| **OctreeCuller** | Implémentation de `CameraCuller` avec octree/BVH | Scènes très larges |
 | **Builder pattern** | Remplacer `from_mesh()` si trop de paramètres | API plus flexible |
 | **LOD auto-selection** | Sélection automatique du LOD selon distance caméra | Qualité vs performance |
 | **Virtualisation des submeshes** | Types spécialisés (indexed vs non-indexed) | Éliminer les branches dans la boucle de rendu |
-| **Spatial partitioning** | Octree/BVH pour culling hiérarchique | Scènes très larges |
 | ~~**Multi-scène**~~ | ~~Scènes multiples simultanées (jeu + UI + minimap)~~ | **Implémenté** — SceneManager avec scènes nommées `Arc<Mutex<Scene>>` |
+| ~~**Camera**~~ | ~~Structure Camera dans la Scene~~ | **Implémenté** — `camera::Camera` comme conteneur passif, fourni par l'appelant |
+| ~~**Frustum culling**~~ | ~~Test AABB vs frustum planes~~ | **Architecture en place** — `CameraCuller` trait + `BruteForceCuller` V1 |
 
 ---
 
