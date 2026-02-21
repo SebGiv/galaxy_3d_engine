@@ -99,7 +99,7 @@ fn test_duplicate_field_names_fails() {
 }
 
 // ============================================================================
-// Layout std140 tests
+// Layout tests (std140 for UBO, std430 for SSBO)
 // ============================================================================
 
 #[test]
@@ -271,7 +271,7 @@ fn test_update_element_data_too_large() {
         ("world", FieldType::Mat4),
     ], 10);
 
-    // stride = 64, data = 65 → trop grand
+    // stride = 64, data = 65 → too large
     let data = vec![0u8; 65];
     assert!(buf.update_element(0, &data).is_err());
 }
@@ -347,9 +347,47 @@ fn test_update_raw_exceeds_size() {
     ], 10);
 
     let data = vec![0u8; 16];
-    // Offset + data dépasse la taille du buffer
+    // Offset + data exceeds buffer size
     assert!(buf.update_raw(buf.size() - 15, &data).is_err());
     assert!(buf.update_raw(buf.size(), &data).is_err());
+}
+
+// ============================================================================
+// std140 vs std430 stride comparison tests
+// ============================================================================
+
+#[test]
+fn test_layout_std430_small_fields() {
+    // Storage (std430): struct alignment = max field alignment (no 16-byte minimum)
+    // float: offset 0, size 4
+    // uint: alignment 4 → offset 4, size 4
+    // current_offset = 8, max_field_align = 4, struct_align = 4 → stride = 8
+    let buf = create_test_buffer(BufferKind::Storage, &[
+        ("intensity", FieldType::Float),
+        ("flags", FieldType::UInt),
+    ], 100);
+
+    assert_eq!(buf.field_offset(0), Some(0));
+    assert_eq!(buf.field_offset(1), Some(4));
+    assert_eq!(buf.stride(), 8);
+    assert_eq!(buf.size(), 8 * 100);
+}
+
+#[test]
+fn test_layout_std140_small_fields() {
+    // Uniform (std140): struct alignment = max(max_field_align, 16)
+    // float: offset 0, size 4
+    // uint: alignment 4 → offset 4, size 4
+    // current_offset = 8, max_field_align = 4, struct_align = 16 → stride = 16
+    let buf = create_test_buffer(BufferKind::Uniform, &[
+        ("intensity", FieldType::Float),
+        ("flags", FieldType::UInt),
+    ], 100);
+
+    assert_eq!(buf.field_offset(0), Some(0));
+    assert_eq!(buf.field_offset(1), Some(4));
+    assert_eq!(buf.stride(), 16);
+    assert_eq!(buf.size(), 16 * 100);
 }
 
 // ============================================================================

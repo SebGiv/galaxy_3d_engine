@@ -12,7 +12,7 @@ mod updater;
 
 pub use render_instance::{
     RenderInstance, RenderInstanceKey, RenderLOD, RenderSubMesh,
-    RenderPass, ResolvedPushConstant,
+    RenderPass,
     AABB, FLAG_VISIBLE, FLAG_CAST_SHADOW, FLAG_RECEIVE_SHADOW,
 };
 pub use scene::Scene;

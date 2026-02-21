@@ -23,8 +23,10 @@ use crate::resource::mesh::{
     Mesh, MeshDesc,
 };
 use crate::resource::buffer::{
-    Buffer, BufferDesc,
+    Buffer, BufferDesc, FieldType,
 };
+use crate::resource::material::ParamValue;
+use crate::utils::SlotAllocator;
 
 pub struct ResourceManager {
     textures: HashMap<String, Arc<Texture>>,
@@ -33,6 +35,53 @@ pub struct ResourceManager {
     materials: HashMap<String, Arc<Material>>,
     meshes: HashMap<String, Arc<Mesh>>,
     buffers: HashMap<String, Arc<Buffer>>,
+    material_slot_allocator: SlotAllocator,
+}
+
+// ===== PRIVATE HELPERS =====
+
+/// Map a ParamValue to its compatible FieldType.
+/// Bool maps to UInt (GLSL convention: bools are u32 in GPU buffers).
+fn compatible_field_type(value: &ParamValue) -> FieldType {
+    match value {
+        ParamValue::Float(_) => FieldType::Float,
+        ParamValue::Vec2(_)  => FieldType::Vec2,
+        ParamValue::Vec3(_)  => FieldType::Vec3,
+        ParamValue::Vec4(_)  => FieldType::Vec4,
+        ParamValue::Int(_)   => FieldType::Int,
+        ParamValue::UInt(_)  => FieldType::UInt,
+        ParamValue::Bool(_)  => FieldType::UInt,
+        ParamValue::Mat3(_)  => FieldType::Mat3,
+        ParamValue::Mat4(_)  => FieldType::Mat4,
+    }
+}
+
+/// Convert a ParamValue to padded bytes matching FieldType::size_bytes().
+///
+/// FieldType::size_bytes() is the same for UBO (std140) and SSBO (std430),
+/// so a single padding function covers both buffer kinds.
+///
+/// Vec3: 12 → 16 bytes (4 bytes zero-padding)
+/// Mat3: 36 → 48 bytes (each row padded from 12 to 16 bytes)
+/// All others: identical to ParamValue::as_bytes() (already correct size)
+fn param_to_padded_bytes(value: &ParamValue) -> Vec<u8> {
+    match value {
+        ParamValue::Vec3(v) => {
+            let mut bytes = Vec::with_capacity(16);
+            for f in v { bytes.extend_from_slice(&f.to_ne_bytes()); }
+            bytes.extend_from_slice(&[0u8; 4]);
+            bytes
+        }
+        ParamValue::Mat3(m) => {
+            let mut bytes = Vec::with_capacity(48);
+            for row in m {
+                for f in row { bytes.extend_from_slice(&f.to_ne_bytes()); }
+                bytes.extend_from_slice(&[0u8; 4]);
+            }
+            bytes
+        }
+        _ => value.as_bytes(),
+    }
 }
 
 impl ResourceManager {
@@ -45,6 +94,7 @@ impl ResourceManager {
             materials: HashMap::new(),
             meshes: HashMap::new(),
             buffers: HashMap::new(),
+            material_slot_allocator: SlotAllocator::new(),
         }
     }
 
@@ -405,7 +455,8 @@ impl ResourceManager {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Material '{}' already exists", name);
         }
 
-        let material = Material::from_desc(desc)?;
+        let slot_id = self.material_slot_allocator.alloc();
+        let material = Material::from_desc(slot_id, desc)?;
         let texture_count = material.texture_slot_count();
         let param_count = material.param_count();
 
@@ -413,8 +464,8 @@ impl ResourceManager {
         self.materials.insert(name.clone(), Arc::clone(&material_arc));
 
         crate::engine_info!("galaxy3d::ResourceManager",
-            "Created Material resource '{}' ({} texture slot{}, {} param{})",
-            name,
+            "Created Material resource '{}' slot {} ({} texture slot{}, {} param{})",
+            name, slot_id,
             texture_count, if texture_count != 1 { "s" } else { "" },
             param_count, if param_count != 1 { "s" } else { "" });
 
@@ -432,8 +483,10 @@ impl ResourceManager {
     ///
     /// Returns `true` if the material was found and removed.
     pub fn remove_material(&mut self, name: &str) -> bool {
-        if self.materials.remove(name).is_some() {
-            crate::engine_info!("galaxy3d::ResourceManager", "Removed Material resource '{}'", name);
+        if let Some(material) = self.materials.remove(name) {
+            self.material_slot_allocator.free(material.slot_id());
+            crate::engine_info!("galaxy3d::ResourceManager",
+                "Removed Material resource '{}' (freed slot {})", name, material.slot_id());
             true
         } else {
             false
@@ -443,6 +496,73 @@ impl ResourceManager {
     /// Get the number of registered materials
     pub fn material_count(&self) -> usize {
         self.materials.len()
+    }
+
+    /// Get the high water mark for material slot allocation
+    pub fn material_slot_high_water_mark(&self) -> u32 {
+        self.material_slot_allocator.high_water_mark()
+    }
+
+    /// Get the number of currently allocated material slots
+    pub fn material_slot_count(&self) -> u32 {
+        self.material_slot_allocator.len()
+    }
+
+    // ===== MATERIAL SYNC =====
+
+    /// Sync all material parameters into a GPU buffer.
+    ///
+    /// For each material, matches params by name against buffer fields.
+    /// Copies values only when name AND type match. Non-blocking warnings
+    /// for mismatches (the function never fails on a mismatch).
+    pub fn sync_materials_to_buffer(&self, buffer: &Buffer) -> Result<()> {
+        for (mat_name, material) in &self.materials {
+            let slot_id = material.slot_id();
+
+            if slot_id >= buffer.count() {
+                crate::engine_warn!("galaxy3d::ResourceManager",
+                    "sync_materials: material '{}' slot_id {} exceeds buffer count {}",
+                    mat_name, slot_id, buffer.count());
+                continue;
+            }
+
+            for param in material.params() {
+                // 1. Find field by name
+                let field_index = match buffer.field_id(param.name()) {
+                    Some(idx) => idx,
+                    None => {
+                        crate::engine_warn!("galaxy3d::ResourceManager",
+                            "sync_materials: material '{}' param '{}' not found in buffer layout",
+                            mat_name, param.name());
+                        continue;
+                    }
+                };
+
+                // 2. Check type compatibility
+                let field_type = buffer.fields()[field_index].field_type;
+                let param_type = compatible_field_type(param.value());
+
+                if param_type != field_type {
+                    crate::engine_warn!("galaxy3d::ResourceManager",
+                        "sync_materials: material '{}' param '{}' type mismatch (param: {:?}, field: {:?})",
+                        mat_name, param.name(), param_type, field_type);
+                    continue;
+                }
+
+                // 3. Specific Bool→UInt info warning
+                if matches!(param.value(), ParamValue::Bool(_)) {
+                    crate::engine_warn!("galaxy3d::ResourceManager",
+                        "sync_materials: material '{}' param '{}' is Bool, \
+                         mapped to UInt field (GLSL convention)",
+                        mat_name, param.name());
+                }
+
+                // 4. Convert to padded bytes and write
+                let bytes = param_to_padded_bytes(param.value());
+                buffer.update_field(slot_id, field_index, &bytes)?;
+            }
+        }
+        Ok(())
     }
 
     // ===== MESH CREATION =====
@@ -504,7 +624,7 @@ impl ResourceManager {
 
     /// Create a structured GPU buffer resource (UBO or SSBO)
     ///
-    /// Computes the std140 layout from the field descriptors, allocates
+    /// Computes the layout from the field descriptors (std140 for UBO, std430 for SSBO), allocates
     /// the GPU buffer, and registers the resource.
     ///
     /// # Arguments

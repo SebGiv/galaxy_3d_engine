@@ -103,7 +103,7 @@ fn create_test_material(pipeline: &Arc<Pipeline>, value: f32) -> Arc<Material> {
         textures: vec![],
         params: vec![("value".to_string(), ParamValue::Float(value))],
     };
-    Arc::new(Material::from_desc(desc).unwrap())
+    Arc::new(Material::from_desc(0, desc).unwrap())
 }
 
 fn create_test_aabb() -> AABB {
@@ -670,4 +670,102 @@ fn test_draw_multiple_instances() {
     assert_eq!(cmd.commands.len(), 2 + 2 * 6);
     assert_eq!(cmd.commands[0], "set_viewport");
     assert_eq!(cmd.commands[1], "set_scissor");
+}
+
+// ============================================================================
+// Tests: Draw Slot Allocator
+// ============================================================================
+
+#[test]
+fn test_draw_slot_count_empty() {
+    let renderer = create_mock_renderer();
+    let scene = Scene::new(renderer);
+    assert_eq!(scene.draw_slot_count(), 0);
+    assert_eq!(scene.draw_slot_high_water_mark(), 0);
+}
+
+#[test]
+fn test_draw_slot_count_tracks_instances() {
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
+
+    // Each test mesh has 1 LOD with 1 submesh = 1 draw slot per instance
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+    assert_eq!(scene.draw_slot_count(), 1);
+    assert_eq!(scene.draw_slot_high_water_mark(), 1);
+
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+    assert_eq!(scene.draw_slot_count(), 2);
+    assert_eq!(scene.draw_slot_high_water_mark(), 2);
+}
+
+#[test]
+fn test_draw_slot_count_after_remove() {
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
+
+    let key1 = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+    let _key2 = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    assert_eq!(scene.draw_slot_count(), 2);
+
+    scene.remove_render_instance(key1);
+    assert_eq!(scene.draw_slot_count(), 1);
+    // High water mark stays at 2
+    assert_eq!(scene.draw_slot_high_water_mark(), 2);
+}
+
+#[test]
+fn test_draw_slot_recycling_after_remove() {
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
+
+    let key1 = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    // Remove first instance (frees slot 0)
+    scene.remove_render_instance(key1);
+    assert_eq!(scene.draw_slot_high_water_mark(), 2);
+
+    // New instance should recycle the freed slot
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    // High water mark should NOT increase (slot was recycled)
+    assert_eq!(scene.draw_slot_count(), 2);
+    assert_eq!(scene.draw_slot_high_water_mark(), 2);
+}
+
+#[test]
+fn test_draw_slot_count_after_clear() {
+    let (renderer, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer);
+
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    assert_eq!(scene.draw_slot_count(), 2);
+
+    scene.clear();
+
+    // Clear resets everything (allocator recreated)
+    assert_eq!(scene.draw_slot_count(), 0);
+    assert_eq!(scene.draw_slot_high_water_mark(), 0);
 }

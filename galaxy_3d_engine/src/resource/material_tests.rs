@@ -141,7 +141,7 @@ fn test_create_material_minimal() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert_eq!(material.texture_slot_count(), 0);
     assert_eq!(material.param_count(), 0);
     assert!(Arc::ptr_eq(material.pipeline(), &pipeline));
@@ -165,7 +165,7 @@ fn test_create_material_with_simple_texture() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert_eq!(material.texture_slot_count(), 1);
 
     let slot = material.texture_slot_by_name("albedo").unwrap();
@@ -190,7 +190,7 @@ fn test_create_material_with_params() {
         ],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert_eq!(material.param_count(), 3);
 
     // Access by name
@@ -240,7 +240,7 @@ fn test_create_material_with_all_param_types() {
         ],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert_eq!(material.param_count(), 9);
 
     assert_eq!(material.param_by_name("i").unwrap().as_int().unwrap(), -42);
@@ -278,7 +278,7 @@ fn test_layer_ref_by_index() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     let slot = material.texture_slot_by_name("diffuse_map").unwrap();
     assert_eq!(slot.layer(), Some(1));
     assert_eq!(slot.region(), None);
@@ -302,7 +302,7 @@ fn test_layer_ref_by_name() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     let slot = material.texture_slot_by_name("normal_map").unwrap();
     // "normal" is layer index 1 in the indexed texture
     assert_eq!(slot.layer(), Some(1));
@@ -326,7 +326,7 @@ fn test_layer_ref_invalid_index() {
         params: vec![],
     };
 
-    let result = Material::from_desc(desc);
+    let result = Material::from_desc(0, desc);
     assert!(result.is_err());
 }
 
@@ -348,7 +348,7 @@ fn test_layer_ref_invalid_name() {
         params: vec![],
     };
 
-    let result = Material::from_desc(desc);
+    let result = Material::from_desc(0, desc);
     assert!(result.is_err());
 }
 
@@ -374,7 +374,7 @@ fn test_region_ref_by_index() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     let slot = material.texture_slot_by_name("tile").unwrap();
     assert_eq!(slot.layer(), Some(0));   // "diffuse" = layer 0
     assert_eq!(slot.region(), Some(0));  // region index 0 = "grass"
@@ -398,7 +398,7 @@ fn test_region_ref_by_name() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     let slot = material.texture_slot_by_name("tile").unwrap();
     assert_eq!(slot.layer(), Some(0));   // "diffuse" = layer 0
     assert_eq!(slot.region(), Some(1));  // "stone" = region index 1
@@ -422,7 +422,7 @@ fn test_region_ref_invalid_index() {
         params: vec![],
     };
 
-    let result = Material::from_desc(desc);
+    let result = Material::from_desc(0, desc);
     assert!(result.is_err());
 }
 
@@ -444,7 +444,7 @@ fn test_region_ref_invalid_name() {
         params: vec![],
     };
 
-    let result = Material::from_desc(desc);
+    let result = Material::from_desc(0, desc);
     assert!(result.is_err());
 }
 
@@ -466,7 +466,7 @@ fn test_region_without_layer_fails() {
         params: vec![],
     };
 
-    let result = Material::from_desc(desc);
+    let result = Material::from_desc(0, desc);
     assert!(result.is_err());
 }
 
@@ -501,7 +501,7 @@ fn test_duplicate_texture_slot_name_fails() {
         params: vec![],
     };
 
-    let result = Material::from_desc(desc);
+    let result = Material::from_desc(0, desc);
     assert!(result.is_err());
 }
 
@@ -519,7 +519,7 @@ fn test_duplicate_param_name_fails() {
         ],
     };
 
-    let result = Material::from_desc(desc);
+    let result = Material::from_desc(0, desc);
     assert!(result.is_err());
 }
 
@@ -555,7 +555,7 @@ fn test_multiple_texture_slots() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert_eq!(material.texture_slot_count(), 2);
 
     // Access by name
@@ -616,7 +616,7 @@ fn test_full_pbr_material() {
         ],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
 
     // Verify pipeline
     assert!(Arc::ptr_eq(material.pipeline(), &pipeline));
@@ -652,7 +652,7 @@ fn test_param_not_found() {
         params: vec![("roughness".to_string(), ParamValue::Float(0.5))],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert!(material.param_by_name("nonexistent").is_none());
     assert!(material.param(999).is_none());
 }
@@ -668,7 +668,7 @@ fn test_texture_slot_not_found() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert!(material.texture_slot_by_name("nonexistent").is_none());
     assert!(material.texture_slot(0).is_none());
 }
@@ -691,7 +691,7 @@ fn test_typed_accessors_correct_type() {
         ],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
 
     let f = material.param_by_name("f").unwrap();
     assert!((f.as_float().unwrap() - 1.5).abs() < f32::EPSILON);
@@ -734,7 +734,7 @@ fn test_texture_slots_slice() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     let slots = material.texture_slots();
     assert_eq!(slots.len(), 2);
     assert_eq!(slots[0].name(), "a");
@@ -755,7 +755,7 @@ fn test_params_slice() {
         ],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     let params = material.params();
     assert_eq!(params.len(), 2);
     assert_eq!(params[0].name(), "x");
@@ -782,7 +782,7 @@ fn test_param_id() {
         ],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert_eq!(material.param_id("alpha"), Some(0));
     assert_eq!(material.param_id("beta"), Some(1));
     assert_eq!(material.param_id("nonexistent"), None);
@@ -806,7 +806,26 @@ fn test_texture_slot_id() {
         params: vec![],
     };
 
-    let material = Material::from_desc(desc).unwrap();
+    let material = Material::from_desc(0, desc).unwrap();
     assert_eq!(material.texture_slot_id("diffuse"), Some(0));
     assert_eq!(material.texture_slot_id("nonexistent"), None);
+}
+
+// ============================================================================
+// Tests: Slot ID
+// ============================================================================
+
+#[test]
+fn test_slot_id() {
+    let renderer = create_mock_renderer();
+    let pipeline = create_test_pipeline(renderer.clone());
+
+    let desc = MaterialDesc {
+        pipeline,
+        textures: vec![],
+        params: vec![],
+    };
+
+    let material = Material::from_desc(42, desc).unwrap();
+    assert_eq!(material.slot_id(), 42);
 }

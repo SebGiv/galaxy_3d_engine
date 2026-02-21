@@ -19,8 +19,8 @@ use crate::renderer::{
     BindingType,
     PrimitiveTopology,
 };
-use crate::resource::material::ParamValue;
 use crate::resource::mesh::Mesh;
+use crate::utils::SlotAllocator;
 
 // ===== SLOT MAP KEY =====
 
@@ -56,34 +56,17 @@ pub const FLAG_CAST_SHADOW: u64    = 1 << 1;
 pub const FLAG_RECEIVE_SHADOW: u64 = 1 << 2;
 // Bits 3-63 reserved for future extensions
 
-// ===== RESOLVED PUSH CONSTANT =====
-
-/// A resolved push constant value ready for GPU submission
-///
-/// Pre-resolved at RenderInstance creation time from MaterialParam
-/// and pipeline reflection data.
-pub struct ResolvedPushConstant {
-    /// Byte offset in the push constant block
-    offset: u32,
-    /// Size in bytes
-    size: u32,
-    /// The parameter value
-    value: ParamValue,
-}
-
 // ===== RENDER PASS =====
 
 /// A single rendering pass with pre-resolved GPU bindings
 ///
-/// Contains a pipeline and all bindings (binding groups + push constants)
+/// Contains a pipeline and all bindings (binding groups)
 /// resolved from the Material against the pipeline's reflection data.
 pub struct RenderPass {
     /// The renderer pipeline for this pass
     pipeline: Arc<dyn RendererPipeline>,
     /// Binding groups (textures, UBOs) per set index
     binding_groups: Vec<Arc<dyn BindingGroup>>,
-    /// Pre-resolved push constant values with byte offsets
-    push_constants: Vec<ResolvedPushConstant>,
 }
 
 // ===== RENDER SUBMESH =====
@@ -105,6 +88,8 @@ pub struct RenderSubMesh {
     topology: PrimitiveTopology,
     /// Rendering passes with pre-resolved bindings
     passes: Vec<RenderPass>,
+    /// Unique slot index in the GPU scene SSBO
+    draw_slot: u32,
 }
 
 // ===== RENDER LOD =====
@@ -164,6 +149,7 @@ impl RenderInstance {
         bounding_box: AABB,
         variant_index: usize,
         renderer: &Arc<Mutex<dyn renderer::Renderer>>,
+        slot_allocator: &mut SlotAllocator,
     ) -> Result<Self> {
         let geometry = mesh.geometry();
         let geom_mesh = mesh.geometry_mesh();
@@ -216,20 +202,6 @@ impl RenderInstance {
                     let renderer_pipeline = pass.renderer_pipeline();
                     let reflection = renderer_pipeline.reflection();
 
-                    // ========== RESOLVE PUSH CONSTANTS ==========
-                    let mut push_constants = Vec::new();
-                    for pc_block in reflection.push_constants() {
-                        for member in &pc_block.members {
-                            if let Some(param) = material.param_by_name(&member.name) {
-                                push_constants.push(ResolvedPushConstant {
-                                    offset: member.offset,
-                                    size: member.size.unwrap_or(0),
-                                    value: param.value().clone(),
-                                });
-                            }
-                        }
-                    }
-
                     // ========== RESOLVE BINDING GROUPS ==========
                     // Group texture bindings by set index
                     let mut sets: BTreeMap<u32, Vec<(u32, BindingResource)>> = BTreeMap::new();
@@ -271,7 +243,6 @@ impl RenderInstance {
                     passes.push(RenderPass {
                         pipeline: Arc::clone(renderer_pipeline),
                         binding_groups,
-                        push_constants,
                     });
                 }
 
@@ -282,6 +253,7 @@ impl RenderInstance {
                     index_count: geom_submesh.index_count(),
                     topology: geom_submesh.topology(),
                     passes,
+                    draw_slot: slot_allocator.alloc(),
                 });
             }
 
@@ -370,6 +342,17 @@ impl RenderInstance {
     pub fn variant_index(&self) -> usize {
         self.variant_index
     }
+
+    /// Release all draw slots back to the allocator.
+    ///
+    /// Called automatically by Scene::remove_render_instance() and Scene::clear().
+    pub(super) fn free_draw_slots(&self, slot_allocator: &mut SlotAllocator) {
+        for lod in &self.lods {
+            for submesh in &lod.sub_meshes {
+                slot_allocator.free(submesh.draw_slot);
+            }
+        }
+    }
 }
 
 // ===== RENDER LOD ACCESSORS =====
@@ -418,6 +401,11 @@ impl RenderSubMesh {
     pub fn passes(&self) -> &[RenderPass] {
         &self.passes
     }
+
+    /// Get the draw slot index (position in the GPU scene SSBO)
+    pub fn draw_slot(&self) -> u32 {
+        self.draw_slot
+    }
 }
 
 // ===== RENDER PASS ACCESSORS =====
@@ -431,30 +419,6 @@ impl RenderPass {
     /// Get the binding groups
     pub fn binding_groups(&self) -> &[Arc<dyn BindingGroup>] {
         &self.binding_groups
-    }
-
-    /// Get the resolved push constants
-    pub fn push_constants(&self) -> &[ResolvedPushConstant] {
-        &self.push_constants
-    }
-}
-
-// ===== RESOLVED PUSH CONSTANT ACCESSORS =====
-
-impl ResolvedPushConstant {
-    /// Get the byte offset in the push constant block
-    pub fn offset(&self) -> u32 {
-        self.offset
-    }
-
-    /// Get the size in bytes
-    pub fn size(&self) -> u32 {
-        self.size
-    }
-
-    /// Get the parameter value
-    pub fn value(&self) -> &ParamValue {
-        &self.value
     }
 }
 

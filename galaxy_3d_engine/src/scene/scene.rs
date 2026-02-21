@@ -9,6 +9,7 @@ use glam::Mat4;
 use crate::error::Result;
 use crate::renderer;
 use crate::resource::mesh::Mesh;
+use crate::utils::SlotAllocator;
 use super::render_instance::{
     RenderInstance, RenderInstanceKey, AABB,
 };
@@ -23,6 +24,8 @@ pub struct Scene {
     renderer: Arc<Mutex<dyn renderer::Renderer>>,
     /// Render instances stored in a slot map for O(1) insert/remove
     render_instances: SlotMap<RenderInstanceKey, RenderInstance>,
+    /// Allocator for unique draw slot indices (one per submesh in the GPU scene SSBO)
+    draw_slot_allocator: SlotAllocator,
 }
 
 impl Scene {
@@ -31,6 +34,7 @@ impl Scene {
         Self {
             renderer,
             render_instances: SlotMap::with_key(),
+            draw_slot_allocator: SlotAllocator::new(),
         }
     }
 
@@ -58,7 +62,8 @@ impl Scene {
         variant_index: usize,
     ) -> Result<RenderInstanceKey> {
         let instance = RenderInstance::from_mesh(
-            mesh, world_matrix, bounding_box, variant_index, &self.renderer,
+            mesh, world_matrix, bounding_box, variant_index,
+            &self.renderer, &mut self.draw_slot_allocator,
         )?;
         let key = self.render_instances.insert(instance);
         Ok(key)
@@ -71,6 +76,9 @@ impl Scene {
         &mut self,
         key: RenderInstanceKey,
     ) -> Option<RenderInstance> {
+        if let Some(instance) = self.render_instances.get(key) {
+            instance.free_draw_slots(&mut self.draw_slot_allocator);
+        }
         self.render_instances.remove(key)
     }
 
@@ -109,9 +117,20 @@ impl Scene {
         self.render_instances.len()
     }
 
-    /// Remove all render instances
+    /// Remove all render instances and reset the draw slot allocator
     pub fn clear(&mut self) {
         self.render_instances.clear();
+        self.draw_slot_allocator = SlotAllocator::new();
+    }
+
+    /// Minimum SSBO capacity needed (in number of slots)
+    pub fn draw_slot_high_water_mark(&self) -> u32 {
+        self.draw_slot_allocator.high_water_mark()
+    }
+
+    /// Number of currently allocated draw slots
+    pub fn draw_slot_count(&self) -> u32 {
+        self.draw_slot_allocator.len()
     }
 }
 

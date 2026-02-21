@@ -101,6 +101,7 @@ pub struct MaterialTextureSlot {
 /// Pure data — no GPU resources. References a Pipeline and provides
 /// textures (with optional layer/region targeting) and named parameters.
 pub struct Material {
+    slot_id: u32,
     pipeline: Arc<Pipeline>,
     textures: Vec<MaterialTextureSlot>,
     texture_names: HashMap<String, usize>,
@@ -130,7 +131,7 @@ pub struct MaterialTextureSlotDesc {
 
 impl Material {
     /// Create material from descriptor (internal use by ResourceManager)
-    pub(crate) fn from_desc(desc: MaterialDesc) -> Result<Self> {
+    pub(crate) fn from_desc(slot_id: u32, desc: MaterialDesc) -> Result<Self> {
 
         // ========== VALIDATION 1: No duplicate texture slot names ==========
         let mut seen_names = std::collections::HashSet::new();
@@ -229,12 +230,20 @@ impl Material {
         }
 
         Ok(Self {
+            slot_id,
             pipeline: desc.pipeline,
             textures,
             texture_names,
             params,
             param_names,
         })
+    }
+
+    // ===== SLOT ID =====
+
+    /// Get the unique material slot ID (for GPU buffer indexing)
+    pub fn slot_id(&self) -> u32 {
+        self.slot_id
     }
 
     // ===== PIPELINE ACCESS =====

@@ -154,7 +154,7 @@ fn create_test_material(pipeline: &Arc<Pipeline>, value: f32) -> Arc<Material> {
         textures: vec![],
         params: vec![("value".to_string(), ParamValue::Float(value))],
     };
-    Arc::new(Material::from_desc(desc).unwrap())
+    Arc::new(Material::from_desc(0, desc).unwrap())
 }
 
 /// Extract the "value" param from a material as f32

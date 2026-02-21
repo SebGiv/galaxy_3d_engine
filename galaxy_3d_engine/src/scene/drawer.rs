@@ -93,14 +93,6 @@ impl Drawer for ForwardDrawer {
                         &[ShaderStage::Vertex], 64, mat4_as_bytes(&model),
                     )?;
 
-                    // Material push constants (at their reflected offsets)
-                    for pc in pass.push_constants() {
-                        let bytes = pc.value().as_bytes();
-                        cmd.push_constants(
-                            &[ShaderStage::Vertex], pc.offset(), &bytes,
-                        )?;
-                    }
-
                     // Issue draw call
                     if sub_mesh.index_count() > 0 {
                         cmd.draw_indexed(

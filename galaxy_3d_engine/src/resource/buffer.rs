@@ -1,14 +1,14 @@
 /// Resource-level structured GPU buffer (UBO or SSBO).
 ///
 /// A Buffer wraps a renderer::Buffer with field metadata describing
-/// its internal structure. It knows the layout of each element (std140)
+/// its internal structure. It knows the layout of each element
 /// and can provide safe or unsafe access to individual elements.
 ///
 /// Architecture:
 /// - BufferKind: Uniform (UBO) or Storage (SSBO)
 /// - Fields: ordered list of named typed fields (e.g. "world" → Mat4)
 /// - Count: number of elements (array of structures)
-/// - Layout computed automatically using std140 alignment rules
+/// - Layout computed automatically (std140 for UBO, std430 for SSBO)
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -125,7 +125,7 @@ impl Buffer {
             }
         }
 
-        // ========== COMPUTE LAYOUT (std140) ==========
+        // ========== COMPUTE LAYOUT ==========
         let mut field_offsets = Vec::with_capacity(desc.fields.len());
         let mut field_names = HashMap::new();
         let mut current_offset: u64 = 0;
@@ -139,12 +139,18 @@ impl Buffer {
             current_offset += field.field_type.size_bytes();
         }
 
-        // Stride: structure size aligned to largest alignment (min 16 for std140)
-        let struct_align: u64 = desc.fields.iter()
+        // Stride: structure size aligned according to layout rules
+        // - Uniform (UBO) → std140: struct alignment is at least 16
+        // - Storage (SSBO) → std430: natural alignment (max of field alignments)
+        let max_field_align: u64 = desc.fields.iter()
             .map(|f| f.field_type.alignment())
             .max()
-            .unwrap_or(16)
-            .max(16); // std140: struct alignment is at least 16
+            .unwrap_or(4);
+
+        let struct_align: u64 = match desc.kind {
+            BufferKind::Uniform => max_field_align.max(16),
+            BufferKind::Storage => max_field_align,
+        };
 
         let stride = (current_offset + struct_align - 1) & !(struct_align - 1);
         let size = stride * desc.count as u64;

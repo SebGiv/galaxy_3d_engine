@@ -7,6 +7,7 @@ use crate::renderer;
 use crate::resource::{
     AtlasRegion, AtlasRegionDesc, LayerDesc, PipelinePassDesc,
     MeshLODDesc, SubMeshDesc, GeometryMeshRef, GeometrySubMeshRef,
+    BufferKind, FieldDesc,
 };
 use std::sync::{Arc, Mutex};
 
@@ -1365,4 +1366,360 @@ fn test_add_pipeline_variant_to_nonexistent_pipeline() {
 
     let result = rm.add_pipeline_variant("nonexistent", variant);
     assert!(result.is_err());
+}
+
+// ============================================================================
+// Tests: Material Slot Allocation
+// ============================================================================
+
+#[test]
+fn test_material_slot_id_assigned() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(&pipeline)).unwrap();
+    let mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(&pipeline)).unwrap();
+    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(&pipeline)).unwrap();
+
+    assert_eq!(mat0.slot_id(), 0);
+    assert_eq!(mat1.slot_id(), 1);
+    assert_eq!(mat2.slot_id(), 2);
+}
+
+#[test]
+fn test_material_slot_recycled_after_remove() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(&pipeline)).unwrap();
+    let _mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(&pipeline)).unwrap();
+
+    assert_eq!(mat0.slot_id(), 0);
+
+    // Remove mat0, its slot should be recycled
+    rm.remove_material("mat0");
+
+    // New material should reuse slot 0
+    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(&pipeline)).unwrap();
+    assert_eq!(mat2.slot_id(), 0);
+}
+
+#[test]
+fn test_material_slot_high_water_mark() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    assert_eq!(rm.material_slot_high_water_mark(), 0);
+    assert_eq!(rm.material_slot_count(), 0);
+
+    rm.create_material("mat0".to_string(), create_test_material_desc(&pipeline)).unwrap();
+    assert_eq!(rm.material_slot_high_water_mark(), 1);
+    assert_eq!(rm.material_slot_count(), 1);
+
+    rm.create_material("mat1".to_string(), create_test_material_desc(&pipeline)).unwrap();
+    assert_eq!(rm.material_slot_high_water_mark(), 2);
+    assert_eq!(rm.material_slot_count(), 2);
+
+    rm.remove_material("mat0");
+    assert_eq!(rm.material_slot_high_water_mark(), 2); // doesn't shrink
+    assert_eq!(rm.material_slot_count(), 1); // but count decreases
+
+    rm.create_material("mat2".to_string(), create_test_material_desc(&pipeline)).unwrap();
+    assert_eq!(rm.material_slot_high_water_mark(), 2); // reused slot, no increase
+    assert_eq!(rm.material_slot_count(), 2);
+}
+
+// ============================================================================
+// Tests: sync_materials_to_buffer
+// ============================================================================
+
+#[test]
+fn test_sync_materials_basic() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![],
+        params: vec![
+            ("roughness".to_string(), ParamValue::Float(0.8)),
+            ("color".to_string(), ParamValue::Vec4([1.0, 0.0, 0.0, 1.0])),
+        ],
+    };
+    rm.create_material("body".to_string(), mat_desc).unwrap();
+
+    let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "roughness".to_string(), field_type: FieldType::Float },
+            FieldDesc { name: "color".to_string(), field_type: FieldType::Vec4 },
+        ],
+        count: 4,
+    }).unwrap();
+
+    let result = rm.sync_materials_to_buffer(&buffer);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_sync_materials_type_mismatch_skips() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    // Material has "roughness" as Float
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![],
+        params: vec![
+            ("roughness".to_string(), ParamValue::Float(0.8)),
+        ],
+    };
+    rm.create_material("body".to_string(), mat_desc).unwrap();
+
+    // Buffer has "roughness" as Vec4 (type mismatch)
+    let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "roughness".to_string(), field_type: FieldType::Vec4 },
+        ],
+        count: 4,
+    }).unwrap();
+
+    // Should succeed (warning, not error)
+    let result = rm.sync_materials_to_buffer(&buffer);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_sync_materials_missing_field_skips() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    // Material has "roughness" param
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![],
+        params: vec![
+            ("roughness".to_string(), ParamValue::Float(0.8)),
+        ],
+    };
+    rm.create_material("body".to_string(), mat_desc).unwrap();
+
+    // Buffer has no "roughness" field
+    let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "metallic".to_string(), field_type: FieldType::Float },
+        ],
+        count: 4,
+    }).unwrap();
+
+    // Should succeed (warning, not error)
+    let result = rm.sync_materials_to_buffer(&buffer);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_sync_materials_bool_to_uint() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    // Material has Bool param
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![],
+        params: vec![
+            ("is_metallic".to_string(), ParamValue::Bool(true)),
+        ],
+    };
+    rm.create_material("body".to_string(), mat_desc).unwrap();
+
+    // Buffer has matching UInt field (Bool maps to UInt)
+    let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "is_metallic".to_string(), field_type: FieldType::UInt },
+        ],
+        count: 4,
+    }).unwrap();
+
+    let result = rm.sync_materials_to_buffer(&buffer);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_sync_materials_vec3_padding() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    // Material has Vec3 param (12 bytes raw, needs padding to 16)
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![],
+        params: vec![
+            ("normal".to_string(), ParamValue::Vec3([1.0, 0.0, 0.0])),
+        ],
+    };
+    rm.create_material("body".to_string(), mat_desc).unwrap();
+
+    // Buffer expects Vec3 field (16 bytes with padding)
+    let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "normal".to_string(), field_type: FieldType::Vec3 },
+        ],
+        count: 4,
+    }).unwrap();
+
+    // This validates that param_to_padded_bytes produces 16 bytes for Vec3,
+    // because update_field strictly validates data.len() == field_size
+    let result = rm.sync_materials_to_buffer(&buffer);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_sync_materials_slot_exceeds_buffer() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    // Create 3 materials → slot ids 0, 1, 2
+    for i in 0..3 {
+        let mat_desc = MaterialDesc {
+            pipeline: pipeline.clone(),
+            textures: vec![],
+            params: vec![
+                ("roughness".to_string(), ParamValue::Float(0.5)),
+            ],
+        };
+        rm.create_material(format!("mat{}", i), mat_desc).unwrap();
+    }
+
+    // Buffer only has 1 element (count=1) → slots 1 and 2 exceed
+    let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "roughness".to_string(), field_type: FieldType::Float },
+        ],
+        count: 1,
+    }).unwrap();
+
+    // Should succeed (warning, not error)
+    let result = rm.sync_materials_to_buffer(&buffer);
+    assert!(result.is_ok());
+}
+
+// ============================================================================
+// Tests: Private Helpers (compatible_field_type, param_to_padded_bytes)
+// ============================================================================
+
+#[test]
+fn test_compatible_field_type_all_variants() {
+    assert_eq!(compatible_field_type(&ParamValue::Float(0.0)), FieldType::Float);
+    assert_eq!(compatible_field_type(&ParamValue::Vec2([0.0; 2])), FieldType::Vec2);
+    assert_eq!(compatible_field_type(&ParamValue::Vec3([0.0; 3])), FieldType::Vec3);
+    assert_eq!(compatible_field_type(&ParamValue::Vec4([0.0; 4])), FieldType::Vec4);
+    assert_eq!(compatible_field_type(&ParamValue::Int(0)), FieldType::Int);
+    assert_eq!(compatible_field_type(&ParamValue::UInt(0)), FieldType::UInt);
+    assert_eq!(compatible_field_type(&ParamValue::Mat3([[0.0; 3]; 3])), FieldType::Mat3);
+    assert_eq!(compatible_field_type(&ParamValue::Mat4([[0.0; 4]; 4])), FieldType::Mat4);
+}
+
+#[test]
+fn test_compatible_field_type_bool_maps_to_uint() {
+    assert_eq!(compatible_field_type(&ParamValue::Bool(true)), FieldType::UInt);
+    assert_eq!(compatible_field_type(&ParamValue::Bool(false)), FieldType::UInt);
+}
+
+#[test]
+fn test_param_to_padded_bytes_vec3() {
+    let value = ParamValue::Vec3([1.0, 2.0, 3.0]);
+    let bytes = param_to_padded_bytes(&value);
+    assert_eq!(bytes.len(), 16); // 12 data + 4 padding
+
+    // Verify the actual float values
+    let f0 = f32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+    let f1 = f32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+    let f2 = f32::from_ne_bytes(bytes[8..12].try_into().unwrap());
+    assert!((f0 - 1.0).abs() < f32::EPSILON);
+    assert!((f1 - 2.0).abs() < f32::EPSILON);
+    assert!((f2 - 3.0).abs() < f32::EPSILON);
+
+    // Last 4 bytes should be zero padding
+    assert_eq!(&bytes[12..16], &[0u8; 4]);
+}
+
+#[test]
+fn test_param_to_padded_bytes_mat3() {
+    let value = ParamValue::Mat3([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ]);
+    let bytes = param_to_padded_bytes(&value);
+    assert_eq!(bytes.len(), 48); // 3 rows x (12 data + 4 padding)
+
+    // Each row is 16 bytes: 3 floats + 4 bytes padding
+    // Row 0: [1.0, 0.0, 0.0, pad]
+    let r0f0 = f32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+    assert!((r0f0 - 1.0).abs() < f32::EPSILON);
+    assert_eq!(&bytes[12..16], &[0u8; 4]); // row 0 padding
+
+    // Row 1: [0.0, 1.0, 0.0, pad]
+    let r1f1 = f32::from_ne_bytes(bytes[20..24].try_into().unwrap());
+    assert!((r1f1 - 1.0).abs() < f32::EPSILON);
+    assert_eq!(&bytes[28..32], &[0u8; 4]); // row 1 padding
+
+    // Row 2: [0.0, 0.0, 1.0, pad]
+    let r2f2 = f32::from_ne_bytes(bytes[40..44].try_into().unwrap());
+    assert!((r2f2 - 1.0).abs() < f32::EPSILON);
+    assert_eq!(&bytes[44..48], &[0u8; 4]); // row 2 padding
+}
+
+#[test]
+fn test_param_to_padded_bytes_float_unchanged() {
+    let value = ParamValue::Float(3.14);
+    let bytes = param_to_padded_bytes(&value);
+    assert_eq!(bytes.len(), 4);
+    let f = f32::from_ne_bytes(bytes[0..4].try_into().unwrap());
+    assert!((f - 3.14).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_param_to_padded_bytes_vec4_unchanged() {
+    let value = ParamValue::Vec4([1.0, 2.0, 3.0, 4.0]);
+    let bytes = param_to_padded_bytes(&value);
+    assert_eq!(bytes.len(), 16); // same as native, no padding needed
 }
