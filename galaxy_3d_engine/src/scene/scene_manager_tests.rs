@@ -6,6 +6,7 @@
 use super::*;
 use std::sync::{Arc, Mutex};
 use crate::renderer::mock_renderer::MockRenderer;
+use crate::resource::buffer::{Buffer, BufferDesc, BufferKind, FieldDesc, FieldType};
 
 // ============================================================================
 // Helper Functions
@@ -13,6 +14,39 @@ use crate::renderer::mock_renderer::MockRenderer;
 
 fn create_mock_renderer() -> Arc<Mutex<dyn crate::renderer::Renderer>> {
     Arc::new(Mutex::new(MockRenderer::new()))
+}
+
+fn create_test_buffers(
+    renderer: Arc<Mutex<dyn crate::renderer::Renderer>>,
+) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
+    let frame_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Uniform,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let instance_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let material_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        renderer,
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    (frame_buffer, instance_buffer, material_buffer)
+}
+
+fn create_scene_with_mock(
+    sm: &mut SceneManager,
+    name: &str,
+) -> crate::error::Result<Arc<Mutex<Scene>>> {
+    let renderer = create_mock_renderer();
+    let (fb, ib, mb) = create_test_buffers(renderer.clone());
+    sm.create_scene(name, renderer, fb, ib, mb)
 }
 
 // ============================================================================
@@ -32,7 +66,7 @@ fn test_scene_manager_new() {
 #[test]
 fn test_create_scene() {
     let mut sm = SceneManager::new();
-    let scene = sm.create_scene("main", create_mock_renderer());
+    let scene = create_scene_with_mock(&mut sm, "main");
     assert!(scene.is_ok());
     assert_eq!(sm.scene_count(), 1);
 }
@@ -40,7 +74,7 @@ fn test_create_scene() {
 #[test]
 fn test_create_scene_returns_arc() {
     let mut sm = SceneManager::new();
-    let scene_arc = sm.create_scene("main", create_mock_renderer()).unwrap();
+    let scene_arc = create_scene_with_mock(&mut sm, "main").unwrap();
 
     // The returned Arc should be usable
     let scene = scene_arc.lock().unwrap();
@@ -50,7 +84,7 @@ fn test_create_scene_returns_arc() {
 #[test]
 fn test_create_scene_same_as_stored() {
     let mut sm = SceneManager::new();
-    let created = sm.create_scene("main", create_mock_renderer()).unwrap();
+    let created = create_scene_with_mock(&mut sm, "main").unwrap();
     let retrieved = sm.scene("main").unwrap();
 
     // Both should point to the same scene
@@ -60,9 +94,9 @@ fn test_create_scene_same_as_stored() {
 #[test]
 fn test_create_multiple_scenes() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
-    sm.create_scene("ui", create_mock_renderer()).unwrap();
-    sm.create_scene("minimap", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
+    create_scene_with_mock(&mut sm, "ui").unwrap();
+    create_scene_with_mock(&mut sm, "minimap").unwrap();
 
     assert_eq!(sm.scene_count(), 3);
 }
@@ -70,9 +104,9 @@ fn test_create_multiple_scenes() {
 #[test]
 fn test_create_scene_duplicate_name_fails() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
 
-    let result = sm.create_scene("main", create_mock_renderer());
+    let result = create_scene_with_mock(&mut sm, "main");
     assert!(result.is_err());
     assert_eq!(sm.scene_count(), 1);
 }
@@ -84,7 +118,7 @@ fn test_create_scene_duplicate_name_fails() {
 #[test]
 fn test_scene_found() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
 
     assert!(sm.scene("main").is_some());
 }
@@ -98,8 +132,8 @@ fn test_scene_not_found() {
 #[test]
 fn test_scene_distinct_names() {
     let mut sm = SceneManager::new();
-    sm.create_scene("scene_a", create_mock_renderer()).unwrap();
-    sm.create_scene("scene_b", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "scene_a").unwrap();
+    create_scene_with_mock(&mut sm, "scene_b").unwrap();
 
     let a = sm.scene("scene_a").unwrap();
     let b = sm.scene("scene_b").unwrap();
@@ -115,7 +149,7 @@ fn test_scene_distinct_names() {
 #[test]
 fn test_remove_scene() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
 
     let removed = sm.remove_scene("main");
     assert!(removed.is_some());
@@ -132,7 +166,7 @@ fn test_remove_scene_not_found() {
 #[test]
 fn test_remove_scene_then_get_returns_none() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
     sm.remove_scene("main");
 
     assert!(sm.scene("main").is_none());
@@ -141,8 +175,8 @@ fn test_remove_scene_then_get_returns_none() {
 #[test]
 fn test_remove_scene_does_not_affect_others() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
-    sm.create_scene("ui", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
+    create_scene_with_mock(&mut sm, "ui").unwrap();
 
     sm.remove_scene("main");
 
@@ -154,10 +188,10 @@ fn test_remove_scene_does_not_affect_others() {
 #[test]
 fn test_remove_and_recreate_scene() {
     let mut sm = SceneManager::new();
-    let first = sm.create_scene("main", create_mock_renderer()).unwrap();
+    let first = create_scene_with_mock(&mut sm, "main").unwrap();
     sm.remove_scene("main");
 
-    let second = sm.create_scene("main", create_mock_renderer()).unwrap();
+    let second = create_scene_with_mock(&mut sm, "main").unwrap();
 
     // Different Arc (new scene instance)
     assert!(!Arc::ptr_eq(&first, &second));
@@ -177,9 +211,9 @@ fn test_scene_names_empty() {
 #[test]
 fn test_scene_names_multiple() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
-    sm.create_scene("ui", create_mock_renderer()).unwrap();
-    sm.create_scene("minimap", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
+    create_scene_with_mock(&mut sm, "ui").unwrap();
+    create_scene_with_mock(&mut sm, "minimap").unwrap();
 
     let names = sm.scene_names();
     assert_eq!(names.len(), 3);
@@ -195,8 +229,8 @@ fn test_scene_names_multiple() {
 #[test]
 fn test_clear() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
-    sm.create_scene("ui", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
+    create_scene_with_mock(&mut sm, "ui").unwrap();
 
     sm.clear();
 
@@ -208,10 +242,10 @@ fn test_clear() {
 #[test]
 fn test_clear_then_create() {
     let mut sm = SceneManager::new();
-    sm.create_scene("main", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "main").unwrap();
     sm.clear();
 
-    let result = sm.create_scene("main", create_mock_renderer());
+    let result = create_scene_with_mock(&mut sm, "main");
     assert!(result.is_ok());
     assert_eq!(sm.scene_count(), 1);
 }
@@ -225,10 +259,10 @@ fn test_scene_count_tracks_correctly() {
     let mut sm = SceneManager::new();
     assert_eq!(sm.scene_count(), 0);
 
-    sm.create_scene("a", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "a").unwrap();
     assert_eq!(sm.scene_count(), 1);
 
-    sm.create_scene("b", create_mock_renderer()).unwrap();
+    create_scene_with_mock(&mut sm, "b").unwrap();
     assert_eq!(sm.scene_count(), 2);
 
     sm.remove_scene("a");
@@ -245,7 +279,7 @@ fn test_scene_count_tracks_correctly() {
 #[test]
 fn test_scene_arc_mutex_is_shareable() {
     let mut sm = SceneManager::new();
-    let scene = sm.create_scene("main", create_mock_renderer()).unwrap();
+    let scene = create_scene_with_mock(&mut sm, "main").unwrap();
 
     // Clone the Arc (simulating sharing between threads)
     let scene2 = scene.clone();

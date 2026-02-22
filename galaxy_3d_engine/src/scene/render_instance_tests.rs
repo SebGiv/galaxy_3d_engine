@@ -26,6 +26,7 @@ use crate::resource::mesh::{
     Mesh, MeshDesc, MeshLODDesc, SubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
 };
+use crate::resource::buffer::{Buffer as ResourceBuffer, BufferDesc, BufferKind, FieldDesc, FieldType};
 use crate::utils::SlotAllocator;
 use glam::{Vec3, Mat4};
 use std::sync::{Arc, Mutex};
@@ -314,6 +315,30 @@ fn create_non_indexed_mesh(
     Mesh::from_desc(desc).unwrap()
 }
 
+fn create_test_buffers(
+    renderer: Arc<Mutex<dyn crate::renderer::Renderer>>,
+) -> (Arc<ResourceBuffer>, Arc<ResourceBuffer>, Arc<ResourceBuffer>) {
+    let frame_buffer = Arc::new(ResourceBuffer::from_desc(BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Uniform,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let instance_buffer = Arc::new(ResourceBuffer::from_desc(BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let material_buffer = Arc::new(ResourceBuffer::from_desc(BufferDesc {
+        renderer,
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    (frame_buffer, instance_buffer, material_buffer)
+}
+
 /// Helper: create a RenderInstance with a fresh slot allocator
 /// (most tests don't need to inspect draw_slot values)
 fn create_test_render_instance(
@@ -324,7 +349,8 @@ fn create_test_render_instance(
     renderer: &Arc<Mutex<dyn crate::renderer::Renderer>>,
 ) -> crate::error::Result<RenderInstance> {
     let mut alloc = SlotAllocator::new();
-    RenderInstance::from_mesh(mesh, matrix, aabb, variant_index, renderer, &mut alloc)
+    let (fb, ib, mb) = create_test_buffers(renderer.clone());
+    RenderInstance::from_mesh(mesh, matrix, aabb, variant_index, renderer, &mut alloc, &fb, &ib, &mb)
 }
 
 // ============================================================================
@@ -530,8 +556,8 @@ fn test_from_mesh_render_pass_structure() {
     let pass = &sm.passes()[0];
     // Pipeline should be set
     assert!(pass.pipeline().as_ref().reflection().binding_count() == 0);
-    // No matching texture bindings in mock reflection → empty
-    assert!(pass.binding_groups().is_empty());
+    // 1 binding group: global set 0 (frame + instance + material buffers), no material textures
+    assert_eq!(pass.binding_groups().len(), 1);
 }
 
 #[test]
@@ -550,8 +576,8 @@ fn test_from_mesh_material_with_texture_no_matching_reflection() {
     // Material has textures and params, but mock reflection has no matching bindings
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     assert_eq!(sm.passes().len(), 1);
-    // No CombinedImageSampler bindings in mock → no binding groups created
-    assert!(sm.passes()[0].binding_groups().is_empty());
+    // 1 binding group: global set 0 (frame + instance + material buffers), no material textures
+    assert_eq!(sm.passes()[0].binding_groups().len(), 1);
 }
 
 #[test]
@@ -810,9 +836,9 @@ fn test_render_submesh_all_accessors() {
     // Pipeline passes
     assert_eq!(sm.passes().len(), 1);
 
-    // RenderPass structure
+    // RenderPass structure: 1 binding group (global set 0), no material textures
     let pass = &sm.passes()[0];
-    assert!(pass.binding_groups().is_empty());
+    assert_eq!(pass.binding_groups().len(), 1);
 }
 
 // ============================================================================
@@ -834,6 +860,7 @@ fn test_render_instance_key_is_copy() {
 #[test]
 fn test_draw_slot_allocation() {
     let renderer = create_mock_renderer();
+    let (fb, ib, mb) = create_test_buffers(renderer.clone());
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
     let material = create_test_material(&pipeline);
@@ -842,6 +869,7 @@ fn test_draw_slot_allocation() {
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
+        &fb, &ib, &mb,
     ).unwrap();
 
     // Mesh has 2 LODs: LOD 0 (2 submeshes) + LOD 1 (1 submesh) = 3 draw slots
@@ -860,6 +888,7 @@ fn test_draw_slot_allocation() {
 #[test]
 fn test_draw_slot_sequential_allocation() {
     let renderer = create_mock_renderer();
+    let (fb, ib, mb) = create_test_buffers(renderer.clone());
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
     let material = create_test_material(&pipeline);
@@ -868,6 +897,7 @@ fn test_draw_slot_sequential_allocation() {
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
+        &fb, &ib, &mb,
     ).unwrap();
 
     // First allocation starts at 0 and increments
@@ -882,6 +912,7 @@ fn test_draw_slot_sequential_allocation() {
 #[test]
 fn test_draw_slot_shared_allocator() {
     let renderer = create_mock_renderer();
+    let (fb, ib, mb) = create_test_buffers(renderer.clone());
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
     let material = create_test_material(&pipeline);
@@ -892,11 +923,13 @@ fn test_draw_slot_shared_allocator() {
     // First instance: slots 0, 1, 2
     let inst1 = RenderInstance::from_mesh(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
+        &fb, &ib, &mb,
     ).unwrap();
 
     // Second instance: slots 3, 4, 5
     let inst2 = RenderInstance::from_mesh(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
+        &fb, &ib, &mb,
     ).unwrap();
 
     assert_eq!(alloc.len(), 6);
@@ -910,6 +943,7 @@ fn test_draw_slot_shared_allocator() {
 #[test]
 fn test_free_draw_slots() {
     let renderer = create_mock_renderer();
+    let (fb, ib, mb) = create_test_buffers(renderer.clone());
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
     let material = create_test_material(&pipeline);
@@ -918,6 +952,7 @@ fn test_free_draw_slots() {
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
+        &fb, &ib, &mb,
     ).unwrap();
 
     assert_eq!(alloc.len(), 3);

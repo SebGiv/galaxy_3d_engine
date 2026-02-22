@@ -19,6 +19,7 @@ use crate::renderer::{
     BindingType,
     PrimitiveTopology,
 };
+use crate::resource::buffer::Buffer as ResourceBuffer;
 use crate::resource::mesh::Mesh;
 use crate::utils::SlotAllocator;
 
@@ -90,6 +91,8 @@ pub struct RenderSubMesh {
     passes: Vec<RenderPass>,
     /// Unique slot index in the GPU scene SSBO
     draw_slot: u32,
+    /// Material slot ID (position in the GPU material SSBO)
+    material_slot_id: u32,
 }
 
 // ===== RENDER LOD =====
@@ -150,6 +153,9 @@ impl RenderInstance {
         variant_index: usize,
         renderer: &Arc<Mutex<dyn renderer::Renderer>>,
         slot_allocator: &mut SlotAllocator,
+        frame_buffer: &Arc<ResourceBuffer>,
+        instance_buffer: &Arc<ResourceBuffer>,
+        material_buffer: &Arc<ResourceBuffer>,
     ) -> Result<Self> {
         let geometry = mesh.geometry();
         let geom_mesh = mesh.geometry_mesh();
@@ -184,6 +190,7 @@ impl RenderInstance {
                         submesh.submesh_id(), lod_idx))?;
 
                 let material = submesh.material();
+                let material_slot_id = material.slot_id();
 
                 // Extract pipeline passes for the selected variant
                 let pipeline = material.pipeline();
@@ -222,9 +229,22 @@ impl RenderInstance {
                         }
                     }
 
-                    // Create binding groups for each set
-                    let mut binding_groups = Vec::new();
+                    // Create binding groups
                     let renderer_lock = renderer.lock().unwrap();
+
+                    // Set 0: global buffers (frame UBO + instance SSBO + material SSBO)
+                    let global_bg = renderer_lock.create_binding_group(
+                        renderer_pipeline,
+                        0,
+                        &[
+                            BindingResource::UniformBuffer(frame_buffer.renderer_buffer().as_ref()),
+                            BindingResource::StorageBuffer(instance_buffer.renderer_buffer().as_ref()),
+                            BindingResource::StorageBuffer(material_buffer.renderer_buffer().as_ref()),
+                        ],
+                    )?;
+                    let mut binding_groups = vec![global_bg];
+
+                    // Sets 1+: material texture bindings
                     for (set_index, mut resources) in sets {
                         // Sort by binding index to match layout order
                         resources.sort_by_key(|(binding, _)| *binding);
@@ -254,6 +274,7 @@ impl RenderInstance {
                     topology: geom_submesh.topology(),
                     passes,
                     draw_slot: slot_allocator.alloc(),
+                    material_slot_id,
                 });
             }
 
@@ -405,6 +426,11 @@ impl RenderSubMesh {
     /// Get the draw slot index (position in the GPU scene SSBO)
     pub fn draw_slot(&self) -> u32 {
         self.draw_slot
+    }
+
+    /// Get the material slot ID (position in the GPU material SSBO)
+    pub fn material_slot_id(&self) -> u32 {
+        self.material_slot_id
     }
 }
 

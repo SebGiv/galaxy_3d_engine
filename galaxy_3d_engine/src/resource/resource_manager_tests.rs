@@ -8,6 +8,7 @@ use crate::resource::{
     AtlasRegion, AtlasRegionDesc, LayerDesc, PipelinePassDesc,
     MeshLODDesc, SubMeshDesc, GeometryMeshRef, GeometrySubMeshRef,
     BufferKind, FieldDesc,
+    MaterialTextureSlotDesc, LayerRef,
 };
 use std::sync::{Arc, Mutex};
 
@@ -1722,4 +1723,246 @@ fn test_param_to_padded_bytes_vec4_unchanged() {
     let value = ParamValue::Vec4([1.0, 2.0, 3.0, 4.0]);
     let bytes = param_to_padded_bytes(&value);
     assert_eq!(bytes.len(), 16); // same as native, no padding needed
+}
+
+// ============================================================================
+// Tests: create_default_material_buffer
+// ============================================================================
+
+#[test]
+fn test_default_material_buffer_creation() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let buffer = rm.create_default_material_buffer(
+        "material".to_string(), renderer, 4,
+    );
+    assert!(buffer.is_ok());
+    let buffer = buffer.unwrap();
+    assert_eq!(buffer.count(), 4);
+    assert_eq!(buffer.kind(), BufferKind::Storage);
+}
+
+#[test]
+fn test_default_material_buffer_fields() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let buffer = rm.create_default_material_buffer(
+        "material".to_string(), renderer, 1,
+    ).unwrap();
+
+    // All 14 fields must exist
+    assert!(buffer.field_id("baseColor").is_some());
+    assert!(buffer.field_id("emissiveColor").is_some());
+    assert!(buffer.field_id("metallic").is_some());
+    assert!(buffer.field_id("roughness").is_some());
+    assert!(buffer.field_id("normalScale").is_some());
+    assert!(buffer.field_id("ao").is_some());
+    assert!(buffer.field_id("alphaCutoff").is_some());
+    assert!(buffer.field_id("ior").is_some());
+    assert!(buffer.field_id("albedoTexture").is_some());
+    assert!(buffer.field_id("normalTexture").is_some());
+    assert!(buffer.field_id("metallicRoughnessTexture").is_some());
+    assert!(buffer.field_id("emissiveTexture").is_some());
+    assert!(buffer.field_id("aoTexture").is_some());
+    assert!(buffer.field_id("flags").is_some());
+}
+
+#[test]
+fn test_default_material_buffer_stride() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let buffer = rm.create_default_material_buffer(
+        "material".to_string(), renderer, 1,
+    ).unwrap();
+
+    // 2×Vec4(16) + 6×Float(4) + 6×UInt(4) = 32 + 24 + 24 = 80
+    assert_eq!(buffer.stride(), 80);
+}
+
+#[test]
+fn test_default_material_buffer_defaults() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    // Verify that creating a buffer with multiple slots and writing all defaults
+    // completes without error (MockBuffer::update is a no-op, so we can't read
+    // back the values, but we can verify all update_field calls succeed)
+    let buffer = rm.create_default_material_buffer(
+        "material".to_string(), renderer, 4,
+    ).unwrap();
+
+    assert_eq!(buffer.count(), 4);
+}
+
+// ============================================================================
+// sync_materials_to_buffer — texture slots
+// ============================================================================
+
+#[test]
+fn test_sync_materials_texture_slot_writes_layer() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    // Create a texture with 3 layers
+    let tex_desc = TextureDesc {
+        renderer: renderer.clone(),
+        texture: renderer::TextureDesc {
+            width: 64, height: 64,
+            format: renderer::TextureFormat::R8G8B8A8_UNORM,
+            usage: renderer::TextureUsage::Sampled,
+            array_layers: 3,
+            data: None,
+            mipmap: renderer::MipmapMode::None,
+        },
+        layers: vec![
+            LayerDesc { name: "grass".to_string(), layer_index: 0, data: None, regions: vec![] },
+            LayerDesc { name: "stone".to_string(), layer_index: 1, data: None, regions: vec![] },
+            LayerDesc { name: "sand".to_string(),  layer_index: 2, data: None, regions: vec![] },
+        ],
+    };
+    let texture = rm.create_texture("atlas".to_string(), tex_desc).unwrap();
+
+    // Pipeline + material with a texture slot targeting layer 2
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![MaterialTextureSlotDesc {
+            name: "albedoTexture".to_string(),
+            texture: texture.clone(),
+            layer: Some(LayerRef::Index(2)),
+            region: None,
+            sampler_type: renderer::SamplerType::LinearRepeat,
+        }],
+        params: vec![],
+    };
+    rm.create_material("ground".to_string(), mat_desc).unwrap();
+
+    // Buffer with a UInt field matching the slot name
+    let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::UInt },
+        ],
+        count: 4,
+    }).unwrap();
+
+    // Sync should succeed (layer 2 written to buffer)
+    assert!(rm.sync_materials_to_buffer(&buffer).is_ok());
+}
+
+#[test]
+fn test_sync_materials_texture_slot_no_layer_writes_zero() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let tex_desc = create_test_texture_desc(renderer.clone(), "tex", 64, 64);
+    let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    // Material with texture slot but NO layer (layer = None → writes 0)
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![MaterialTextureSlotDesc {
+            name: "albedoTexture".to_string(),
+            texture: texture.clone(),
+            layer: None,
+            region: None,
+            sampler_type: renderer::SamplerType::LinearRepeat,
+        }],
+        params: vec![],
+    };
+    rm.create_material("flat".to_string(), mat_desc).unwrap();
+
+    let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::UInt },
+        ],
+        count: 4,
+    }).unwrap();
+
+    assert!(rm.sync_materials_to_buffer(&buffer).is_ok());
+}
+
+#[test]
+fn test_sync_materials_texture_slot_missing_field_skips() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let tex_desc = create_test_texture_desc(renderer.clone(), "tex", 64, 64);
+    let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![MaterialTextureSlotDesc {
+            name: "albedoTexture".to_string(),
+            texture: texture.clone(),
+            layer: None,
+            region: None,
+            sampler_type: renderer::SamplerType::LinearRepeat,
+        }],
+        params: vec![],
+    };
+    rm.create_material("mat".to_string(), mat_desc).unwrap();
+
+    // Buffer has NO field named "albedoTexture" → warning, no error
+    let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "roughness".to_string(), field_type: FieldType::Float },
+        ],
+        count: 4,
+    }).unwrap();
+
+    assert!(rm.sync_materials_to_buffer(&buffer).is_ok());
+}
+
+#[test]
+fn test_sync_materials_texture_slot_wrong_type_skips() {
+    let mut rm = ResourceManager::new();
+    let renderer = create_mock_renderer();
+
+    let tex_desc = create_test_texture_desc(renderer.clone(), "tex", 64, 64);
+    let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
+
+    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
+
+    let mat_desc = MaterialDesc {
+        pipeline: pipeline.clone(),
+        textures: vec![MaterialTextureSlotDesc {
+            name: "albedoTexture".to_string(),
+            texture: texture.clone(),
+            layer: None,
+            region: None,
+            sampler_type: renderer::SamplerType::LinearRepeat,
+        }],
+        params: vec![],
+    };
+    rm.create_material("mat".to_string(), mat_desc).unwrap();
+
+    // Buffer has "albedoTexture" but as Float, not UInt → warning, no error
+    let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![
+            FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::Float },
+        ],
+        count: 4,
+    }).unwrap();
+
+    assert!(rm.sync_materials_to_buffer(&buffer).is_ok());
 }

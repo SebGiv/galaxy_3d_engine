@@ -3,11 +3,13 @@
 /// Uses a SlotMap for O(1) insert/remove with stable keys.
 /// Instances are stored contiguously for cache-friendly iteration.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use slotmap::SlotMap;
 use glam::Mat4;
 use crate::error::Result;
 use crate::renderer;
+use crate::resource::buffer::Buffer;
 use crate::resource::mesh::Mesh;
 use crate::utils::SlotAllocator;
 use super::render_instance::{
@@ -26,15 +28,42 @@ pub struct Scene {
     render_instances: SlotMap<RenderInstanceKey, RenderInstance>,
     /// Allocator for unique draw slot indices (one per submesh in the GPU scene SSBO)
     draw_slot_allocator: SlotAllocator,
+    /// Per-frame uniform buffer (camera, lighting, time, post-process)
+    frame_buffer: Arc<Buffer>,
+    /// Per-instance storage buffer (world matrices, material slot, flags)
+    instance_buffer: Arc<Buffer>,
+    /// Material storage buffer (shared material parameters)
+    material_buffer: Arc<Buffer>,
+    /// Instances whose world matrix changed since last take_dirty_transforms()
+    dirty_transforms: HashSet<RenderInstanceKey>,
+    /// Newly created instances pending full GPU buffer initialization
+    new_instances: HashSet<RenderInstanceKey>,
 }
 
 impl Scene {
     /// Create a new empty scene (internal: only via SceneManager)
-    pub(crate) fn new(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Self {
+    ///
+    /// # Arguments
+    ///
+    /// * `renderer` - Renderer for creating GPU resources
+    /// * `frame_buffer` - Per-frame uniform buffer (camera, lighting, time)
+    /// * `instance_buffer` - Per-instance storage buffer (world matrices, flags)
+    /// * `material_buffer` - Material storage buffer (shared material parameters)
+    pub(crate) fn new(
+        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        frame_buffer: Arc<Buffer>,
+        instance_buffer: Arc<Buffer>,
+        material_buffer: Arc<Buffer>,
+    ) -> Self {
         Self {
             renderer,
             render_instances: SlotMap::with_key(),
             draw_slot_allocator: SlotAllocator::new(),
+            frame_buffer,
+            instance_buffer,
+            material_buffer,
+            dirty_transforms: HashSet::new(),
+            new_instances: HashSet::new(),
         }
     }
 
@@ -64,8 +93,10 @@ impl Scene {
         let instance = RenderInstance::from_mesh(
             mesh, world_matrix, bounding_box, variant_index,
             &self.renderer, &mut self.draw_slot_allocator,
+            &self.frame_buffer, &self.instance_buffer, &self.material_buffer,
         )?;
         let key = self.render_instances.insert(instance);
+        self.new_instances.insert(key);
         Ok(key)
     }
 
@@ -76,6 +107,8 @@ impl Scene {
         &mut self,
         key: RenderInstanceKey,
     ) -> Option<RenderInstance> {
+        self.dirty_transforms.remove(&key);
+        self.new_instances.remove(&key);
         if let Some(instance) = self.render_instances.get(key) {
             instance.free_draw_slots(&mut self.draw_slot_allocator);
         }
@@ -90,12 +123,35 @@ impl Scene {
         self.render_instances.get(key)
     }
 
-    /// Get a mutable RenderInstance by key
-    pub fn render_instance_mut(
-        &mut self,
-        key: RenderInstanceKey,
-    ) -> Option<&mut RenderInstance> {
-        self.render_instances.get_mut(key)
+    /// Set the world matrix of a render instance. Returns false if key is invalid.
+    pub fn set_world_matrix(&mut self, key: RenderInstanceKey, matrix: Mat4) -> bool {
+        if let Some(instance) = self.render_instances.get_mut(key) {
+            instance.set_world_matrix(matrix);
+            self.dirty_transforms.insert(key);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the set of instances with pending transform changes.
+    pub fn dirty_transforms(&self) -> &HashSet<RenderInstanceKey> {
+        &self.dirty_transforms
+    }
+
+    /// Take and clear the dirty transform set.
+    pub fn take_dirty_transforms(&mut self) -> HashSet<RenderInstanceKey> {
+        std::mem::take(&mut self.dirty_transforms)
+    }
+
+    /// Get the set of newly created instances pending GPU initialization.
+    pub fn new_instances(&self) -> &HashSet<RenderInstanceKey> {
+        &self.new_instances
+    }
+
+    /// Take and clear the new instances set.
+    pub fn take_new_instances(&mut self) -> HashSet<RenderInstanceKey> {
+        std::mem::take(&mut self.new_instances)
     }
 
     /// Iterate over all render instances (key, instance)
@@ -105,22 +161,32 @@ impl Scene {
         self.render_instances.iter()
     }
 
-    /// Iterate over all render instances mutably
-    pub fn render_instances_mut(
-        &mut self,
-    ) -> impl Iterator<Item = (RenderInstanceKey, &mut RenderInstance)> {
-        self.render_instances.iter_mut()
-    }
-
     /// Get the number of render instances
     pub fn render_instance_count(&self) -> usize {
         self.render_instances.len()
+    }
+
+    /// Get the per-frame uniform buffer
+    pub fn frame_buffer(&self) -> &Arc<Buffer> {
+        &self.frame_buffer
+    }
+
+    /// Get the per-instance storage buffer
+    pub fn instance_buffer(&self) -> &Arc<Buffer> {
+        &self.instance_buffer
+    }
+
+    /// Get the material storage buffer
+    pub fn material_buffer(&self) -> &Arc<Buffer> {
+        &self.material_buffer
     }
 
     /// Remove all render instances and reset the draw slot allocator
     pub fn clear(&mut self) {
         self.render_instances.clear();
         self.draw_slot_allocator = SlotAllocator::new();
+        self.dirty_transforms.clear();
+        self.new_instances.clear();
     }
 
     /// Minimum SSBO capacity needed (in number of slots)

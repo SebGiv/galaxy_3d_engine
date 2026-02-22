@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail};
 use crate::renderer;
+use crate::resource::buffer::Buffer;
 use super::scene::Scene;
 
 /// Scene manager singleton (managed by Engine)
@@ -30,6 +31,14 @@ impl SceneManager {
     ///
     /// Returns the created scene for immediate use.
     ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique scene name
+    /// * `renderer` - Renderer for creating GPU resources
+    /// * `frame_buffer` - Per-frame uniform buffer (camera, lighting, time)
+    /// * `instance_buffer` - Per-instance storage buffer (world matrices, flags)
+    /// * `material_buffer` - Material storage buffer (shared material parameters)
+    ///
     /// # Errors
     ///
     /// Returns an error if a scene with the same name already exists.
@@ -37,13 +46,18 @@ impl SceneManager {
         &mut self,
         name: &str,
         renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        frame_buffer: Arc<Buffer>,
+        instance_buffer: Arc<Buffer>,
+        material_buffer: Arc<Buffer>,
     ) -> Result<Arc<Mutex<Scene>>> {
         if self.scenes.contains_key(name) {
             engine_bail!("galaxy3d::SceneManager",
                 "Scene '{}' already exists", name);
         }
 
-        let scene = Arc::new(Mutex::new(Scene::new(renderer)));
+        let scene = Arc::new(Mutex::new(Scene::new(
+            renderer, frame_buffer, instance_buffer, material_buffer,
+        )));
         self.scenes.insert(name.to_string(), Arc::clone(&scene));
         Ok(scene)
     }

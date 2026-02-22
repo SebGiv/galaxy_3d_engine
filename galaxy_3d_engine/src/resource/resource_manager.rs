@@ -4,8 +4,9 @@
 //! Resources will be added incrementally as the engine evolves.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use crate::error::Result;
+use crate::renderer;
 use crate::resource::texture::{
     Texture,
     TextureDesc, LayerDesc, AtlasRegionDesc,
@@ -23,7 +24,7 @@ use crate::resource::mesh::{
     Mesh, MeshDesc,
 };
 use crate::resource::buffer::{
-    Buffer, BufferDesc, FieldType,
+    Buffer, BufferDesc, BufferKind, FieldDesc, FieldType,
 };
 use crate::resource::material::ParamValue;
 use crate::utils::SlotAllocator;
@@ -561,6 +562,35 @@ impl ResourceManager {
                 let bytes = param_to_padded_bytes(param.value());
                 buffer.update_field(slot_id, field_index, &bytes)?;
             }
+
+            // ===== TEXTURE SLOTS → BUFFER FIELDS (layer index) =====
+            for slot in material.texture_slots() {
+                // 1. Find field by slot name
+                let field_index = match buffer.field_id(slot.name()) {
+                    Some(idx) => idx,
+                    None => {
+                        crate::engine_warn!("galaxy3d::ResourceManager",
+                            "sync_materials: material '{}' texture slot '{}' \
+                             not found in buffer layout",
+                            mat_name, slot.name());
+                        continue;
+                    }
+                };
+
+                // 2. Check field is UInt
+                let field_type = buffer.fields()[field_index].field_type;
+                if field_type != FieldType::UInt {
+                    crate::engine_warn!("galaxy3d::ResourceManager",
+                        "sync_materials: material '{}' texture slot '{}' \
+                         expects UInt field, found {:?}",
+                        mat_name, slot.name(), field_type);
+                    continue;
+                }
+
+                // 3. Write layer index (0 if no layer specified)
+                let layer_value: u32 = slot.layer().unwrap_or(0);
+                buffer.update_field(slot_id, field_index, &layer_value.to_ne_bytes())?;
+            }
         }
         Ok(())
     }
@@ -671,6 +701,153 @@ impl ResourceManager {
     /// Get the number of registered buffers
     pub fn buffer_count(&self) -> usize {
         self.buffers.len()
+    }
+
+    /// Create a default per-frame uniform buffer (UBO) with standard engine fields.
+    ///
+    /// Layout (std140, 304 bytes):
+    /// - Camera: view, projection, viewProjection (Mat4), cameraPosition, cameraDirection (Vec4)
+    /// - Lighting: sunDirection, sunColor, ambientColor (Vec4)
+    /// - Time: time, deltaTime (Float), frameIndex (UInt)
+    /// - Post-process: exposure, gamma (Float)
+    /// - Depth: nearPlane, farPlane (Float)
+    /// - Ambient: ambientIntensity (Float)
+    ///
+    /// Fields that would cause artifacts or crashes at zero are initialized
+    /// with safe defaults.
+    pub fn create_default_frame_uniform_buffer(
+        &mut self,
+        name: String,
+        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    ) -> Result<Arc<Buffer>> {
+        let buffer = self.create_buffer(name, BufferDesc {
+            renderer,
+            kind: BufferKind::Uniform,
+            fields: vec![
+                FieldDesc { name: "view".to_string(),             field_type: FieldType::Mat4 },
+                FieldDesc { name: "projection".to_string(),       field_type: FieldType::Mat4 },
+                FieldDesc { name: "viewProjection".to_string(),   field_type: FieldType::Mat4 },
+                FieldDesc { name: "cameraPosition".to_string(),   field_type: FieldType::Vec4 },
+                FieldDesc { name: "cameraDirection".to_string(),  field_type: FieldType::Vec4 },
+                FieldDesc { name: "sunDirection".to_string(),     field_type: FieldType::Vec4 },
+                FieldDesc { name: "sunColor".to_string(),         field_type: FieldType::Vec4 },
+                FieldDesc { name: "ambientColor".to_string(),     field_type: FieldType::Vec4 },
+                FieldDesc { name: "time".to_string(),             field_type: FieldType::Float },
+                FieldDesc { name: "deltaTime".to_string(),        field_type: FieldType::Float },
+                FieldDesc { name: "frameIndex".to_string(),       field_type: FieldType::UInt },
+                FieldDesc { name: "exposure".to_string(),         field_type: FieldType::Float },
+                FieldDesc { name: "gamma".to_string(),            field_type: FieldType::Float },
+                FieldDesc { name: "nearPlane".to_string(),        field_type: FieldType::Float },
+                FieldDesc { name: "farPlane".to_string(),         field_type: FieldType::Float },
+                FieldDesc { name: "ambientIntensity".to_string(), field_type: FieldType::Float },
+            ],
+            count: 1,
+        })?;
+
+        // Defaults for fields that cause artifacts or crashes if left at 0
+        let f = |name: &str| buffer.field_id(name).unwrap();
+
+        buffer.update_field(0, f("sunDirection"),     &[0.0f32, -1.0, 0.0, 0.0].map(|v| v.to_ne_bytes()).concat())?;
+        buffer.update_field(0, f("sunColor"),         &[1.0f32, 1.0, 1.0, 1.0].map(|v| v.to_ne_bytes()).concat())?;
+        buffer.update_field(0, f("ambientColor"),     &[0.1f32, 0.1, 0.1, 1.0].map(|v| v.to_ne_bytes()).concat())?;
+        buffer.update_field(0, f("exposure"),         &1.0f32.to_ne_bytes())?;
+        buffer.update_field(0, f("gamma"),            &2.2f32.to_ne_bytes())?;
+        buffer.update_field(0, f("nearPlane"),        &0.1f32.to_ne_bytes())?;
+        buffer.update_field(0, f("farPlane"),         &1000.0f32.to_ne_bytes())?;
+        buffer.update_field(0, f("ambientIntensity"), &1.0f32.to_ne_bytes())?;
+
+        Ok(buffer)
+    }
+
+    /// Create a default per-instance storage buffer (SSBO) with standard engine fields.
+    ///
+    /// Layout (std430, 224 bytes per element):
+    /// - Transform: world, previousWorld, inverseWorld (Mat4)
+    /// - References: materialSlotId, flags (UInt)
+    /// - 8 bytes padding (Vec4 alignment)
+    /// - Custom: customData (Vec4)
+    ///
+    /// No default values — instances are populated individually.
+    pub fn create_default_instance_buffer(
+        &mut self,
+        name: String,
+        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        count: u32,
+    ) -> Result<Arc<Buffer>> {
+        self.create_buffer(name, BufferDesc {
+            renderer,
+            kind: BufferKind::Storage,
+            fields: vec![
+                FieldDesc { name: "world".to_string(),          field_type: FieldType::Mat4 },
+                FieldDesc { name: "previousWorld".to_string(),  field_type: FieldType::Mat4 },
+                FieldDesc { name: "inverseWorld".to_string(),   field_type: FieldType::Mat4 },
+                FieldDesc { name: "materialSlotId".to_string(), field_type: FieldType::UInt },
+                FieldDesc { name: "flags".to_string(),          field_type: FieldType::UInt },
+                FieldDesc { name: "customData".to_string(),     field_type: FieldType::Vec4 },
+            ],
+            count,
+        })
+    }
+
+    /// Create a default material storage buffer (SSBO) with standard PBR fields.
+    ///
+    /// Layout (std430, 80 bytes per element):
+    /// - Color: baseColor, emissiveColor (Vec4)
+    /// - PBR factors: metallic, roughness, normalScale, ao (Float)
+    /// - Transparency: alphaCutoff, ior (Float)
+    /// - Texture indices: albedoTexture, normalTexture, metallicRoughnessTexture,
+    ///   emissiveTexture, aoTexture (UInt) — u32::MAX = no texture
+    /// - Flags: flags (UInt) — bitfield for material properties
+    ///
+    /// Fields that would cause artifacts or crashes at zero are initialized
+    /// with safe defaults.
+    pub fn create_default_material_buffer(
+        &mut self,
+        name: String,
+        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        count: u32,
+    ) -> Result<Arc<Buffer>> {
+        let buffer = self.create_buffer(name, BufferDesc {
+            renderer,
+            kind: BufferKind::Storage,
+            fields: vec![
+                FieldDesc { name: "baseColor".to_string(),                field_type: FieldType::Vec4 },
+                FieldDesc { name: "emissiveColor".to_string(),            field_type: FieldType::Vec4 },
+                FieldDesc { name: "metallic".to_string(),                 field_type: FieldType::Float },
+                FieldDesc { name: "roughness".to_string(),                field_type: FieldType::Float },
+                FieldDesc { name: "normalScale".to_string(),              field_type: FieldType::Float },
+                FieldDesc { name: "ao".to_string(),                       field_type: FieldType::Float },
+                FieldDesc { name: "alphaCutoff".to_string(),              field_type: FieldType::Float },
+                FieldDesc { name: "ior".to_string(),                      field_type: FieldType::Float },
+                FieldDesc { name: "albedoTexture".to_string(),            field_type: FieldType::UInt },
+                FieldDesc { name: "normalTexture".to_string(),            field_type: FieldType::UInt },
+                FieldDesc { name: "metallicRoughnessTexture".to_string(), field_type: FieldType::UInt },
+                FieldDesc { name: "emissiveTexture".to_string(),          field_type: FieldType::UInt },
+                FieldDesc { name: "aoTexture".to_string(),                field_type: FieldType::UInt },
+                FieldDesc { name: "flags".to_string(),                    field_type: FieldType::UInt },
+            ],
+            count,
+        })?;
+
+        // Safe defaults for all slots
+        let f = |name: &str| buffer.field_id(name).unwrap();
+        let no_texture = u32::MAX.to_ne_bytes();
+
+        for i in 0..count {
+            buffer.update_field(i, f("baseColor"),   &[1.0f32, 1.0, 1.0, 1.0].map(|v| v.to_ne_bytes()).concat())?;
+            buffer.update_field(i, f("roughness"),   &0.5f32.to_ne_bytes())?;
+            buffer.update_field(i, f("normalScale"), &1.0f32.to_ne_bytes())?;
+            buffer.update_field(i, f("ao"),          &1.0f32.to_ne_bytes())?;
+            buffer.update_field(i, f("alphaCutoff"), &0.5f32.to_ne_bytes())?;
+            buffer.update_field(i, f("ior"),         &1.5f32.to_ne_bytes())?;
+            buffer.update_field(i, f("albedoTexture"),            &no_texture)?;
+            buffer.update_field(i, f("normalTexture"),            &no_texture)?;
+            buffer.update_field(i, f("metallicRoughnessTexture"), &no_texture)?;
+            buffer.update_field(i, f("emissiveTexture"),          &no_texture)?;
+            buffer.update_field(i, f("aoTexture"),                &no_texture)?;
+        }
+
+        Ok(buffer)
     }
 }
 

@@ -9,9 +9,43 @@ mod gpu_test_utils;
 
 use galaxy_3d_engine::galaxy3d::Engine;
 use galaxy_3d_engine::galaxy3d::render::Config;
+use galaxy_3d_engine::galaxy3d::resource::{Buffer, BufferDesc, BufferKind, FieldDesc, FieldType};
 use galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer;
 use gpu_test_utils::create_test_window;
 use serial_test::serial;
+use std::sync::{Arc, Mutex};
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+fn create_test_buffers_via_rm(
+    renderer: Arc<Mutex<dyn galaxy_3d_engine::galaxy3d::render::Renderer>>,
+    prefix: &str,
+) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
+    let rm_arc = Engine::resource_manager().unwrap();
+    let mut rm = rm_arc.lock().unwrap();
+
+    let frame_buffer = rm.create_buffer(format!("{}_frame", prefix), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Uniform,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap();
+    let instance_buffer = rm.create_buffer(format!("{}_instance", prefix), BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap();
+    let material_buffer = rm.create_buffer(format!("{}_material", prefix), BufferDesc {
+        renderer,
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap();
+    (frame_buffer, instance_buffer, material_buffer)
+}
 
 // ============================================================================
 // SCENE MANAGER LIFECYCLE TESTS
@@ -43,8 +77,10 @@ fn test_integration_scene_manager_lifecycle() {
     {
         let renderer_arc = Engine::renderer("main").unwrap();
         let mut sm = sm_arc.lock().unwrap();
-        sm.create_scene("game", renderer_arc.clone()).unwrap();
-        sm.create_scene("ui", renderer_arc.clone()).unwrap();
+        let (fb, ib, mb) = create_test_buffers_via_rm(renderer_arc.clone(), "game");
+        sm.create_scene("game", renderer_arc.clone(), fb, ib, mb).unwrap();
+        let (fb2, ib2, mb2) = create_test_buffers_via_rm(renderer_arc.clone(), "ui");
+        sm.create_scene("ui", renderer_arc.clone(), fb2, ib2, mb2).unwrap();
         assert_eq!(sm.scene_count(), 2);
 
         // Get a scene

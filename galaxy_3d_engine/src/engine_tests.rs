@@ -8,6 +8,7 @@
 use crate::galaxy3d::{Engine, Error};
 use crate::renderer::mock_renderer::MockRenderer;
 use crate::galaxy3d::log::{Logger, LogEntry, LogSeverity};
+use crate::resource::buffer::{Buffer, BufferDesc, BufferKind, FieldDesc, FieldType};
 use std::sync::{Arc, Mutex};
 use serial_test::serial;
 
@@ -46,6 +47,30 @@ impl Logger for TestLogger {
 fn setup() {
     Engine::reset_for_testing();
     let _ = Engine::initialize(); // Always initialize (idempotent)
+}
+
+fn create_test_buffers(
+    renderer: Arc<Mutex<dyn crate::renderer::Renderer>>,
+) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
+    let frame_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Uniform,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let instance_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        renderer: renderer.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let material_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        renderer,
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    (frame_buffer, instance_buffer, material_buffer)
 }
 
 // ============================================================================
@@ -750,7 +775,8 @@ fn test_scene_manager_returned_is_usable() {
 
     // Lock and use the scene manager
     let mut guard = sm.lock().unwrap();
-    let scene = guard.create_scene("test_scene", renderer);
+    let (fb, ib, mb) = create_test_buffers(renderer.clone());
+    let scene = guard.create_scene("test_scene", renderer, fb, ib, mb);
     assert!(scene.is_ok());
 }
 
@@ -842,8 +868,10 @@ fn test_full_engine_lifecycle_with_scene_manager() {
         let renderer = Engine::renderer("test_full_sm").unwrap();
         let sm = Engine::scene_manager().unwrap();
         let mut guard = sm.lock().unwrap();
-        guard.create_scene("main", renderer.clone()).unwrap();
-        guard.create_scene("ui", renderer.clone()).unwrap();
+        let (fb, ib, mb) = create_test_buffers(renderer.clone());
+        guard.create_scene("main", renderer.clone(), fb.clone(), ib.clone(), mb.clone()).unwrap();
+        let (fb2, ib2, mb2) = create_test_buffers(renderer.clone());
+        guard.create_scene("ui", renderer.clone(), fb2, ib2, mb2).unwrap();
         assert_eq!(guard.scene_count(), 2);
     }
 

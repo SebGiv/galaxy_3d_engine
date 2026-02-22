@@ -19,4 +19,4 @@ pub use scene::Scene;
 pub use scene_manager::SceneManager;
 pub use culler::{CameraCuller, BruteForceCuller};
 pub use drawer::{Drawer, ForwardDrawer};
-pub use updater::{Updater, NoOpUpdater};
+pub use updater::{Updater, NoOpUpdater, DefaultUpdater};
