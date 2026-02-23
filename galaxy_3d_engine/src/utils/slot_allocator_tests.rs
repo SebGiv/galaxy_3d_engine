@@ -46,7 +46,7 @@ fn test_free_multiple_recycle_lifo() {
     // Free list is a stack (LIFO): last freed = first recycled
     let mut alloc = SlotAllocator::new();
     let a = alloc.alloc(); // 0
-    let b = alloc.alloc(); // 1
+    let _b = alloc.alloc(); // 1
     let c = alloc.alloc(); // 2
     alloc.free(a);          // free list: [0]
     alloc.free(c);          // free list: [0, 2]
@@ -116,7 +116,7 @@ fn test_alloc_free_alloc_cycle() {
     let mut alloc = SlotAllocator::new();
 
     // Allocate 100 slots
-    let mut ids: Vec<u32> = (0..100).map(|_| alloc.alloc()).collect();
+    let ids: Vec<u32> = (0..100).map(|_| alloc.alloc()).collect();
     assert_eq!(alloc.len(), 100);
     assert_eq!(alloc.high_water_mark(), 100);
 
