@@ -28,7 +28,7 @@ use std::mem::ManuallyDrop;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
-use galaxy_3d_engine::{engine_error, engine_bail, engine_bail_warn, engine_err, engine_warn_err};
+use galaxy_3d_engine::{engine_trace, engine_debug, engine_info, engine_warn, engine_error, engine_bail, engine_bail_warn, engine_err, engine_warn_err};
 
 use crate::vulkan_texture::Texture;
 use crate::vulkan_buffer::Buffer;
@@ -71,8 +71,8 @@ pub struct VulkanRenderer {
     submit_fences: Vec<vk::Fence>,
     current_submit_fence: usize,
 
-    /// Descriptor pool for binding group allocation
-    descriptor_pool: vk::DescriptorPool,
+    /// Descriptor pools for binding group allocation (grows dynamically when exhausted)
+    descriptor_pools: Mutex<Vec<vk::DescriptorPool>>,
     /// Internal sampler cache (creates VkSampler on first use, behind Mutex for &self access)
     sampler_cache: Mutex<SamplerCache>,
 
@@ -148,6 +148,37 @@ impl VulkanRenderer {
     ///
     /// * `window` - Window for surface creation
     /// * `config` - Renderer configuration
+    ///
+    /// Create a descriptor pool with fixed capacity (1024 sets).
+    /// Called during init and when the current pool is exhausted.
+    fn create_descriptor_pool(device: &ash::Device) -> Result<vk::DescriptorPool> {
+        let pool_sizes = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: 2048,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: 1024,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: 1024,
+            },
+        ];
+        let info = vk::DescriptorPoolCreateInfo::default()
+            .pool_sizes(&pool_sizes)
+            .max_sets(1024);
+
+        unsafe {
+            device.create_descriptor_pool(&info, None)
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to create descriptor pool: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to create descriptor pool: {:?}", e))
+                })
+        }
+    }
+
     pub fn new<W: HasDisplayHandle + HasWindowHandle>(
         window: &W,
         config: Config,
@@ -392,31 +423,8 @@ impl VulkanRenderer {
                 );
             }
 
-            // Create descriptor pool for binding group allocation (supports UBO + samplers)
-            let pool_sizes = [
-                vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    descriptor_count: 2000,
-                },
-                vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: 1000,
-                },
-                vk::DescriptorPoolSize {
-                    ty: vk::DescriptorType::STORAGE_BUFFER,
-                    descriptor_count: 500,
-                },
-            ];
-
-            let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::default()
-                .pool_sizes(&pool_sizes)
-                .max_sets(1000);
-
-            let descriptor_pool = device.create_descriptor_pool(&descriptor_pool_create_info, None)
-                .map_err(|e| {
-                    engine_error!("galaxy3d::vulkan", "Failed to create descriptor pool: {:?}", e);
-                    Error::InitializationFailed(format!("Failed to create descriptor pool: {:?}", e))
-                })?;
+            // Create initial descriptor pool for binding group allocation
+            let descriptor_pool = Self::create_descriptor_pool(&device)?;
 
             // Create upload command pool (TRANSIENT + RESET for reusable one-shot uploads)
             let upload_pool_create_info = vk::CommandPoolCreateInfo::default()
@@ -455,7 +463,7 @@ impl VulkanRenderer {
                 allocator: ManuallyDrop::new(allocator_arc),
                 submit_fences,
                 current_submit_fence: 0,
-                descriptor_pool,
+                descriptor_pools: Mutex::new(vec![descriptor_pool]),
                 sampler_cache: Mutex::new(SamplerCache::new(Arc::clone(&gpu_context))),
                 gpu_context,
             })
@@ -1192,14 +1200,35 @@ impl Renderer for VulkanRenderer {
 
             let ds_layout = vk_pipeline.descriptor_set_layouts[set_index as usize];
 
-            // Allocate descriptor set from pool
+            // Allocate descriptor set from pool (grow dynamically if exhausted)
             let layouts = [ds_layout];
-            let allocate_info = vk::DescriptorSetAllocateInfo::default()
-                .descriptor_pool(self.descriptor_pool)
-                .set_layouts(&layouts);
+            let descriptor_sets = {
+                let mut pools = self.descriptor_pools.lock().unwrap();
+                let current_pool = *pools.last().unwrap();
+                let allocate_info = vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(current_pool)
+                    .set_layouts(&layouts);
 
-            let descriptor_sets = self.device.allocate_descriptor_sets(&allocate_info)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to allocate descriptor set for binding group: {:?}", e))?;
+                match self.device.allocate_descriptor_sets(&allocate_info) {
+                    Ok(sets) => sets,
+                    Err(vk::Result::ERROR_OUT_OF_POOL_MEMORY) => {
+                        let new_pool = Self::create_descriptor_pool(&self.device)?;
+                        pools.push(new_pool);
+                        engine_info!("galaxy3d::vulkan",
+                            "Descriptor pool exhausted, created new pool (total: {})",
+                            pools.len()
+                        );
+                        let retry_info = vk::DescriptorSetAllocateInfo::default()
+                            .descriptor_pool(new_pool)
+                            .set_layouts(&layouts);
+                        self.device.allocate_descriptor_sets(&retry_info)
+                            .map_err(|e| engine_err!("galaxy3d::vulkan",
+                                "Failed to allocate descriptor set after pool growth: {:?}", e))?
+                    }
+                    Err(e) => return Err(engine_err!("galaxy3d::vulkan",
+                        "Failed to allocate descriptor set: {:?}", e)),
+                }
+            };
 
             let descriptor_set = descriptor_sets[0];
 
@@ -1314,8 +1343,8 @@ impl Renderer for VulkanRenderer {
             // Calculate mip levels from MipmapMode
             let mip_levels = desc.mipmap.mip_levels(desc.width, desc.height);
 
-            // Determine image view type based on array layers
-            let view_type = if array_layers > 1 {
+            // Determine image view type based on array layers or force_array flag
+            let view_type = if array_layers > 1 || desc.force_array {
                 vk::ImageViewType::TYPE_2D_ARRAY
             } else {
                 vk::ImageViewType::TYPE_2D
@@ -1998,14 +2027,15 @@ impl Renderer for VulkanRenderer {
             }
 
             // Build TextureInfo from the descriptor
-            let info = TextureInfo {
-                width: desc.width,
-                height: desc.height,
-                format: desc.format,
-                usage: desc.usage,
+            let info = TextureInfo::new(
+                desc.width,
+                desc.height,
+                desc.format,
+                desc.usage,
                 array_layers,
                 mip_levels,
-            };
+                desc.force_array,
+            );
 
             Ok(Arc::new(Texture::new(
                 Arc::clone(&self.gpu_context),
@@ -2538,7 +2568,9 @@ impl Drop for VulkanRenderer {
             for &fence in &self.submit_fences {
                 self.device.destroy_fence(fence, None);
             }
-            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
+            for &pool in self.descriptor_pools.get_mut().unwrap().iter() {
+                self.device.destroy_descriptor_pool(pool, None);
+            }
 
             // 3. Destroy upload command pool from GpuContext
             {

@@ -176,6 +176,8 @@ pub struct TextureDesc {
     pub data: Option<TextureData>,
     /// Mipmap mode (default: None)
     pub mipmap: MipmapMode,
+    /// Force TYPE_2D_ARRAY image view even with a single layer
+    pub force_array: bool,
 }
 
 // ===== TEXTURE INFO =====
@@ -198,12 +200,27 @@ pub struct TextureInfo {
     pub array_layers: u32,
     /// Number of mip levels (1 = no mipmaps, >1 = has mipmaps)
     pub mip_levels: u32,
+    /// Whether this texture was forced to use an array view type
+    force_array: bool,
 }
 
 impl TextureInfo {
-    /// Returns true if this texture is a texture array (array_layers > 1)
+    /// Create a new TextureInfo from texture creation parameters.
+    pub fn new(
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        usage: TextureUsage,
+        array_layers: u32,
+        mip_levels: u32,
+        force_array: bool,
+    ) -> Self {
+        Self { width, height, format, usage, array_layers, mip_levels, force_array }
+    }
+
+    /// Returns true if this texture is a texture array (array_layers > 1 or force_array)
     pub fn is_array(&self) -> bool {
-        self.array_layers > 1
+        self.array_layers > 1 || self.force_array
     }
 
     /// Returns true if this texture has mipmaps (mip_levels > 1)
