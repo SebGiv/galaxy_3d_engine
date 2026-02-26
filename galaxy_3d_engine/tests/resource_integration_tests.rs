@@ -8,7 +8,7 @@ mod gpu_test_utils;
 use galaxy_3d_engine::galaxy3d::resource::{ResourceManager, TextureDesc, GeometryDesc};
 use galaxy_3d_engine::galaxy3d::resource::{LayerDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc};
 use galaxy_3d_engine::galaxy3d::render::{
-    TextureDesc as RenderTextureDesc, TextureFormat, TextureUsage, MipmapMode,
+    TextureDesc as RenderTextureDesc, TextureFormat, TextureType, TextureUsage, MipmapMode,
     BufferFormat, VertexLayout, VertexBinding, VertexAttribute, VertexInputRate,
     IndexType, PrimitiveTopology,
 };
@@ -40,6 +40,7 @@ fn test_integration_create_texture_with_vulkan() {
             array_layers: 1,
             mipmap: MipmapMode::None,
             data: None,
+            texture_type: TextureType::Tex2D,
         },
         layers: vec![
             LayerDesc {
@@ -170,6 +171,7 @@ fn test_integration_multiple_resources() {
                 array_layers: 1,
                 mipmap: MipmapMode::None,
                 data: None,
+                texture_type: TextureType::Tex2D,
             },
             layers: vec![
                 LayerDesc {
@@ -451,6 +453,7 @@ fn test_integration_many_resources_stress_test() {
                 array_layers: 1,
                 mipmap: MipmapMode::None,
                 data: None,
+                texture_type: TextureType::Tex2D,
             },
             layers: vec![
                 LayerDesc {

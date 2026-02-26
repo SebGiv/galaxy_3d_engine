@@ -65,7 +65,7 @@ pub struct MockTexture {
 
 #[cfg(test)]
 impl MockTexture {
-    pub fn new(width: u32, height: u32, array_layers: u32, name: String) -> Self {
+    pub fn new(width: u32, height: u32, array_layers: u32, texture_type: crate::renderer::TextureType, name: String) -> Self {
         Self {
             info: TextureInfo {
                 width,
@@ -74,6 +74,7 @@ impl MockTexture {
                 usage: crate::renderer::TextureUsage::Sampled,
                 array_layers,
                 mip_levels: 1,
+                texture_type,
             },
             name,
         }
@@ -445,7 +446,7 @@ impl Renderer for MockRenderer {
     fn create_texture(&mut self, desc: TextureDesc) -> Result<Arc<dyn Texture>> {
         let name = format!("texture_{}x{}", desc.width, desc.height);
         self.created_textures.lock().unwrap().push(name.clone());
-        Ok(Arc::new(MockTexture::new(desc.width, desc.height, desc.array_layers, name)))
+        Ok(Arc::new(MockTexture::new(desc.width, desc.height, desc.array_layers, desc.texture_type, name)))
     }
 
     fn create_buffer(&mut self, desc: BufferDesc) -> Result<Arc<dyn Buffer>> {

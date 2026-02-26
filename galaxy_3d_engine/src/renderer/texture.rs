@@ -53,6 +53,15 @@ pub enum TextureUsage {
     DepthStencil,
 }
 
+/// Texture dimensionality and view type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureType {
+    /// Standard 2D texture (sampler2D)
+    Tex2D,
+    /// 2D texture array with one or more layers (sampler2DArray)
+    Array2D,
+}
+
 // ===== TEXTURE DATA =====
 
 /// Data for a single layer of a texture array
@@ -176,8 +185,8 @@ pub struct TextureDesc {
     pub data: Option<TextureData>,
     /// Mipmap mode (default: None)
     pub mipmap: MipmapMode,
-    /// Force TYPE_2D_ARRAY image view even with a single layer
-    pub force_array: bool,
+    /// Texture dimensionality and view type
+    pub texture_type: TextureType,
 }
 
 // ===== TEXTURE INFO =====
@@ -200,8 +209,8 @@ pub struct TextureInfo {
     pub array_layers: u32,
     /// Number of mip levels (1 = no mipmaps, >1 = has mipmaps)
     pub mip_levels: u32,
-    /// Whether this texture was forced to use an array view type
-    force_array: bool,
+    /// Texture dimensionality and view type
+    pub texture_type: TextureType,
 }
 
 impl TextureInfo {
@@ -213,14 +222,9 @@ impl TextureInfo {
         usage: TextureUsage,
         array_layers: u32,
         mip_levels: u32,
-        force_array: bool,
+        texture_type: TextureType,
     ) -> Self {
-        Self { width, height, format, usage, array_layers, mip_levels, force_array }
-    }
-
-    /// Returns true if this texture is a texture array (array_layers > 1 or force_array)
-    pub fn is_array(&self) -> bool {
-        self.array_layers > 1 || self.force_array
+        Self { width, height, format, usage, array_layers, mip_levels, texture_type }
     }
 
     /// Returns true if this texture has mipmaps (mip_levels > 1)

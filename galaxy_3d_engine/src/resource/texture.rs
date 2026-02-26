@@ -94,6 +94,13 @@ impl Texture {
             }
         }
 
+        // ========== VALIDATION 1b: TextureType vs array_layers coherence ==========
+        if desc.texture.texture_type == crate::renderer::TextureType::Tex2D && array_layers > 1 {
+            engine_bail!("galaxy3d::Texture",
+                "Tex2D texture cannot have array_layers > 1 (got {}). Use TextureType::Array2D instead.",
+                array_layers);
+        }
+
         // ========== VALIDATION 2: Indexed texture constraints ==========
         if is_indexed && desc.layers.is_empty() {
             // OK: indexed texture can be created empty and layers added later

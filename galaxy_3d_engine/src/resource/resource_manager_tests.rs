@@ -38,6 +38,7 @@ fn create_test_texture_desc(
             array_layers: 1,
             data: Some(renderer::TextureData::Single(vec![255u8; (width * height * 4) as usize])),
             mipmap: renderer::MipmapMode::None,
+            texture_type: renderer::TextureType::Tex2D,
         },
         layers: vec![LayerDesc {
             name: "default".to_string(),
@@ -936,6 +937,7 @@ fn test_add_texture_layer() {
             array_layers: 4, // Indexed texture with 4 slots
             data: None,
             mipmap: renderer::MipmapMode::None,
+            texture_type: renderer::TextureType::Array2D,
         },
         layers: vec![
             LayerDesc {
@@ -1816,6 +1818,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
             array_layers: 3,
             data: None,
             mipmap: renderer::MipmapMode::None,
+            texture_type: renderer::TextureType::Array2D,
         },
         layers: vec![
             LayerDesc { name: "grass".to_string(), layer_index: 0, data: None, regions: vec![] },

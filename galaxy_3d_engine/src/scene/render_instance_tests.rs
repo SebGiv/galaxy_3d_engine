@@ -212,6 +212,7 @@ fn create_test_texture(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> A
             array_layers: 1,
             data: Some(TextureData::Single(vec![255u8; 64 * 64 * 4])),
             mipmap: MipmapMode::None,
+            texture_type: crate::renderer::TextureType::Tex2D,
         },
         layers: vec![LayerDesc {
             name: "default".to_string(),

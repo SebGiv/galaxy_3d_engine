@@ -209,19 +209,20 @@ fn test_mipmap_mode_default() {
 // TEXTURE INFO TESTS
 // ============================================================================
 
-use crate::renderer::{TextureInfo, TextureUsage};
+use crate::renderer::{TextureInfo, TextureType, TextureUsage};
 
 #[test]
-fn test_texture_info_is_array() {
-    let info_simple = TextureInfo {
+fn test_texture_info_texture_type() {
+    let info_2d = TextureInfo {
         width: 256,
         height: 256,
         format: TextureFormat::R8G8B8A8_UNORM,
         usage: TextureUsage::Sampled,
         array_layers: 1,
         mip_levels: 1,
+        texture_type: TextureType::Tex2D,
     };
-    assert!(!info_simple.is_array());
+    assert_eq!(info_2d.texture_type, TextureType::Tex2D);
 
     let info_array = TextureInfo {
         width: 256,
@@ -230,8 +231,9 @@ fn test_texture_info_is_array() {
         usage: TextureUsage::Sampled,
         array_layers: 4,
         mip_levels: 1,
+        texture_type: TextureType::Array2D,
     };
-    assert!(info_array.is_array());
+    assert_eq!(info_array.texture_type, TextureType::Array2D);
 }
 
 #[test]
@@ -243,6 +245,7 @@ fn test_texture_info_has_mipmaps() {
         usage: TextureUsage::Sampled,
         array_layers: 1,
         mip_levels: 1,
+        texture_type: TextureType::Tex2D,
     };
     assert!(!info_no_mips.has_mipmaps());
 
@@ -253,6 +256,7 @@ fn test_texture_info_has_mipmaps() {
         usage: TextureUsage::Sampled,
         array_layers: 1,
         mip_levels: 5,
+        texture_type: TextureType::Tex2D,
     };
     assert!(info_with_mips.has_mipmaps());
 }
@@ -266,6 +270,7 @@ fn test_texture_info_mip_dimensions() {
         usage: TextureUsage::Sampled,
         array_layers: 1,
         mip_levels: 5,
+        texture_type: TextureType::Tex2D,
     };
 
     // Level 0: 256x256
@@ -296,6 +301,7 @@ fn test_texture_info_mip_dimensions_non_square() {
         usage: TextureUsage::Sampled,
         array_layers: 1,
         mip_levels: 4,
+        texture_type: TextureType::Tex2D,
     };
 
     assert_eq!(info.mip_dimensions(0), Some((512, 256)));
@@ -313,6 +319,7 @@ fn test_texture_info_mip_dimensions_min_size() {
         usage: TextureUsage::Sampled,
         array_layers: 1,
         mip_levels: 5,
+        texture_type: TextureType::Tex2D,
     };
 
     // Should clamp to 1x1 minimum
@@ -332,6 +339,7 @@ fn test_texture_info_mip_byte_size() {
         usage: TextureUsage::Sampled,
         array_layers: 1,
         mip_levels: 4,
+        texture_type: TextureType::Tex2D,
     };
 
     // Level 0: 256x256x4 = 262,144 bytes
@@ -359,6 +367,7 @@ fn test_texture_info_mip_byte_size_depth_format() {
         usage: TextureUsage::DepthStencil,
         array_layers: 1,
         mip_levels: 3,
+        texture_type: TextureType::Tex2D,
     };
 
     // Level 0: 512x512x2 = 524,288 bytes

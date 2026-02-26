@@ -13,6 +13,7 @@ use crate::renderer::{
     Viewport, Rect2D, ClearValue,
     IndexType, VertexLayout, VertexBinding, VertexAttribute,
     BufferFormat, VertexInputRate, PrimitiveTopology,
+    TextureType,
 };
 use std::sync::{Arc, Mutex};
 
@@ -42,7 +43,7 @@ fn test_mock_buffer_update() {
 
 #[test]
 fn test_mock_texture_creation() {
-    let texture = MockTexture::new(256, 256, 1, "test_texture".to_string());
+    let texture = MockTexture::new(256, 256, 1, TextureType::Tex2D, "test_texture".to_string());
     assert_eq!(texture.name, "test_texture");
 
     let info = texture.info();
@@ -54,7 +55,7 @@ fn test_mock_texture_creation() {
 
 #[test]
 fn test_mock_texture_info() {
-    let texture = MockTexture::new(512, 1024, 4, "indexed_texture".to_string());
+    let texture = MockTexture::new(512, 1024, 4, TextureType::Array2D, "indexed_texture".to_string());
 
     let info = texture.info();
     assert_eq!(info.width, 512);
@@ -357,6 +358,7 @@ fn test_mock_renderer_create_texture() {
         array_layers: 1,
         mipmap: MipmapMode::None,
         data: None,
+        texture_type: TextureType::Tex2D,
     };
 
     let _texture = renderer.create_texture(desc).unwrap();
@@ -643,6 +645,7 @@ fn test_mock_renderer_multiple_resources() {
             array_layers: 1,
             mipmap: MipmapMode::None,
             data: None,
+            texture_type: TextureType::Tex2D,
         };
         renderer.create_texture(texture_desc).unwrap();
     }

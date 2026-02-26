@@ -9,7 +9,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     BindingGroup as RendererBindingGroup,
     Framebuffer as RendererFramebuffer, FramebufferDesc,
     RenderPassDesc,
-    TextureDesc, TextureData, TextureInfo, BufferDesc, ShaderDesc, PipelineDesc,
+    TextureDesc, TextureData, TextureInfo, TextureType, BufferDesc, ShaderDesc, PipelineDesc,
     BindingResource, BindingType, ShaderStageFlags,
     ReflectedBinding, ReflectedPushConstant, ReflectedMember, ReflectedMemberType,
     ScalarKind, PipelineReflection,
@@ -28,7 +28,7 @@ use std::mem::ManuallyDrop;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
-use galaxy_3d_engine::{engine_trace, engine_debug, engine_info, engine_warn, engine_error, engine_bail, engine_bail_warn, engine_err, engine_warn_err};
+use galaxy_3d_engine::{engine_info, engine_error, engine_bail, engine_bail_warn, engine_err, engine_warn_err};
 
 use crate::vulkan_texture::Texture;
 use crate::vulkan_buffer::Buffer;
@@ -1340,14 +1340,20 @@ impl Renderer for VulkanRenderer {
             let format = self.format_to_vk(desc.format);
             let array_layers = desc.array_layers.max(1);
 
+            // Validate TextureType vs array_layers coherence
+            if desc.texture_type == TextureType::Tex2D && array_layers > 1 {
+                engine_bail!("galaxy3d::vulkan",
+                    "Tex2D texture cannot have array_layers > 1 (got {}). Use TextureType::Array2D instead.",
+                    array_layers);
+            }
+
             // Calculate mip levels from MipmapMode
             let mip_levels = desc.mipmap.mip_levels(desc.width, desc.height);
 
-            // Determine image view type based on array layers or force_array flag
-            let view_type = if array_layers > 1 || desc.force_array {
-                vk::ImageViewType::TYPE_2D_ARRAY
-            } else {
-                vk::ImageViewType::TYPE_2D
+            // Determine image view type from texture type
+            let view_type = match desc.texture_type {
+                TextureType::Array2D => vk::ImageViewType::TYPE_2D_ARRAY,
+                TextureType::Tex2D => vk::ImageViewType::TYPE_2D,
             };
 
             // Image usage flags based on declared TextureUsage
@@ -2034,7 +2040,7 @@ impl Renderer for VulkanRenderer {
                 desc.usage,
                 array_layers,
                 mip_levels,
-                desc.force_array,
+                desc.texture_type,
             );
 
             Ok(Arc::new(Texture::new(
