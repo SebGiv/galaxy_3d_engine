@@ -26,7 +26,6 @@ use crate::resource::mesh::{
     Mesh, MeshDesc, MeshLODDesc, SubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
 };
-use crate::resource::buffer::{Buffer as ResourceBuffer, BufferDesc, BufferKind, FieldDesc, FieldType};
 use crate::utils::SlotAllocator;
 use glam::{Vec3, Mat4};
 use std::sync::{Arc, Mutex};
@@ -316,30 +315,6 @@ fn create_non_indexed_mesh(
     Mesh::from_desc(desc).unwrap()
 }
 
-fn create_test_buffers(
-    renderer: Arc<Mutex<dyn crate::renderer::Renderer>>,
-) -> (Arc<ResourceBuffer>, Arc<ResourceBuffer>, Arc<ResourceBuffer>) {
-    let frame_buffer = Arc::new(ResourceBuffer::from_desc(BufferDesc {
-        renderer: renderer.clone(),
-        kind: BufferKind::Uniform,
-        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
-        count: 1,
-    }).unwrap());
-    let instance_buffer = Arc::new(ResourceBuffer::from_desc(BufferDesc {
-        renderer: renderer.clone(),
-        kind: BufferKind::Storage,
-        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
-        count: 1,
-    }).unwrap());
-    let material_buffer = Arc::new(ResourceBuffer::from_desc(BufferDesc {
-        renderer,
-        kind: BufferKind::Storage,
-        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
-        count: 1,
-    }).unwrap());
-    (frame_buffer, instance_buffer, material_buffer)
-}
-
 /// Helper: create a RenderInstance with a fresh slot allocator
 /// (most tests don't need to inspect draw_slot values)
 fn create_test_render_instance(
@@ -347,11 +322,9 @@ fn create_test_render_instance(
     matrix: Mat4,
     aabb: AABB,
     variant_index: usize,
-    renderer: &Arc<Mutex<dyn crate::renderer::Renderer>>,
 ) -> crate::error::Result<RenderInstance> {
     let mut alloc = SlotAllocator::new();
-    let (fb, ib, mb) = create_test_buffers(renderer.clone());
-    RenderInstance::from_mesh(mesh, matrix, aabb, variant_index, renderer, &mut alloc, &fb, &ib, &mb)
+    RenderInstance::from_mesh(mesh, matrix, aabb, variant_index, &mut alloc)
 }
 
 // ============================================================================
@@ -424,7 +397,7 @@ fn test_from_mesh_basic() {
     let matrix = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
     let aabb = create_test_aabb();
 
-    let instance = create_test_render_instance(&mesh, matrix, aabb, 0, &renderer).unwrap();
+    let instance = create_test_render_instance(&mesh, matrix, aabb, 0).unwrap();
 
     assert_eq!(*instance.world_matrix(), matrix);
     assert_eq!(instance.variant_index(), 0);
@@ -441,7 +414,7 @@ fn test_from_mesh_lod_count() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Mesh has 2 LODs
@@ -460,7 +433,7 @@ fn test_from_mesh_submesh_count_per_lod() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // LOD 0: body + head = 2 submeshes
@@ -478,7 +451,7 @@ fn test_from_mesh_extracts_geometry_data() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // LOD 0, submesh 0 = "body": vertex_offset=0, vertex_count=4, index_offset=0, index_count=6
@@ -513,7 +486,7 @@ fn test_from_mesh_extracts_pipeline_passes() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Single variant, single pass → 1 pass per submesh
@@ -530,7 +503,7 @@ fn test_from_mesh_multi_pass_pipeline() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Multi-pass variant → 2 passes per submesh
@@ -547,7 +520,7 @@ fn test_from_mesh_render_pass_structure() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Each submesh has passes with pipeline, binding groups, push constants
@@ -557,8 +530,8 @@ fn test_from_mesh_render_pass_structure() {
     let pass = &sm.passes()[0];
     // Pipeline should be set
     assert!(pass.pipeline().as_ref().reflection().binding_count() == 0);
-    // 1 binding group: global set 0 (frame + instance + material buffers), no material textures
-    assert_eq!(pass.binding_groups().len(), 1);
+    // No texture binding groups (global set 0 is owned by Scene)
+    assert_eq!(pass.texture_binding_groups().len(), 0);
 }
 
 #[test]
@@ -571,14 +544,14 @@ fn test_from_mesh_material_with_texture_no_matching_reflection() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Material has textures and params, but mock reflection has no matching bindings
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     assert_eq!(sm.passes().len(), 1);
-    // 1 binding group: global set 0 (frame + instance + material buffers), no material textures
-    assert_eq!(sm.passes()[0].binding_groups().len(), 1);
+    // No texture binding groups (no matching reflection; global set 0 is owned by Scene)
+    assert_eq!(sm.passes()[0].texture_binding_groups().len(), 0);
 }
 
 #[test]
@@ -590,7 +563,7 @@ fn test_from_mesh_non_indexed_geometry() {
     let mesh = create_non_indexed_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // No index buffer
@@ -611,7 +584,7 @@ fn test_from_mesh_indexed_geometry_has_buffers() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Has both vertex and index buffer
@@ -628,7 +601,7 @@ fn test_from_mesh_variant_index_selection() {
 
     // Use variant 1 ("shadow")
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 1, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 1,
     ).unwrap();
 
     assert_eq!(instance.variant_index(), 1);
@@ -646,7 +619,7 @@ fn test_from_mesh_default_flags() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Default flags = FLAG_VISIBLE only
@@ -667,7 +640,7 @@ fn test_from_mesh_stores_bounding_box() {
         max: Vec3::new(5.0, 10.0, 5.0),
     };
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, aabb, 0, &renderer,
+        &mesh, Mat4::IDENTITY, aabb, 0,
     ).unwrap();
 
     assert_eq!(instance.bounding_box().min, Vec3::new(-5.0, 0.0, -5.0));
@@ -688,7 +661,7 @@ fn test_from_mesh_invalid_variant_index() {
 
     // Variant index 99 does not exist
     let result = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 99, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 99,
     );
     assert!(result.is_err());
 }
@@ -706,7 +679,7 @@ fn test_set_world_matrix() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     assert_eq!(*instance.world_matrix(), Mat4::IDENTITY);
@@ -725,7 +698,7 @@ fn test_set_flags() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     let new_flags = FLAG_VISIBLE | FLAG_CAST_SHADOW | FLAG_RECEIVE_SHADOW;
@@ -742,7 +715,7 @@ fn test_set_visible_true() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Start visible
@@ -768,7 +741,7 @@ fn test_set_visible_preserves_other_flags() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Set multiple flags
@@ -799,7 +772,7 @@ fn test_render_lod_sub_mesh_access() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     let lod = instance.lod(0).unwrap();
@@ -822,7 +795,7 @@ fn test_render_submesh_all_accessors() {
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh,Mat4::IDENTITY, create_test_aabb(), 0, &renderer,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
@@ -837,9 +810,9 @@ fn test_render_submesh_all_accessors() {
     // Pipeline passes
     assert_eq!(sm.passes().len(), 1);
 
-    // RenderPass structure: 1 binding group (global set 0), no material textures
+    // RenderPass structure: no texture binding groups (global set 0 is owned by Scene)
     let pass = &sm.passes()[0];
-    assert_eq!(pass.binding_groups().len(), 1);
+    assert_eq!(pass.texture_binding_groups().len(), 0);
 }
 
 // ============================================================================
@@ -861,7 +834,6 @@ fn test_render_instance_key_is_copy() {
 #[test]
 fn test_draw_slot_allocation() {
     let renderer = create_mock_renderer();
-    let (fb, ib, mb) = create_test_buffers(renderer.clone());
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
     let material = create_test_material(&pipeline);
@@ -869,8 +841,7 @@ fn test_draw_slot_allocation() {
 
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
-        &fb, &ib, &mb,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
     ).unwrap();
 
     // Mesh has 2 LODs: LOD 0 (2 submeshes) + LOD 1 (1 submesh) = 3 draw slots
@@ -889,7 +860,6 @@ fn test_draw_slot_allocation() {
 #[test]
 fn test_draw_slot_sequential_allocation() {
     let renderer = create_mock_renderer();
-    let (fb, ib, mb) = create_test_buffers(renderer.clone());
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
     let material = create_test_material(&pipeline);
@@ -897,8 +867,7 @@ fn test_draw_slot_sequential_allocation() {
 
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
-        &fb, &ib, &mb,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
     ).unwrap();
 
     // First allocation starts at 0 and increments
@@ -913,7 +882,6 @@ fn test_draw_slot_sequential_allocation() {
 #[test]
 fn test_draw_slot_shared_allocator() {
     let renderer = create_mock_renderer();
-    let (fb, ib, mb) = create_test_buffers(renderer.clone());
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
     let material = create_test_material(&pipeline);
@@ -923,14 +891,12 @@ fn test_draw_slot_shared_allocator() {
 
     // First instance: slots 0, 1, 2
     let inst1 = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
-        &fb, &ib, &mb,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
     ).unwrap();
 
     // Second instance: slots 3, 4, 5
     let inst2 = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
-        &fb, &ib, &mb,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
     ).unwrap();
 
     assert_eq!(alloc.len(), 6);
@@ -944,7 +910,6 @@ fn test_draw_slot_shared_allocator() {
 #[test]
 fn test_free_draw_slots() {
     let renderer = create_mock_renderer();
-    let (fb, ib, mb) = create_test_buffers(renderer.clone());
     let geometry = create_test_geometry(renderer.clone());
     let pipeline = create_test_pipeline(renderer.clone());
     let material = create_test_material(&pipeline);
@@ -952,8 +917,7 @@ fn test_free_draw_slots() {
 
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &renderer, &mut alloc,
-        &fb, &ib, &mb,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
     ).unwrap();
 
     assert_eq!(alloc.len(), 3);

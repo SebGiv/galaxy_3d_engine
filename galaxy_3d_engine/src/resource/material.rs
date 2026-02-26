@@ -1,23 +1,25 @@
 /// Resource-level material type.
 ///
-/// A Material is a pure data description of a surface's visual properties.
+/// A Material describes a surface's visual properties and owns its GPU texture bindings.
 /// It references a Pipeline (shader family) and provides textures and parameters.
 ///
-/// No GPU resources are created at this level. The Scene/Renderer layer
-/// will create optimized GPU objects (descriptor sets, UBOs) from Materials.
+/// At creation time, the Material builds BindingGroups for its textures against every
+/// variant/pass of the referenced Pipeline. This avoids duplicating descriptor sets
+/// when multiple RenderInstances share the same Material.
 ///
 /// Architecture:
 /// - Pipeline reference: which shader family to use (variant selected at render time)
 /// - Texture slots: named texture bindings with optional layer/region targeting
+/// - Texture bindings: pre-built BindingGroups organized by [variant][pass][set]
 /// - Parameters: named scalar/vector/matrix values (roughness, base_color, etc.)
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
 use crate::resource::texture::Texture;
 use crate::resource::pipeline::Pipeline;
-use crate::renderer::SamplerType;
+use crate::renderer::{SamplerType, BindingGroup, BindingResource, BindingType};
 
 // ===== REFERENCE TYPES =====
 
@@ -81,6 +83,23 @@ pub struct MaterialParam {
     value: ParamValue,
 }
 
+// ===== TEXTURE BINDING GROUPS =====
+
+/// Texture binding groups for a single rendering pass.
+///
+/// Contains one BindingGroup per descriptor set (set 1, set 2, ...) that holds
+/// texture/sampler bindings. Empty if the pass shader uses no textures.
+struct MaterialPassBindings {
+    binding_groups: Vec<Arc<dyn BindingGroup>>,
+}
+
+/// Texture binding groups for a single pipeline variant.
+///
+/// Contains one entry per pass in the variant.
+struct MaterialVariantBindings {
+    passes: Vec<MaterialPassBindings>,
+}
+
 // ===== MATERIAL TEXTURE SLOT =====
 
 /// A texture bound to a named slot in the material (resolved indices)
@@ -107,6 +126,9 @@ pub struct Material {
     texture_names: HashMap<String, usize>,
     params: Vec<MaterialParam>,
     param_names: HashMap<String, usize>,
+    /// Pre-built texture BindingGroups organized by [variant][pass][set].
+    /// Built at creation time from pipeline reflection data.
+    texture_bindings: Vec<MaterialVariantBindings>,
 }
 
 // ===== DESCRIPTORS =====
@@ -229,6 +251,63 @@ impl Material {
             params.push(MaterialParam { name, value });
         }
 
+        // ========== BUILD TEXTURE BINDING GROUPS ==========
+        // For each variant/pass, match texture slot names against shader reflection
+        // to create pre-built BindingGroups (descriptor sets for textures).
+        let renderer_lock = desc.pipeline.renderer().lock().unwrap();
+        let mut texture_bindings = Vec::with_capacity(desc.pipeline.variant_count());
+
+        for variant_idx in 0..desc.pipeline.variant_count() {
+            let variant = desc.pipeline.variant(variant_idx as u32).unwrap();
+            let mut pass_bindings = Vec::with_capacity(variant.pass_count());
+
+            for pass_idx in 0..variant.pass_count() {
+                let pass = variant.pass(pass_idx as u32).unwrap();
+                let renderer_pipeline = pass.renderer_pipeline();
+                let reflection = renderer_pipeline.reflection();
+
+                // Group CombinedImageSampler bindings by set index
+                let mut sets: BTreeMap<u32, Vec<(u32, BindingResource)>> = BTreeMap::new();
+
+                for binding_idx in 0..reflection.binding_count() {
+                    let binding = reflection.binding(binding_idx).unwrap();
+
+                    if binding.binding_type == BindingType::CombinedImageSampler {
+                        if let Some(&tex_idx) = texture_names.get(&binding.name) {
+                            let slot = &textures[tex_idx];
+                            let renderer_texture = slot.texture().renderer_texture();
+                            sets.entry(binding.set)
+                                .or_default()
+                                .push((binding.binding, BindingResource::SampledTexture(
+                                    renderer_texture.as_ref(),
+                                    slot.sampler_type(),
+                                )));
+                        }
+                    }
+                }
+
+                // Create one BindingGroup per set
+                let mut binding_groups = Vec::new();
+                for (set_index, mut resources) in sets {
+                    resources.sort_by_key(|(binding, _)| *binding);
+                    let resource_refs: Vec<BindingResource> = resources.into_iter()
+                        .map(|(_, r)| r)
+                        .collect();
+                    let bg = renderer_lock.create_binding_group(
+                        renderer_pipeline,
+                        set_index,
+                        &resource_refs,
+                    )?;
+                    binding_groups.push(bg);
+                }
+
+                pass_bindings.push(MaterialPassBindings { binding_groups });
+            }
+
+            texture_bindings.push(MaterialVariantBindings { passes: pass_bindings });
+        }
+        drop(renderer_lock);
+
         Ok(Self {
             slot_id,
             pipeline: desc.pipeline,
@@ -236,6 +315,7 @@ impl Material {
             texture_names,
             params,
             param_names,
+            texture_bindings,
         })
     }
 
@@ -279,6 +359,19 @@ impl Material {
     /// Get number of texture slots
     pub fn texture_slot_count(&self) -> usize {
         self.textures.len()
+    }
+
+    // ===== TEXTURE BINDING GROUP ACCESS =====
+
+    /// Get pre-built texture BindingGroups for a specific variant and pass.
+    ///
+    /// Returns a slice of BindingGroups (one per descriptor set: set 1, set 2, ...).
+    /// Returns an empty slice if the pass has no texture bindings.
+    /// Returns None if variant or pass index is out of range.
+    pub fn texture_binding_groups(&self, variant: u32, pass: u32) -> Option<&[Arc<dyn BindingGroup>]> {
+        let variant_bindings = self.texture_bindings.get(variant as usize)?;
+        let pass_bindings = variant_bindings.passes.get(pass as usize)?;
+        Some(&pass_bindings.binding_groups)
     }
 
     // ===== PARAM ACCESS =====

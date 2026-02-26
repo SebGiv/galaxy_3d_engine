@@ -989,3 +989,49 @@ fn test_create_then_set_matrix_in_both_sets() {
     assert!(scene.new_instances().contains(&key));
     assert!(scene.dirty_transforms().contains(&key));
 }
+
+// ============================================================================
+// Tests: Global Binding Group
+// ============================================================================
+
+#[test]
+fn test_global_binding_group_none_before_first_instance() {
+    let renderer = create_mock_renderer();
+    let buffers = create_test_buffers(renderer.clone());
+    let scene = Scene::new(renderer, buffers.0, buffers.1, buffers.2);
+
+    // No instance created yet → global binding group is None
+    assert!(scene.global_binding_group().is_none());
+}
+
+#[test]
+fn test_global_binding_group_created_on_first_instance() {
+    let (renderer, buffers, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    // Global binding group should exist after first instance
+    let bg = scene.global_binding_group();
+    assert!(bg.is_some());
+    assert_eq!(bg.unwrap().set_index(), 0);
+}
+
+#[test]
+fn test_global_binding_group_survives_clear() {
+    let (renderer, buffers, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(renderer, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+
+    scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    assert!(scene.global_binding_group().is_some());
+
+    scene.clear();
+
+    // Global binding group survives clear (buffers unchanged)
+    assert!(scene.global_binding_group().is_some());
+}

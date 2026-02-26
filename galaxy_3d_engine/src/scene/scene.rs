@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use slotmap::SlotMap;
 use glam::Mat4;
 use crate::error::Result;
-use crate::renderer;
+use crate::engine_err;
+use crate::renderer::{self, BindingGroup, BindingResource};
 use crate::resource::buffer::Buffer;
 use crate::resource::mesh::Mesh;
 use crate::utils::SlotAllocator;
@@ -38,6 +39,8 @@ pub struct Scene {
     dirty_transforms: HashSet<RenderInstanceKey>,
     /// Newly created instances pending full GPU buffer initialization
     new_instances: HashSet<RenderInstanceKey>,
+    /// Set 0 binding group (frame UBO + instance SSBO + material SSBO), shared by all instances
+    global_binding_group: Option<Arc<dyn BindingGroup>>,
 }
 
 impl Scene {
@@ -64,6 +67,7 @@ impl Scene {
             material_buffer,
             dirty_transforms: HashSet::new(),
             new_instances: HashSet::new(),
+            global_binding_group: None,
         }
     }
 
@@ -90,10 +94,11 @@ impl Scene {
         bounding_box: AABB,
         variant_index: usize,
     ) -> Result<RenderInstanceKey> {
+        self.ensure_global_binding_group(mesh, variant_index)?;
+
         let instance = RenderInstance::from_mesh(
             mesh, world_matrix, bounding_box, variant_index,
-            &self.renderer, &mut self.draw_slot_allocator,
-            &self.frame_buffer, &self.instance_buffer, &self.material_buffer,
+            &mut self.draw_slot_allocator,
         )?;
         let key = self.render_instances.insert(instance);
         self.new_instances.insert(key);
@@ -179,6 +184,48 @@ impl Scene {
     /// Get the material storage buffer
     pub fn material_buffer(&self) -> &Arc<Buffer> {
         &self.material_buffer
+    }
+
+    /// Get the global binding group (Set 0: frame UBO + instance SSBO + material SSBO).
+    ///
+    /// Returns None if no instance has been created yet.
+    pub fn global_binding_group(&self) -> Option<&Arc<dyn BindingGroup>> {
+        self.global_binding_group.as_ref()
+    }
+
+    /// Lazily create the global binding group (Set 0) from the first pipeline encountered.
+    ///
+    /// All pipelines must declare the same Set 0 layout (frame UBO + instance SSBO +
+    /// material SSBO). We use the first pipeline from the mesh to create the descriptor set.
+    fn ensure_global_binding_group(&mut self, mesh: &Mesh, variant_index: usize) -> Result<()> {
+        if self.global_binding_group.is_some() {
+            return Ok(());
+        }
+
+        let mesh_lod = mesh.lod(0)
+            .ok_or_else(|| engine_err!("galaxy3d::Scene", "Mesh has no LODs"))?;
+        let submesh = mesh_lod.submesh(0)
+            .ok_or_else(|| engine_err!("galaxy3d::Scene", "MeshLOD has no submeshes"))?;
+        let variant = submesh.material().pipeline().variant(variant_index as u32)
+            .ok_or_else(|| engine_err!("galaxy3d::Scene",
+                "Pipeline variant {} not found", variant_index))?;
+        let pass = variant.pass(0)
+            .ok_or_else(|| engine_err!("galaxy3d::Scene",
+                "Pipeline variant has no passes"))?;
+
+        let renderer_lock = self.renderer.lock().unwrap();
+        let bg = renderer_lock.create_binding_group(
+            pass.renderer_pipeline(),
+            0,
+            &[
+                BindingResource::UniformBuffer(self.frame_buffer.renderer_buffer().as_ref()),
+                BindingResource::StorageBuffer(self.instance_buffer.renderer_buffer().as_ref()),
+                BindingResource::StorageBuffer(self.material_buffer.renderer_buffer().as_ref()),
+            ],
+        )?;
+
+        self.global_binding_group = Some(bg);
+        Ok(())
     }
 
     /// Remove all render instances and reset the draw slot allocator

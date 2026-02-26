@@ -4,8 +4,7 @@
 /// It extracts all renderer-level objects (buffers, pipelines, binding groups)
 /// from the resource hierarchy into a flat structure optimized for rendering.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use glam::{Vec3, Mat4};
 use slotmap::new_key_type;
 use crate::error::Result;
@@ -15,11 +14,8 @@ use crate::renderer::{
     Buffer,
     Pipeline as RendererPipeline,
     BindingGroup,
-    BindingResource,
-    BindingType,
     PrimitiveTopology,
 };
-use crate::resource::buffer::Buffer as ResourceBuffer;
 use crate::resource::mesh::Mesh;
 use crate::utils::SlotAllocator;
 
@@ -61,13 +57,13 @@ pub const FLAG_RECEIVE_SHADOW: u64 = 1 << 2;
 
 /// A single rendering pass with pre-resolved GPU bindings
 ///
-/// Contains a pipeline and all bindings (binding groups)
-/// resolved from the Material against the pipeline's reflection data.
+/// Contains a pipeline and texture binding groups (Sets 1+).
+/// The global binding group (Set 0) is owned by Scene and shared across all instances.
 pub struct RenderPass {
     /// The renderer pipeline for this pass
     pipeline: Arc<dyn RendererPipeline>,
-    /// Binding groups (textures, UBOs) per set index
-    binding_groups: Vec<Arc<dyn BindingGroup>>,
+    /// Sets 1+: texture bindings (Arc clones from Material, shared across instances)
+    texture_binding_groups: Vec<Arc<dyn BindingGroup>>,
 }
 
 // ===== RENDER SUBMESH =====
@@ -151,11 +147,7 @@ impl RenderInstance {
         world_matrix: Mat4,
         bounding_box: AABB,
         variant_index: usize,
-        renderer: &Arc<Mutex<dyn renderer::Renderer>>,
         slot_allocator: &mut SlotAllocator,
-        frame_buffer: &Arc<ResourceBuffer>,
-        instance_buffer: &Arc<ResourceBuffer>,
-        material_buffer: &Arc<ResourceBuffer>,
     ) -> Result<Self> {
         let geometry = mesh.geometry();
         let geom_mesh = mesh.geometry_mesh();
@@ -207,62 +199,15 @@ impl RenderInstance {
                             pass_idx, variant_index))?;
 
                     let renderer_pipeline = pass.renderer_pipeline();
-                    let reflection = renderer_pipeline.reflection();
 
-                    // ========== RESOLVE BINDING GROUPS ==========
-                    // Group texture bindings by set index
-                    let mut sets: BTreeMap<u32, Vec<(u32, BindingResource)>> = BTreeMap::new();
-
-                    for binding_idx in 0..reflection.binding_count() {
-                        let binding = reflection.binding(binding_idx).unwrap();
-
-                        if binding.binding_type == BindingType::CombinedImageSampler {
-                            if let Some(slot) = material.texture_slot_by_name(&binding.name) {
-                                let renderer_texture = slot.texture().renderer_texture();
-                                sets.entry(binding.set)
-                                    .or_default()
-                                    .push((binding.binding, BindingResource::SampledTexture(
-                                        renderer_texture.as_ref(),
-                                        slot.sampler_type(),
-                                    )));
-                            }
-                        }
-                    }
-
-                    // Create binding groups
-                    let renderer_lock = renderer.lock().unwrap();
-
-                    // Set 0: global buffers (frame UBO + instance SSBO + material SSBO)
-                    let global_bg = renderer_lock.create_binding_group(
-                        renderer_pipeline,
-                        0,
-                        &[
-                            BindingResource::UniformBuffer(frame_buffer.renderer_buffer().as_ref()),
-                            BindingResource::StorageBuffer(instance_buffer.renderer_buffer().as_ref()),
-                            BindingResource::StorageBuffer(material_buffer.renderer_buffer().as_ref()),
-                        ],
-                    )?;
-                    let mut binding_groups = vec![global_bg];
-
-                    // Sets 1+: material texture bindings
-                    for (set_index, mut resources) in sets {
-                        // Sort by binding index to match layout order
-                        resources.sort_by_key(|(binding, _)| *binding);
-                        let resource_refs: Vec<BindingResource> = resources.into_iter()
-                            .map(|(_, r)| r)
-                            .collect();
-                        let bg = renderer_lock.create_binding_group(
-                            renderer_pipeline,
-                            set_index,
-                            &resource_refs,
-                        )?;
-                        binding_groups.push(bg);
-                    }
-                    drop(renderer_lock);
+                    // Sets 1+: texture bindings (shared from Material)
+                    let texture_bgs = material.texture_binding_groups(
+                        variant_index as u32, pass_idx as u32,
+                    ).unwrap_or(&[]).to_vec();
 
                     passes.push(RenderPass {
                         pipeline: Arc::clone(renderer_pipeline),
-                        binding_groups,
+                        texture_binding_groups: texture_bgs,
                     });
                 }
 
@@ -442,9 +387,9 @@ impl RenderPass {
         &self.pipeline
     }
 
-    /// Get the binding groups
-    pub fn binding_groups(&self) -> &[Arc<dyn BindingGroup>] {
-        &self.binding_groups
+    /// Get the texture binding groups (Sets 1+: shared from Material)
+    pub fn texture_binding_groups(&self) -> &[Arc<dyn BindingGroup>] {
+        &self.texture_binding_groups
     }
 }
 

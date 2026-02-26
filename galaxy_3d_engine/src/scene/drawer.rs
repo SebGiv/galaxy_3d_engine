@@ -64,9 +64,14 @@ impl Drawer for ForwardDrawer {
                 for pass in sub_mesh.passes() {
                     cmd.bind_pipeline(pass.pipeline())?;
 
-                    // Material binding groups
-                    for (set_idx, bg) in pass.binding_groups().iter().enumerate() {
-                        cmd.bind_binding_group(pass.pipeline(), set_idx as u32, bg)?;
+                    // Set 0: global buffers (from Scene, shared across all instances)
+                    if let Some(global_bg) = scene.global_binding_group() {
+                        cmd.bind_binding_group(pass.pipeline(), global_bg.set_index(), global_bg)?;
+                    }
+
+                    // Sets 1+: texture bindings (shared from Material)
+                    for bg in pass.texture_binding_groups() {
+                        cmd.bind_binding_group(pass.pipeline(), bg.set_index(), bg)?;
                     }
 
                     // Push draw slot index (shader reads instance data from SSBO)

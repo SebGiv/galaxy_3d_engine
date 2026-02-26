@@ -130,6 +130,11 @@ impl Pipeline {
         self.variants.iter().map(|v| v.passes.len()).max().unwrap_or(0)
     }
 
+    /// Get the renderer reference (needed by Material for BindingGroup creation)
+    pub fn renderer(&self) -> &Arc<Mutex<dyn renderer::Renderer>> {
+        &self.renderer
+    }
+
     // ===== MODIFICATION =====
 
     /// Add a new variant
