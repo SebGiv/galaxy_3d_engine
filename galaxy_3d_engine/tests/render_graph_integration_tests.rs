@@ -1,6 +1,6 @@
 //! Integration tests for RenderGraph system with GPU
 //!
-//! These tests verify the RenderGraphManager lifecycle through Engine with VulkanRenderer.
+//! These tests verify the RenderGraphManager lifecycle through Engine with VulkanGraphicsDevice.
 //! Tests requiring GPU are marked with #[ignore].
 //!
 //! Run with: cargo test --test render_graph_integration_tests -- --ignored
@@ -9,7 +9,7 @@ mod gpu_test_utils;
 
 use galaxy_3d_engine::galaxy3d::Engine;
 use galaxy_3d_engine::galaxy3d::render::Config;
-use galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer;
+use galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanGraphicsDevice;
 use gpu_test_utils::create_test_window;
 use serial_test::serial;
 
@@ -24,10 +24,10 @@ fn test_integration_render_graph_manager_lifecycle() {
     // Initialize engine
     Engine::initialize().unwrap();
 
-    // Create renderer
+    // Create graphics device
     let (window, _event_loop) = create_test_window();
-    let renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
-    Engine::create_renderer("main", renderer).unwrap();
+    let graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
+    Engine::create_graphics_device("main", graphics_device).unwrap();
 
     // Create all managers
     Engine::create_resource_manager().unwrap();
@@ -53,11 +53,11 @@ fn test_integration_render_graph_manager_lifecycle() {
         assert_eq!(rgm.render_graph_count(), 1);
     }
 
-    // Cleanup (order: RGM → SM → RM → renderers)
+    // Cleanup (order: RGM → SM → RM → graphics_devices)
     Engine::destroy_render_graph_manager().unwrap();
     Engine::destroy_scene_manager().unwrap();
     Engine::destroy_resource_manager().unwrap();
-    Engine::destroy_renderer("main").unwrap();
+    Engine::destroy_graphics_device("main").unwrap();
     Engine::shutdown();
 }
 
@@ -70,14 +70,14 @@ fn test_integration_render_graph_manager_with_full_engine() {
 
     // Create all subsystems
     let (window, _event_loop) = create_test_window();
-    let renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
-    Engine::create_renderer("main", renderer).unwrap();
+    let graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
+    Engine::create_graphics_device("main", graphics_device).unwrap();
     Engine::create_resource_manager().unwrap();
     Engine::create_scene_manager().unwrap();
     Engine::create_render_graph_manager().unwrap();
 
     // Verify all subsystems are accessible
-    assert!(Engine::renderer("main").is_ok());
+    assert!(Engine::graphics_device("main").is_ok());
     assert!(Engine::resource_manager().is_ok());
     assert!(Engine::scene_manager().is_ok());
     assert!(Engine::render_graph_manager().is_ok());
@@ -92,7 +92,7 @@ fn test_integration_render_graph_manager_with_full_engine() {
     assert!(Engine::render_graph_manager().is_err());
     assert!(Engine::scene_manager().is_err());
     assert!(Engine::resource_manager().is_err());
-    assert_eq!(Engine::renderer_count(), 0);
+    assert_eq!(Engine::graphics_device_count(), 0);
 
     // Cleanup
     Engine::shutdown();

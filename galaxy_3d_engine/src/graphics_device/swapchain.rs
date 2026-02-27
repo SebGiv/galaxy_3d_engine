@@ -1,7 +1,7 @@
 /// Swapchain trait - for window presentation
 
 use crate::error::Result;
-use crate::renderer::{CommandList, Texture, TextureFormat};
+use crate::graphics_device::{CommandList, Texture, TextureFormat};
 
 /// Swapchain for presenting rendered images to a window
 ///

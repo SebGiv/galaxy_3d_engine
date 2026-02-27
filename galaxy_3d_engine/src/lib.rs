@@ -9,9 +9,9 @@ dynamic polymorphism (similar to C++ virtual inheritance). Backend implementatio
 
 ## Architecture
 
-- **Renderer**: Factory trait for creating GPU resources
+- **GraphicsDevice**: Factory trait for creating GPU resources
 - **RendererTexture**: Texture resource trait
-- **RendererBuffer**: Buffer resource trait
+- **GraphicsDeviceBuffer**: Buffer resource trait
 - **RendererShader**: Shader module trait
 - **RendererPipeline**: Graphics pipeline trait
 - **RendererFrame**: Frame recording trait
@@ -23,7 +23,7 @@ Backend implementations provide concrete types that implement these traits.
 mod error;
 mod engine;
 pub mod log;
-pub mod renderer;
+pub mod graphics_device;
 pub mod resource;
 pub mod scene;
 pub mod camera;
@@ -38,8 +38,8 @@ pub mod galaxy3d {
     // Engine singleton
     pub use crate::engine::Engine;
 
-    // Renderer factory trait
-    pub use crate::renderer::Renderer;
+    // GraphicsDevice factory trait
+    pub use crate::graphics_device::GraphicsDevice;
 
     // Logging sub-module (types only, NOT macros)
     pub mod log {
@@ -49,7 +49,7 @@ pub mod galaxy3d {
 
     // Render sub-module with all rendering types
     pub mod render {
-        pub use crate::renderer::*;
+        pub use crate::graphics_device::*;
     }
 
     // Resource sub-module

@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
-use crate::renderer;
+use crate::graphics_device;
 
 // ============================================================================
 // GEOMETRY SUBMESH
@@ -39,7 +39,7 @@ use crate::renderer;
 /// Represents the smallest unit of geometry that can be drawn.
 /// Contains all parameters needed for a draw call.
 ///
-/// Note: The renderer is accessed via the parent `Geometry`, not stored here.
+/// Note: The graphics_device is accessed via the parent `Geometry`, not stored here.
 pub struct GeometrySubMesh {
     /// First vertex index (base vertex for indexed draw)
     vertex_offset: u32,
@@ -52,7 +52,7 @@ pub struct GeometrySubMesh {
     index_count: u32,
 
     /// Primitive topology for this submesh
-    topology: renderer::PrimitiveTopology,
+    topology: graphics_device::PrimitiveTopology,
 }
 
 impl GeometrySubMesh {
@@ -77,7 +77,7 @@ impl GeometrySubMesh {
     }
 
     /// Get the primitive topology
-    pub fn topology(&self) -> renderer::PrimitiveTopology {
+    pub fn topology(&self) -> graphics_device::PrimitiveTopology {
         self.topology
     }
 }
@@ -219,20 +219,20 @@ pub struct Geometry {
     /// Group name for ResourceManager lookup
     name: String,
 
-    /// Reference to the renderer
-    renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    /// Reference to the graphics device
+    graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
 
     /// Shared vertex buffer (interleaved vertex data)
-    vertex_buffer: Arc<dyn renderer::Buffer>,
+    vertex_buffer: Arc<dyn graphics_device::Buffer>,
 
     /// Shared index buffer (None for non-indexed geometries)
-    index_buffer: Option<Arc<dyn renderer::Buffer>>,
+    index_buffer: Option<Arc<dyn graphics_device::Buffer>>,
 
     /// Vertex layout description (shared by all submeshes)
-    vertex_layout: renderer::VertexLayout,
+    vertex_layout: graphics_device::VertexLayout,
 
     /// Index type (U16 or U32), ignored if no index buffer
-    index_type: renderer::IndexType,
+    index_type: graphics_device::IndexType,
 
     /// Total vertex count in the buffer
     total_vertex_count: u32,
@@ -251,17 +251,17 @@ impl Geometry {
     /// Create a new Geometry (internal, used by ResourceManager)
     pub(crate) fn new(
         name: String,
-        renderer: Arc<Mutex<dyn renderer::Renderer>>,
-        vertex_buffer: Arc<dyn renderer::Buffer>,
-        index_buffer: Option<Arc<dyn renderer::Buffer>>,
-        vertex_layout: renderer::VertexLayout,
-        index_type: renderer::IndexType,
+        graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
+        vertex_buffer: Arc<dyn graphics_device::Buffer>,
+        index_buffer: Option<Arc<dyn graphics_device::Buffer>>,
+        vertex_layout: graphics_device::VertexLayout,
+        index_type: graphics_device::IndexType,
         total_vertex_count: u32,
         total_index_count: u32,
     ) -> Self {
         Self {
             name,
-            renderer,
+            graphics_device,
             vertex_buffer,
             index_buffer,
             vertex_layout,
@@ -298,10 +298,10 @@ impl Geometry {
 
         // Create vertex buffer
         let vertex_buffer = {
-            let mut renderer = desc.renderer.lock().unwrap();
-            let buffer = renderer.create_buffer(renderer::BufferDesc {
+            let mut graphics_device = desc.graphics_device.lock().unwrap();
+            let buffer = graphics_device.create_buffer(graphics_device::BufferDesc {
                 size: desc.vertex_data.len() as u64,
-                usage: renderer::BufferUsage::Vertex,
+                usage: graphics_device::BufferUsage::Vertex,
             })?;
             buffer.update(0, &desc.vertex_data)?;
             buffer
@@ -319,10 +319,10 @@ impl Geometry {
 
             let count = index_data.len() / index_size;
             let buffer = {
-                let mut renderer = desc.renderer.lock().unwrap();
-                let buf = renderer.create_buffer(renderer::BufferDesc {
+                let mut graphics_device = desc.graphics_device.lock().unwrap();
+                let buf = graphics_device.create_buffer(graphics_device::BufferDesc {
                     size: index_data.len() as u64,
-                    usage: renderer::BufferUsage::Index,
+                    usage: graphics_device::BufferUsage::Index,
                 })?;
                 buf.update(0, index_data)?;
                 buf
@@ -335,7 +335,7 @@ impl Geometry {
         // Build Geometry
         let mut geometry = Self::new(
             desc.name,
-            desc.renderer,
+            desc.graphics_device,
             vertex_buffer,
             index_buffer,
             desc.vertex_layout,
@@ -359,18 +359,18 @@ impl Geometry {
         &self.name
     }
 
-    /// Get the renderer reference
-    pub fn renderer(&self) -> &Arc<Mutex<dyn renderer::Renderer>> {
-        &self.renderer
+    /// Get the graphics device reference
+    pub fn graphics_device(&self) -> &Arc<Mutex<dyn graphics_device::GraphicsDevice>> {
+        &self.graphics_device
     }
 
     /// Get the shared vertex buffer
-    pub fn vertex_buffer(&self) -> &Arc<dyn renderer::Buffer> {
+    pub fn vertex_buffer(&self) -> &Arc<dyn graphics_device::Buffer> {
         &self.vertex_buffer
     }
 
     /// Get the shared index buffer (if indexed)
-    pub fn index_buffer(&self) -> Option<&Arc<dyn renderer::Buffer>> {
+    pub fn index_buffer(&self) -> Option<&Arc<dyn graphics_device::Buffer>> {
         self.index_buffer.as_ref()
     }
 
@@ -380,12 +380,12 @@ impl Geometry {
     }
 
     /// Get the vertex layout
-    pub fn vertex_layout(&self) -> &renderer::VertexLayout {
+    pub fn vertex_layout(&self) -> &graphics_device::VertexLayout {
         &self.vertex_layout
     }
 
     /// Get the index type (only meaningful if indexed)
-    pub fn index_type(&self) -> renderer::IndexType {
+    pub fn index_type(&self) -> graphics_device::IndexType {
         self.index_type
     }
 
@@ -611,7 +611,7 @@ pub struct GeometrySubMeshDesc {
     /// Number of indices (ignored if geometry is non-indexed)
     pub index_count: u32,
     /// Primitive topology
-    pub topology: renderer::PrimitiveTopology,
+    pub topology: graphics_device::PrimitiveTopology,
 }
 
 /// Descriptor for creating a GeometryLOD
@@ -639,16 +639,16 @@ pub struct GeometryMeshDesc {
 pub struct GeometryDesc {
     /// Geometry group name
     pub name: String,
-    /// Renderer to use for GPU buffer creation
-    pub renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    /// Graphics device to use for GPU buffer creation
+    pub graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     /// Raw vertex data (bytes, interleaved according to vertex_layout)
     pub vertex_data: Vec<u8>,
     /// Raw index data (optional, None for non-indexed geometries)
     pub index_data: Option<Vec<u8>>,
     /// Vertex layout description (defines stride for vertex count calculation)
-    pub vertex_layout: renderer::VertexLayout,
+    pub vertex_layout: graphics_device::VertexLayout,
     /// Index type (U16 or U32, defines stride for index count calculation)
-    pub index_type: renderer::IndexType,
+    pub index_type: graphics_device::IndexType,
     /// Initial meshes (can be empty, add later via add_mesh)
     pub meshes: Vec<GeometryMeshDesc>,
 }

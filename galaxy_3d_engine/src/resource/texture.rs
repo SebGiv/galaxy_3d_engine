@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
-use crate::renderer;
+use crate::graphics_device;
 
 // ===== TEXTURE =====
 
@@ -21,7 +21,7 @@ use crate::renderer;
 ///
 /// Supports both simple and indexed textures, with optional atlas regions per layer.
 pub struct Texture {
-    renderer_texture: Arc<dyn renderer::Texture>,
+    graphics_device_texture: Arc<dyn graphics_device::Texture>,
     layers: Vec<TextureLayer>,
     layer_names: HashMap<String, usize>,
 }
@@ -51,8 +51,8 @@ pub struct AtlasRegion {
 
 /// Texture creation descriptor
 pub struct TextureDesc {
-    pub renderer: Arc<Mutex<dyn renderer::Renderer>>,
-    pub texture: renderer::TextureDesc,
+    pub graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
+    pub texture: graphics_device::TextureDesc,
     pub layers: Vec<LayerDesc>,
 }
 
@@ -95,7 +95,7 @@ impl Texture {
         }
 
         // ========== VALIDATION 1b: TextureType vs array_layers coherence ==========
-        if desc.texture.texture_type == crate::renderer::TextureType::Tex2D && array_layers > 1 {
+        if desc.texture.texture_type == crate::graphics_device::TextureType::Tex2D && array_layers > 1 {
             engine_bail!("galaxy3d::Texture",
                 "Tex2D texture cannot have array_layers > 1 (got {}). Use TextureType::Array2D instead.",
                 array_layers);
@@ -170,8 +170,8 @@ impl Texture {
 
         // ========== VALIDATION 8: Mipmap data consistency ==========
         // If manual mipmaps with layers, validate layer indices
-        if let renderer::MipmapMode::Manual(ref manual_data) = desc.texture.mipmap {
-            if let renderer::ManualMipmapData::Layers(ref mipmap_layers) = manual_data {
+        if let graphics_device::MipmapMode::Manual(ref manual_data) = desc.texture.mipmap {
+            if let graphics_device::ManualMipmapData::Layers(ref mipmap_layers) = manual_data {
                 for mipmap_layer in mipmap_layers {
                     if mipmap_layer.layer >= array_layers {
                         engine_bail!("galaxy3d::Texture", "Manual mipmap references layer {} but array_layers = {}",
@@ -205,10 +205,10 @@ impl Texture {
 
         // Collect layer data for upload
         if !desc.layers.is_empty() {
-            let layer_data: Vec<renderer::TextureLayerData> = desc.layers
+            let layer_data: Vec<graphics_device::TextureLayerData> = desc.layers
                 .iter()
                 .filter_map(|ld| {
-                    ld.data.as_ref().map(|d| renderer::TextureLayerData {
+                    ld.data.as_ref().map(|d| graphics_device::TextureLayerData {
                         layer: ld.layer_index,
                         data: d.clone(),
                     })
@@ -216,12 +216,12 @@ impl Texture {
                 .collect();
 
             if !layer_data.is_empty() {
-                render_texture_desc.data = Some(renderer::TextureData::Layers(layer_data));
+                render_texture_desc.data = Some(graphics_device::TextureData::Layers(layer_data));
             }
         }
 
         // Create the GPU texture
-        let renderer_texture = desc.renderer.lock().unwrap().create_texture(render_texture_desc)?;
+        let graphics_device_texture = desc.graphics_device.lock().unwrap().create_texture(render_texture_desc)?;
 
         // ========== BUILD LAYERS ==========
 
@@ -250,19 +250,19 @@ impl Texture {
         }
 
         Ok(Self {
-            renderer_texture,
+            graphics_device_texture,
             layers,
             layer_names,
         })
     }
 
     /// Calculate expected data size for a layer
-    fn calculate_layer_data_size(width: u32, height: u32, format: renderer::TextureFormat) -> usize {
+    fn calculate_layer_data_size(width: u32, height: u32, format: graphics_device::TextureFormat) -> usize {
         let bytes_per_pixel = match format {
-            renderer::TextureFormat::R8G8B8A8_SRGB => 4,
-            renderer::TextureFormat::R8G8B8A8_UNORM => 4,
-            renderer::TextureFormat::B8G8R8A8_SRGB => 4,
-            renderer::TextureFormat::B8G8R8A8_UNORM => 4,
+            graphics_device::TextureFormat::R8G8B8A8_SRGB => 4,
+            graphics_device::TextureFormat::R8G8B8A8_UNORM => 4,
+            graphics_device::TextureFormat::B8G8R8A8_SRGB => 4,
+            graphics_device::TextureFormat::B8G8R8A8_UNORM => 4,
             _ => {
                 // For unsupported formats (depth, vertex attributes), return 0 to skip validation
                 return 0;
@@ -310,7 +310,7 @@ impl Texture {
             engine_bail!("galaxy3d::Texture", "Cannot add layer to simple texture (array_layers=1)");
         }
 
-        let array_layers = self.renderer_texture.info().array_layers;
+        let array_layers = self.graphics_device_texture.info().array_layers;
 
         // Validate layer index
         if desc.layer_index >= array_layers {
@@ -332,7 +332,7 @@ impl Texture {
 
         // Upload layer data if provided
         if let Some(ref data) = desc.data {
-            self.renderer_texture.update(desc.layer_index, 0, data)?;
+            self.graphics_device_texture.update(desc.layer_index, 0, data)?;
         }
 
         // Build regions
@@ -341,7 +341,7 @@ impl Texture {
 
         for (region_index, region_desc) in desc.regions.into_iter().enumerate() {
             // Validate region bounds
-            let info = self.renderer_texture.info();
+            let info = self.graphics_device_texture.info();
             if region_desc.region.x + region_desc.region.width > info.width ||
                region_desc.region.y + region_desc.region.height > info.height {
                 engine_bail!("galaxy3d::Texture", "Region '{}' exceeds texture bounds", region_desc.name);
@@ -371,24 +371,24 @@ impl Texture {
             .ok_or_else(|| engine_err!("galaxy3d::Texture", "Layer '{}' not found", layer_name))?;
 
         let layer = &mut self.layers[layer_vec_index];
-        layer.add_region(desc, &self.renderer_texture.info())
+        layer.add_region(desc, &self.graphics_device_texture.info())
     }
 
     // ===== INFO =====
 
     /// Check if this is a simple texture (array_layers == 1)
     pub fn is_simple(&self) -> bool {
-        self.renderer_texture.info().array_layers == 1
+        self.graphics_device_texture.info().array_layers == 1
     }
 
     /// Check if this is an indexed texture (array_layers > 1)
     pub fn is_indexed(&self) -> bool {
-        self.renderer_texture.info().array_layers > 1
+        self.graphics_device_texture.info().array_layers > 1
     }
 
-    /// Get the underlying renderer texture
-    pub fn renderer_texture(&self) -> &Arc<dyn renderer::Texture> {
-        &self.renderer_texture
+    /// Get the underlying graphics device texture
+    pub fn graphics_device_texture(&self) -> &Arc<dyn graphics_device::Texture> {
+        &self.graphics_device_texture
     }
 
 }
@@ -438,7 +438,7 @@ impl TextureLayer {
 
     // ===== MODIFICATION (internal) =====
 
-    pub(crate) fn add_region(&mut self, desc: AtlasRegionDesc, texture_info: &renderer::TextureInfo) -> Result<u32> {
+    pub(crate) fn add_region(&mut self, desc: AtlasRegionDesc, texture_info: &graphics_device::TextureInfo) -> Result<u32> {
         // Check duplicate name
         if self.region_names.contains_key(&desc.name) {
             engine_bail!("galaxy3d::Texture", "Region '{}' already exists in layer '{}'", desc.name, self.name);

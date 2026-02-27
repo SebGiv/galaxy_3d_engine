@@ -2,7 +2,7 @@
 ///
 /// High-level description of a rendering step (e.g. shadow pass,
 /// geometry pass, post-process pass). This is a DAG node — not to
-/// be confused with `renderer::RenderPass` which is the low-level
+/// be confused with `graphics_device::RenderPass` which is the low-level
 /// GPU render pass configuration.
 ///
 /// Each pass declares which targets it reads from (inputs) and
@@ -10,10 +10,10 @@
 /// `RenderGraph`.
 ///
 /// After `RenderGraph::compile()`, each pass with outputs holds
-/// a resolved `renderer::RenderPass` and `renderer::Framebuffer`.
+/// a resolved `graphics_device::RenderPass` and `graphics_device::Framebuffer`.
 
 use std::sync::Arc;
-use crate::renderer;
+use crate::graphics_device;
 use super::pass_action::PassAction;
 
 pub struct RenderPass {
@@ -22,9 +22,9 @@ pub struct RenderPass {
     /// Target indices this pass writes to
     outputs: Vec<usize>,
     /// Resolved GPU render pass (created by compile())
-    renderer_render_pass: Option<Arc<dyn renderer::RenderPass>>,
+    graphics_device_render_pass: Option<Arc<dyn graphics_device::RenderPass>>,
     /// Resolved GPU framebuffer (created by compile())
-    renderer_framebuffer: Option<Arc<dyn renderer::Framebuffer>>,
+    graphics_device_framebuffer: Option<Arc<dyn graphics_device::Framebuffer>>,
     /// Action to execute during this pass
     action: Option<Box<dyn PassAction>>,
 }
@@ -34,8 +34,8 @@ impl RenderPass {
         Self {
             inputs: Vec::new(),
             outputs: Vec::new(),
-            renderer_render_pass: None,
-            renderer_framebuffer: None,
+            graphics_device_render_pass: None,
+            graphics_device_framebuffer: None,
             action: None,
         }
     }
@@ -51,13 +51,13 @@ impl RenderPass {
     }
 
     /// Get the resolved GPU render pass (available after compile)
-    pub fn renderer_render_pass(&self) -> Option<&Arc<dyn renderer::RenderPass>> {
-        self.renderer_render_pass.as_ref()
+    pub fn graphics_device_render_pass(&self) -> Option<&Arc<dyn graphics_device::RenderPass>> {
+        self.graphics_device_render_pass.as_ref()
     }
 
     /// Get the resolved GPU framebuffer (available after compile)
-    pub fn renderer_framebuffer(&self) -> Option<&Arc<dyn renderer::Framebuffer>> {
-        self.renderer_framebuffer.as_ref()
+    pub fn graphics_device_framebuffer(&self) -> Option<&Arc<dyn graphics_device::Framebuffer>> {
+        self.graphics_device_framebuffer.as_ref()
     }
 
     /// Add an input target index
@@ -71,13 +71,13 @@ impl RenderPass {
     }
 
     /// Set the resolved GPU render pass
-    pub(crate) fn set_renderer_render_pass(&mut self, rp: Arc<dyn renderer::RenderPass>) {
-        self.renderer_render_pass = Some(rp);
+    pub(crate) fn set_graphics_device_render_pass(&mut self, rp: Arc<dyn graphics_device::RenderPass>) {
+        self.graphics_device_render_pass = Some(rp);
     }
 
     /// Set the resolved GPU framebuffer
-    pub(crate) fn set_renderer_framebuffer(&mut self, fb: Arc<dyn renderer::Framebuffer>) {
-        self.renderer_framebuffer = Some(fb);
+    pub(crate) fn set_graphics_device_framebuffer(&mut self, fb: Arc<dyn graphics_device::Framebuffer>) {
+        self.graphics_device_framebuffer = Some(fb);
     }
 
     /// Get the action (immutable)

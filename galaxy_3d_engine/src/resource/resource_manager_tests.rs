@@ -1,9 +1,9 @@
 /// Tests for ResourceManager
 ///
-/// These tests use MockRenderer to test ResourceManager logic without requiring a GPU.
+/// These tests use MockGraphicsDevice to test ResourceManager logic without requiring a GPU.
 
 use super::*;
-use crate::renderer;
+use crate::graphics_device;
 use crate::resource::{
     AtlasRegion, AtlasRegionDesc, LayerDesc, PipelinePassDesc,
     MeshLODDesc, SubMeshDesc, GeometryMeshRef, GeometrySubMeshRef,
@@ -16,29 +16,29 @@ use std::sync::{Arc, Mutex};
 // Helper Functions
 // ============================================================================
 
-/// Create a MockRenderer wrapped in Arc<Mutex<>>
-fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
-    Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()))
+/// Create a MockGraphicsDevice wrapped in Arc<Mutex<>>
+fn create_mock_graphics_device() -> Arc<Mutex<dyn graphics_device::GraphicsDevice>> {
+    Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()))
 }
 
 /// Create a simple texture descriptor for testing
 fn create_test_texture_desc(
-    renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
    _name: &str,
     width: u32,
     height: u32,
 ) -> TextureDesc {
     TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width,
             height,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            data: Some(renderer::TextureData::Single(vec![255u8; (width * height * 4) as usize])),
-            mipmap: renderer::MipmapMode::None,
-            texture_type: renderer::TextureType::Tex2D,
+            data: Some(graphics_device::TextureData::Single(vec![255u8; (width * height * 4) as usize])),
+            mipmap: graphics_device::MipmapMode::None,
+            texture_type: graphics_device::TextureType::Tex2D,
         },
         layers: vec![LayerDesc {
             name: "default".to_string(),
@@ -51,7 +51,7 @@ fn create_test_texture_desc(
 
 /// Create a simple geometry descriptor for testing
 fn create_test_geometry_desc(
-    renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     name: &str,
 ) -> GeometryDesc {
     // Simple quad: 4 vertices (Position2D + UV), 6 indices
@@ -77,23 +77,23 @@ fn create_test_geometry_desc(
         .collect();
 
     // Simple Position2D + UV layout
-    let vertex_layout = renderer::VertexLayout {
-        bindings: vec![renderer::VertexBinding {
+    let vertex_layout = graphics_device::VertexLayout {
+        bindings: vec![graphics_device::VertexBinding {
             binding: 0,
             stride: 16, // 4 floats * 4 bytes
-            input_rate: renderer::VertexInputRate::Vertex,
+            input_rate: graphics_device::VertexInputRate::Vertex,
         }],
         attributes: vec![
-            renderer::VertexAttribute {
+            graphics_device::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: renderer::BufferFormat::R32G32_SFLOAT,
+                format: graphics_device::BufferFormat::R32G32_SFLOAT,
                 offset: 0,
             },
-            renderer::VertexAttribute {
+            graphics_device::VertexAttribute {
                 location: 1,
                 binding: 0,
-                format: renderer::BufferFormat::R32G32_SFLOAT,
+                format: graphics_device::BufferFormat::R32G32_SFLOAT,
                 offset: 8,
             },
         ],
@@ -101,11 +101,11 @@ fn create_test_geometry_desc(
 
     GeometryDesc {
         name: name.to_string(),
-        renderer,
+        graphics_device,
         vertex_data: vertex_bytes,
         index_data: Some(index_bytes),
         vertex_layout,
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![GeometryMeshDesc {
             name: name.to_string(),
             lods: vec![GeometryLODDesc {
@@ -116,7 +116,7 @@ fn create_test_geometry_desc(
                     vertex_count: 4,
                     index_offset: 0,
                     index_count: 6,
-                    topology: renderer::PrimitiveTopology::TriangleList,
+                    topology: graphics_device::PrimitiveTopology::TriangleList,
                 }],
             }],
         }],
@@ -125,35 +125,35 @@ fn create_test_geometry_desc(
 
 /// Create a simple pipeline descriptor for testing
 fn create_test_pipeline_desc(
-    renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     name: &str,
 ) -> PipelineDesc {
-    let vertex_layout = renderer::VertexLayout {
-        bindings: vec![renderer::VertexBinding {
+    let vertex_layout = graphics_device::VertexLayout {
+        bindings: vec![graphics_device::VertexBinding {
             binding: 0,
             stride: 16,
-            input_rate: renderer::VertexInputRate::Vertex,
+            input_rate: graphics_device::VertexInputRate::Vertex,
         }],
         attributes: vec![
-            renderer::VertexAttribute {
+            graphics_device::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: renderer::BufferFormat::R32G32_SFLOAT,
+                format: graphics_device::BufferFormat::R32G32_SFLOAT,
                 offset: 0,
             },
         ],
     };
 
     PipelineDesc {
-        renderer,
+        graphics_device,
         variants: vec![PipelineVariantDesc {
             name: name.to_string(),
             passes: vec![PipelinePassDesc {
-                pipeline: renderer::PipelineDesc {
-                    vertex_shader: Arc::new(renderer::mock_renderer::MockShader::new("vert".to_string())),
-                    fragment_shader: Arc::new(renderer::mock_renderer::MockShader::new("frag".to_string())),
+                pipeline: graphics_device::PipelineDesc {
+                    vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
+                    fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
                     vertex_layout,
-                    topology: renderer::PrimitiveTopology::TriangleList,
+                    topology: graphics_device::PrimitiveTopology::TriangleList,
                     push_constant_ranges: vec![],
                     binding_group_layouts: vec![],
                     rasterization: Default::default(),
@@ -201,13 +201,13 @@ fn create_test_mesh_desc(
 /// Returns (geometry, material) Arcs for use in MeshDesc.
 fn create_mesh_prerequisites(
     rm: &mut ResourceManager,
-    renderer: &Arc<Mutex<dyn renderer::Renderer>>,
+    graphics_device: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     suffix: &str,
 ) -> (Arc<Geometry>, Arc<Material>) {
-    let geom_desc = create_test_geometry_desc(renderer.clone(), suffix);
+    let geom_desc = create_test_geometry_desc(graphics_device.clone(), suffix);
     let geometry = rm.create_geometry(format!("geom_{}", suffix), geom_desc).unwrap();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), suffix);
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), suffix);
     let pipeline = rm.create_pipeline(format!("pipe_{}", suffix), pipe_desc).unwrap();
 
     let mat_desc = create_test_material_desc(&pipeline);
@@ -237,9 +237,9 @@ fn test_resource_manager_new() {
 #[test]
 fn test_create_texture() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_texture_desc(renderer.clone(), "test_texture", 256, 256);
+    let desc = create_test_texture_desc(graphics_device.clone(), "test_texture", 256, 256);
     let _texture = rm.create_texture("test_texture".to_string(), desc).unwrap();
 
     assert_eq!(rm.texture_count(), 1);
@@ -249,9 +249,9 @@ fn test_create_texture() {
 #[test]
 fn test_get_texture() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_texture_desc(renderer.clone(), "test_texture", 256, 256);
+    let desc = create_test_texture_desc(graphics_device.clone(), "test_texture", 256, 256);
     rm.create_texture("test_texture".to_string(), desc).unwrap();
 
     let texture = rm.texture("test_texture");
@@ -269,9 +269,9 @@ fn test_get_texture_not_found() {
 #[test]
 fn test_remove_texture() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_texture_desc(renderer.clone(), "test_texture", 256, 256);
+    let desc = create_test_texture_desc(graphics_device.clone(), "test_texture", 256, 256);
     rm.create_texture("test_texture".to_string(), desc).unwrap();
 
     assert_eq!(rm.texture_count(), 1);
@@ -291,12 +291,12 @@ fn test_remove_texture_not_found() {
 #[test]
 fn test_duplicate_texture_fails() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc1 = create_test_texture_desc(renderer.clone(), "test_texture", 256, 256);
+    let desc1 = create_test_texture_desc(graphics_device.clone(), "test_texture", 256, 256);
     rm.create_texture("test_texture".to_string(), desc1).unwrap();
 
-    let desc2 = create_test_texture_desc(renderer.clone(), "test_texture", 512, 512);
+    let desc2 = create_test_texture_desc(graphics_device.clone(), "test_texture", 512, 512);
     let result = rm.create_texture("test_texture".to_string(), desc2);
 
     assert!(result.is_err());
@@ -306,11 +306,11 @@ fn test_duplicate_texture_fails() {
 #[test]
 fn test_multiple_textures() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc1 = create_test_texture_desc(renderer.clone(), "texture1", 256, 256);
-    let desc2 = create_test_texture_desc(renderer.clone(), "texture2", 512, 512);
-    let desc3 = create_test_texture_desc(renderer.clone(), "texture3", 128, 128);
+    let desc1 = create_test_texture_desc(graphics_device.clone(), "texture1", 256, 256);
+    let desc2 = create_test_texture_desc(graphics_device.clone(), "texture2", 512, 512);
+    let desc3 = create_test_texture_desc(graphics_device.clone(), "texture3", 128, 128);
 
     rm.create_texture("texture1".to_string(), desc1).unwrap();
     rm.create_texture("texture2".to_string(), desc2).unwrap();
@@ -325,15 +325,15 @@ fn test_multiple_textures() {
 #[test]
 fn test_texture_count() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     assert_eq!(rm.texture_count(), 0);
 
-    let desc1 = create_test_texture_desc(renderer.clone(), "texture1", 256, 256);
+    let desc1 = create_test_texture_desc(graphics_device.clone(), "texture1", 256, 256);
     rm.create_texture("texture1".to_string(), desc1).unwrap();
     assert_eq!(rm.texture_count(), 1);
 
-    let desc2 = create_test_texture_desc(renderer.clone(), "texture2", 512, 512);
+    let desc2 = create_test_texture_desc(graphics_device.clone(), "texture2", 512, 512);
     rm.create_texture("texture2".to_string(), desc2).unwrap();
     assert_eq!(rm.texture_count(), 2);
 
@@ -351,9 +351,9 @@ fn test_texture_count() {
 #[test]
 fn test_create_geometry() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_geometry_desc(renderer.clone(), "test_geom");
+    let desc = create_test_geometry_desc(graphics_device.clone(), "test_geom");
     let geom = rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
     assert_eq!(rm.geometry_count(), 1);
@@ -363,9 +363,9 @@ fn test_create_geometry() {
 #[test]
 fn test_get_geometry() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_geometry_desc(renderer.clone(), "test_geom");
+    let desc = create_test_geometry_desc(graphics_device.clone(), "test_geom");
     rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
     let geom = rm.geometry("test_geom");
@@ -382,9 +382,9 @@ fn test_get_geometry_not_found() {
 #[test]
 fn test_remove_geometry() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_geometry_desc(renderer.clone(), "test_geom");
+    let desc = create_test_geometry_desc(graphics_device.clone(), "test_geom");
     rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
     assert_eq!(rm.geometry_count(), 1);
@@ -404,12 +404,12 @@ fn test_remove_geometry_not_found() {
 #[test]
 fn test_duplicate_geometry_fails() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc1 = create_test_geometry_desc(renderer.clone(), "test_geom");
+    let desc1 = create_test_geometry_desc(graphics_device.clone(), "test_geom");
     rm.create_geometry("test_geom".to_string(), desc1).unwrap();
 
-    let desc2 = create_test_geometry_desc(renderer.clone(), "test_geom");
+    let desc2 = create_test_geometry_desc(graphics_device.clone(), "test_geom");
     let result = rm.create_geometry("test_geom".to_string(), desc2);
 
     assert!(result.is_err());
@@ -419,11 +419,11 @@ fn test_duplicate_geometry_fails() {
 #[test]
 fn test_multiple_geometries() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc1 = create_test_geometry_desc(renderer.clone(), "geom1");
-    let desc2 = create_test_geometry_desc(renderer.clone(), "geom2");
-    let desc3 = create_test_geometry_desc(renderer.clone(), "geom3");
+    let desc1 = create_test_geometry_desc(graphics_device.clone(), "geom1");
+    let desc2 = create_test_geometry_desc(graphics_device.clone(), "geom2");
+    let desc3 = create_test_geometry_desc(graphics_device.clone(), "geom3");
 
     rm.create_geometry("geom1".to_string(), desc1).unwrap();
     rm.create_geometry("geom2".to_string(), desc2).unwrap();
@@ -438,15 +438,15 @@ fn test_multiple_geometries() {
 #[test]
 fn test_geometry_count() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     assert_eq!(rm.geometry_count(), 0);
 
-    let desc1 = create_test_geometry_desc(renderer.clone(), "geom1");
+    let desc1 = create_test_geometry_desc(graphics_device.clone(), "geom1");
     rm.create_geometry("geom1".to_string(), desc1).unwrap();
     assert_eq!(rm.geometry_count(), 1);
 
-    let desc2 = create_test_geometry_desc(renderer.clone(), "geom2");
+    let desc2 = create_test_geometry_desc(graphics_device.clone(), "geom2");
     rm.create_geometry("geom2".to_string(), desc2).unwrap();
     assert_eq!(rm.geometry_count(), 2);
 
@@ -464,9 +464,9 @@ fn test_geometry_count() {
 #[test]
 fn test_create_pipeline() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_pipeline_desc(renderer.clone(), "test_pipeline");
+    let desc = create_test_pipeline_desc(graphics_device.clone(), "test_pipeline");
     let pipeline = rm.create_pipeline("test_pipeline".to_string(), desc).unwrap();
 
     assert_eq!(rm.pipeline_count(), 1);
@@ -476,9 +476,9 @@ fn test_create_pipeline() {
 #[test]
 fn test_get_pipeline() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_pipeline_desc(renderer.clone(), "test_pipeline");
+    let desc = create_test_pipeline_desc(graphics_device.clone(), "test_pipeline");
     rm.create_pipeline("test_pipeline".to_string(), desc).unwrap();
 
     let pipeline = rm.pipeline("test_pipeline");
@@ -495,9 +495,9 @@ fn test_get_pipeline_not_found() {
 #[test]
 fn test_remove_pipeline() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc = create_test_pipeline_desc(renderer.clone(), "test_pipeline");
+    let desc = create_test_pipeline_desc(graphics_device.clone(), "test_pipeline");
     rm.create_pipeline("test_pipeline".to_string(), desc).unwrap();
 
     assert_eq!(rm.pipeline_count(), 1);
@@ -517,12 +517,12 @@ fn test_remove_pipeline_not_found() {
 #[test]
 fn test_duplicate_pipeline_fails() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc1 = create_test_pipeline_desc(renderer.clone(), "test_pipeline");
+    let desc1 = create_test_pipeline_desc(graphics_device.clone(), "test_pipeline");
     rm.create_pipeline("test_pipeline".to_string(), desc1).unwrap();
 
-    let desc2 = create_test_pipeline_desc(renderer.clone(), "test_pipeline");
+    let desc2 = create_test_pipeline_desc(graphics_device.clone(), "test_pipeline");
     let result = rm.create_pipeline("test_pipeline".to_string(), desc2);
 
     assert!(result.is_err());
@@ -532,11 +532,11 @@ fn test_duplicate_pipeline_fails() {
 #[test]
 fn test_multiple_pipelines() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let desc1 = create_test_pipeline_desc(renderer.clone(), "pipeline1");
-    let desc2 = create_test_pipeline_desc(renderer.clone(), "pipeline2");
-    let desc3 = create_test_pipeline_desc(renderer.clone(), "pipeline3");
+    let desc1 = create_test_pipeline_desc(graphics_device.clone(), "pipeline1");
+    let desc2 = create_test_pipeline_desc(graphics_device.clone(), "pipeline2");
+    let desc3 = create_test_pipeline_desc(graphics_device.clone(), "pipeline3");
 
     rm.create_pipeline("pipeline1".to_string(), desc1).unwrap();
     rm.create_pipeline("pipeline2".to_string(), desc2).unwrap();
@@ -551,15 +551,15 @@ fn test_multiple_pipelines() {
 #[test]
 fn test_pipeline_count() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     assert_eq!(rm.pipeline_count(), 0);
 
-    let desc1 = create_test_pipeline_desc(renderer.clone(), "pipeline1");
+    let desc1 = create_test_pipeline_desc(graphics_device.clone(), "pipeline1");
     rm.create_pipeline("pipeline1".to_string(), desc1).unwrap();
     assert_eq!(rm.pipeline_count(), 1);
 
-    let desc2 = create_test_pipeline_desc(renderer.clone(), "pipeline2");
+    let desc2 = create_test_pipeline_desc(graphics_device.clone(), "pipeline2");
     rm.create_pipeline("pipeline2".to_string(), desc2).unwrap();
     assert_eq!(rm.pipeline_count(), 2);
 
@@ -577,9 +577,9 @@ fn test_pipeline_count() {
 #[test]
 fn test_create_material() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat_desc = create_test_material_desc(&pipeline);
@@ -593,9 +593,9 @@ fn test_create_material() {
 #[test]
 fn test_get_material() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat_desc = create_test_material_desc(&pipeline);
@@ -615,9 +615,9 @@ fn test_get_material_not_found() {
 #[test]
 fn test_remove_material() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat_desc = create_test_material_desc(&pipeline);
@@ -640,9 +640,9 @@ fn test_remove_material_not_found() {
 #[test]
 fn test_duplicate_material_fails() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat_desc1 = create_test_material_desc(&pipeline);
@@ -658,9 +658,9 @@ fn test_duplicate_material_fails() {
 #[test]
 fn test_material_count() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     assert_eq!(rm.material_count(), 0);
@@ -687,9 +687,9 @@ fn test_material_count() {
 #[test]
 fn test_create_mesh() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
     let mesh_desc = create_test_mesh_desc(&geometry, &material);
     let mesh = rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
@@ -701,9 +701,9 @@ fn test_create_mesh() {
 #[test]
 fn test_get_mesh() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
     let mesh_desc = create_test_mesh_desc(&geometry, &material);
     rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
@@ -722,9 +722,9 @@ fn test_get_mesh_not_found() {
 #[test]
 fn test_remove_mesh() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
     let mesh_desc = create_test_mesh_desc(&geometry, &material);
     rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
@@ -746,9 +746,9 @@ fn test_remove_mesh_not_found() {
 #[test]
 fn test_duplicate_mesh_fails() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
     let mesh_desc1 = create_test_mesh_desc(&geometry, &material);
     rm.create_mesh("hero".to_string(), mesh_desc1).unwrap();
@@ -763,9 +763,9 @@ fn test_duplicate_mesh_fails() {
 #[test]
 fn test_mesh_count() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let (geometry, material) = create_mesh_prerequisites(&mut rm, &renderer, "a");
+    let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
     assert_eq!(rm.mesh_count(), 0);
 
@@ -791,12 +791,12 @@ fn test_mesh_count() {
 #[test]
 fn test_mixed_resources() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create one of each resource type
-    let texture_desc = create_test_texture_desc(renderer.clone(), "texture", 256, 256);
-    let geom_desc = create_test_geometry_desc(renderer.clone(), "geom");
-    let pipeline_desc = create_test_pipeline_desc(renderer.clone(), "pipeline");
+    let texture_desc = create_test_texture_desc(graphics_device.clone(), "texture", 256, 256);
+    let geom_desc = create_test_geometry_desc(graphics_device.clone(), "geom");
+    let pipeline_desc = create_test_pipeline_desc(graphics_device.clone(), "pipeline");
 
     rm.create_texture("texture".to_string(), texture_desc).unwrap();
     let geometry = rm.create_geometry("geom".to_string(), geom_desc).unwrap();
@@ -824,13 +824,13 @@ fn test_mixed_resources() {
 #[test]
 fn test_clear_all_resources() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create multiple base resources
     for i in 0..3 {
-        let texture_desc = create_test_texture_desc(renderer.clone(), &format!("texture{}", i), 256, 256);
-        let geom_desc = create_test_geometry_desc(renderer.clone(), &format!("geom{}", i));
-        let pipeline_desc = create_test_pipeline_desc(renderer.clone(), &format!("pipeline{}", i));
+        let texture_desc = create_test_texture_desc(graphics_device.clone(), &format!("texture{}", i), 256, 256);
+        let geom_desc = create_test_geometry_desc(graphics_device.clone(), &format!("geom{}", i));
+        let pipeline_desc = create_test_pipeline_desc(graphics_device.clone(), &format!("pipeline{}", i));
 
         rm.create_texture(format!("texture{}", i), texture_desc).unwrap();
         rm.create_geometry(format!("geom{}", i), geom_desc).unwrap();
@@ -872,16 +872,16 @@ fn test_clear_all_resources() {
 }
 
 // ============================================================================
-// Tests: MockRenderer Verification
+// Tests: MockGraphicsDevice Verification
 // ============================================================================
 
 #[test]
-fn test_mock_renderer_tracks_buffers() {
+fn test_mock_graphics_device_tracks_buffers() {
     let mut rm = ResourceManager::new();
-    let mock = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
-    let renderer: Arc<Mutex<dyn renderer::Renderer>> = mock.clone();
+    let mock = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+    let graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>> = mock.clone();
 
-    let desc = create_test_geometry_desc(renderer.clone(), "test_geom");
+    let desc = create_test_geometry_desc(graphics_device.clone(), "test_geom");
     rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
     // Verify buffers were created
@@ -890,12 +890,12 @@ fn test_mock_renderer_tracks_buffers() {
 }
 
 #[test]
-fn test_mock_renderer_tracks_textures() {
+fn test_mock_graphics_device_tracks_textures() {
     let mut rm = ResourceManager::new();
-    let mock = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
-    let renderer: Arc<Mutex<dyn renderer::Renderer>> = mock.clone();
+    let mock = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+    let graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>> = mock.clone();
 
-    let desc = create_test_texture_desc(renderer.clone(), "test_texture", 256, 256);
+    let desc = create_test_texture_desc(graphics_device.clone(), "test_texture", 256, 256);
     rm.create_texture("test_texture".to_string(), desc).unwrap();
 
     // Verify texture was created
@@ -904,12 +904,12 @@ fn test_mock_renderer_tracks_textures() {
 }
 
 #[test]
-fn test_mock_renderer_tracks_pipelines() {
+fn test_mock_graphics_device_tracks_pipelines() {
     let mut rm = ResourceManager::new();
-    let mock = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
-    let renderer: Arc<Mutex<dyn renderer::Renderer>> = mock.clone();
+    let mock = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+    let graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>> = mock.clone();
 
-    let desc = create_test_pipeline_desc(renderer.clone(), "test_pipeline");
+    let desc = create_test_pipeline_desc(graphics_device.clone(), "test_pipeline");
     rm.create_pipeline("test_pipeline".to_string(), desc).unwrap();
 
     // Verify pipeline was created
@@ -924,20 +924,20 @@ fn test_mock_renderer_tracks_pipelines() {
 #[test]
 fn test_add_texture_layer() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create an indexed texture with 2 initial layers
     let desc = TextureDesc {
-        renderer: renderer.clone(),
-        texture: renderer::TextureDesc {
+        graphics_device: graphics_device.clone(),
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 4, // Indexed texture with 4 slots
             data: None,
-            mipmap: renderer::MipmapMode::None,
-            texture_type: renderer::TextureType::Array2D,
+            mipmap: graphics_device::MipmapMode::None,
+            texture_type: graphics_device::TextureType::Array2D,
         },
         layers: vec![
             LayerDesc {
@@ -991,10 +991,10 @@ fn test_add_texture_layer_to_nonexistent_texture() {
 #[test]
 fn test_add_texture_layer_to_simple_texture() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create a simple texture (array_layers=1)
-    let desc = create_test_texture_desc(renderer.clone(), "simple", 256, 256);
+    let desc = create_test_texture_desc(graphics_device.clone(), "simple", 256, 256);
     rm.create_texture("simple".to_string(), desc).unwrap();
 
     // Try to add a layer (should fail - simple textures can't have layers added)
@@ -1012,10 +1012,10 @@ fn test_add_texture_layer_to_simple_texture() {
 #[test]
 fn test_add_texture_region() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create a texture with one layer
-    let desc = create_test_texture_desc(renderer.clone(), "atlas", 256, 256);
+    let desc = create_test_texture_desc(graphics_device.clone(), "atlas", 256, 256);
     rm.create_texture("atlas".to_string(), desc).unwrap();
 
     // Add a region to the default layer
@@ -1054,28 +1054,28 @@ fn test_add_texture_region_to_nonexistent_texture() {
 #[test]
 fn test_add_geometry_mesh_to_existing_geometry() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create a geometry with no initial meshes
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: vec![0u8; 32], // 4 vertices * 8 bytes
         index_data: Some(vec![0u8; 12]), // 6 indices * 2 bytes
-        vertex_layout: renderer::VertexLayout {
-            bindings: vec![renderer::VertexBinding {
+        vertex_layout: graphics_device::VertexLayout {
+            bindings: vec![graphics_device::VertexBinding {
                 binding: 0,
                 stride: 8,
-                input_rate: renderer::VertexInputRate::Vertex,
+                input_rate: graphics_device::VertexInputRate::Vertex,
             }],
-            attributes: vec![renderer::VertexAttribute {
+            attributes: vec![graphics_device::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: renderer::BufferFormat::R32G32_SFLOAT,
+                format: graphics_device::BufferFormat::R32G32_SFLOAT,
                 offset: 0,
             }],
         },
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![], // No initial meshes
     };
 
@@ -1094,7 +1094,7 @@ fn test_add_geometry_mesh_to_existing_geometry() {
                         vertex_count: 4,
                         index_offset: 0,
                         index_count: 6,
-                        topology: renderer::PrimitiveTopology::TriangleList,
+                        topology: graphics_device::PrimitiveTopology::TriangleList,
                     }
                 ],
             }
@@ -1125,28 +1125,28 @@ fn test_add_geometry_mesh_to_nonexistent_geometry() {
 #[test]
 fn test_add_geometry_lod() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create a geometry with one mesh
     let desc = GeometryDesc {
         name: "geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: vec![0u8; 64], // 8 vertices * 8 bytes
         index_data: Some(vec![0u8; 24]), // 12 indices * 2 bytes
-        vertex_layout: renderer::VertexLayout {
-            bindings: vec![renderer::VertexBinding {
+        vertex_layout: graphics_device::VertexLayout {
+            bindings: vec![graphics_device::VertexBinding {
                 binding: 0,
                 stride: 8,
-                input_rate: renderer::VertexInputRate::Vertex,
+                input_rate: graphics_device::VertexInputRate::Vertex,
             }],
-            attributes: vec![renderer::VertexAttribute {
+            attributes: vec![graphics_device::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: renderer::BufferFormat::R32G32_SFLOAT,
+                format: graphics_device::BufferFormat::R32G32_SFLOAT,
                 offset: 0,
             }],
         },
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -1160,7 +1160,7 @@ fn test_add_geometry_lod() {
                                 vertex_count: 4,
                                 index_offset: 0,
                                 index_count: 6,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -1181,7 +1181,7 @@ fn test_add_geometry_lod() {
                 vertex_count: 4,
                 index_offset: 6,
                 index_count: 6,
-                topology: renderer::PrimitiveTopology::TriangleList,
+                topology: graphics_device::PrimitiveTopology::TriangleList,
             }
         ],
     };
@@ -1211,28 +1211,28 @@ fn test_add_geometry_lod_to_nonexistent_geometry() {
 #[test]
 fn test_add_geometry_submesh() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create a geometry with one mesh and one LOD
     let desc = GeometryDesc {
         name: "geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: vec![0u8; 64], // 8 vertices * 8 bytes
         index_data: Some(vec![0u8; 24]), // 12 indices * 2 bytes
-        vertex_layout: renderer::VertexLayout {
-            bindings: vec![renderer::VertexBinding {
+        vertex_layout: graphics_device::VertexLayout {
+            bindings: vec![graphics_device::VertexBinding {
                 binding: 0,
                 stride: 8,
-                input_rate: renderer::VertexInputRate::Vertex,
+                input_rate: graphics_device::VertexInputRate::Vertex,
             }],
-            attributes: vec![renderer::VertexAttribute {
+            attributes: vec![graphics_device::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: renderer::BufferFormat::R32G32_SFLOAT,
+                format: graphics_device::BufferFormat::R32G32_SFLOAT,
                 offset: 0,
             }],
         },
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -1246,7 +1246,7 @@ fn test_add_geometry_submesh() {
                                 vertex_count: 4,
                                 index_offset: 0,
                                 index_count: 6,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -1264,7 +1264,7 @@ fn test_add_geometry_submesh() {
         vertex_count: 4,
         index_offset: 6,
         index_count: 6,
-        topology: renderer::PrimitiveTopology::TriangleList,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
     let result = rm.add_geometry_submesh("geom", 0, 0, submesh);
@@ -1287,7 +1287,7 @@ fn test_add_geometry_submesh_to_nonexistent_geometry() {
         vertex_count: 4,
         index_offset: 0,
         index_count: 6,
-        topology: renderer::PrimitiveTopology::TriangleList,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
     let result = rm.add_geometry_submesh("nonexistent", 0, 0, submesh);
@@ -1297,33 +1297,33 @@ fn test_add_geometry_submesh_to_nonexistent_geometry() {
 #[test]
 fn test_add_pipeline_variant() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create a pipeline with one variant
-    let desc = create_test_pipeline_desc(renderer.clone(), "default");
+    let desc = create_test_pipeline_desc(graphics_device.clone(), "default");
     rm.create_pipeline("pipeline".to_string(), desc).unwrap();
 
     // Add another variant
     let variant = PipelineVariantDesc {
         name: "wireframe".to_string(),
         passes: vec![PipelinePassDesc {
-            pipeline: renderer::PipelineDesc {
-                vertex_shader: Arc::new(renderer::mock_renderer::MockShader::new("vert".to_string())),
-                fragment_shader: Arc::new(renderer::mock_renderer::MockShader::new("frag".to_string())),
-                vertex_layout: renderer::VertexLayout {
-                    bindings: vec![renderer::VertexBinding {
+            pipeline: graphics_device::PipelineDesc {
+                vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
+                fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
+                vertex_layout: graphics_device::VertexLayout {
+                    bindings: vec![graphics_device::VertexBinding {
                         binding: 0,
                         stride: 8,
-                        input_rate: renderer::VertexInputRate::Vertex,
+                        input_rate: graphics_device::VertexInputRate::Vertex,
                     }],
-                    attributes: vec![renderer::VertexAttribute {
+                    attributes: vec![graphics_device::VertexAttribute {
                         location: 0,
                         binding: 0,
-                        format: renderer::BufferFormat::R32G32_SFLOAT,
+                        format: graphics_device::BufferFormat::R32G32_SFLOAT,
                         offset: 0,
                     }],
                 },
-                topology: renderer::PrimitiveTopology::LineList,
+                topology: graphics_device::PrimitiveTopology::LineList,
                 push_constant_ranges: vec![],
                 binding_group_layouts: vec![],
                 rasterization: Default::default(),
@@ -1349,14 +1349,14 @@ fn test_add_pipeline_variant_to_nonexistent_pipeline() {
     let variant = PipelineVariantDesc {
         name: "variant".to_string(),
         passes: vec![PipelinePassDesc {
-            pipeline: renderer::PipelineDesc {
-                vertex_shader: Arc::new(renderer::mock_renderer::MockShader::new("vert".to_string())),
-                fragment_shader: Arc::new(renderer::mock_renderer::MockShader::new("frag".to_string())),
-                vertex_layout: renderer::VertexLayout {
+            pipeline: graphics_device::PipelineDesc {
+                vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
+                fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
+                vertex_layout: graphics_device::VertexLayout {
                     bindings: vec![],
                     attributes: vec![],
                 },
-                topology: renderer::PrimitiveTopology::TriangleList,
+                topology: graphics_device::PrimitiveTopology::TriangleList,
                 push_constant_ranges: vec![],
                 binding_group_layouts: vec![],
                 rasterization: Default::default(),
@@ -1378,9 +1378,9 @@ fn test_add_pipeline_variant_to_nonexistent_pipeline() {
 #[test]
 fn test_material_slot_id_assigned() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(&pipeline)).unwrap();
@@ -1395,9 +1395,9 @@ fn test_material_slot_id_assigned() {
 #[test]
 fn test_material_slot_recycled_after_remove() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(&pipeline)).unwrap();
@@ -1416,9 +1416,9 @@ fn test_material_slot_recycled_after_remove() {
 #[test]
 fn test_material_slot_high_water_mark() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     assert_eq!(rm.material_slot_high_water_mark(), 0);
@@ -1448,9 +1448,9 @@ fn test_material_slot_high_water_mark() {
 #[test]
 fn test_sync_materials_basic() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat_desc = MaterialDesc {
@@ -1464,7 +1464,7 @@ fn test_sync_materials_basic() {
     rm.create_material("body".to_string(), mat_desc).unwrap();
 
     let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "roughness".to_string(), field_type: FieldType::Float },
@@ -1480,9 +1480,9 @@ fn test_sync_materials_basic() {
 #[test]
 fn test_sync_materials_type_mismatch_skips() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     // Material has "roughness" as Float
@@ -1497,7 +1497,7 @@ fn test_sync_materials_type_mismatch_skips() {
 
     // Buffer has "roughness" as Vec4 (type mismatch)
     let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "roughness".to_string(), field_type: FieldType::Vec4 },
@@ -1513,9 +1513,9 @@ fn test_sync_materials_type_mismatch_skips() {
 #[test]
 fn test_sync_materials_missing_field_skips() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     // Material has "roughness" param
@@ -1530,7 +1530,7 @@ fn test_sync_materials_missing_field_skips() {
 
     // Buffer has no "roughness" field
     let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "metallic".to_string(), field_type: FieldType::Float },
@@ -1546,9 +1546,9 @@ fn test_sync_materials_missing_field_skips() {
 #[test]
 fn test_sync_materials_bool_to_uint() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     // Material has Bool param
@@ -1563,7 +1563,7 @@ fn test_sync_materials_bool_to_uint() {
 
     // Buffer has matching UInt field (Bool maps to UInt)
     let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "is_metallic".to_string(), field_type: FieldType::UInt },
@@ -1578,9 +1578,9 @@ fn test_sync_materials_bool_to_uint() {
 #[test]
 fn test_sync_materials_vec3_padding() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     // Material has Vec3 param (12 bytes raw, needs padding to 16)
@@ -1595,7 +1595,7 @@ fn test_sync_materials_vec3_padding() {
 
     // Buffer expects Vec3 field (16 bytes with padding)
     let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "normal".to_string(), field_type: FieldType::Vec3 },
@@ -1612,9 +1612,9 @@ fn test_sync_materials_vec3_padding() {
 #[test]
 fn test_sync_materials_slot_exceeds_buffer() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     // Create 3 materials → slot ids 0, 1, 2
@@ -1631,7 +1631,7 @@ fn test_sync_materials_slot_exceeds_buffer() {
 
     // Buffer only has 1 element (count=1) → slots 1 and 2 exceed
     let buffer = rm.create_buffer("material_buffer".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "roughness".to_string(), field_type: FieldType::Float },
@@ -1734,10 +1734,10 @@ fn test_param_to_padded_bytes_vec4_unchanged() {
 #[test]
 fn test_default_material_buffer_creation() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     let buffer = rm.create_default_material_buffer(
-        "material".to_string(), renderer, 4,
+        "material".to_string(), graphics_device, 4,
     );
     assert!(buffer.is_ok());
     let buffer = buffer.unwrap();
@@ -1748,10 +1748,10 @@ fn test_default_material_buffer_creation() {
 #[test]
 fn test_default_material_buffer_fields() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     let buffer = rm.create_default_material_buffer(
-        "material".to_string(), renderer, 1,
+        "material".to_string(), graphics_device, 1,
     ).unwrap();
 
     // All 14 fields must exist
@@ -1774,10 +1774,10 @@ fn test_default_material_buffer_fields() {
 #[test]
 fn test_default_material_buffer_stride() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     let buffer = rm.create_default_material_buffer(
-        "material".to_string(), renderer, 1,
+        "material".to_string(), graphics_device, 1,
     ).unwrap();
 
     // 2×Vec4(16) + 6×Float(4) + 6×UInt(4) = 32 + 24 + 24 = 80
@@ -1787,13 +1787,13 @@ fn test_default_material_buffer_stride() {
 #[test]
 fn test_default_material_buffer_defaults() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Verify that creating a buffer with multiple slots and writing all defaults
     // completes without error (MockBuffer::update is a no-op, so we can't read
     // back the values, but we can verify all update_field calls succeed)
     let buffer = rm.create_default_material_buffer(
-        "material".to_string(), renderer, 4,
+        "material".to_string(), graphics_device, 4,
     ).unwrap();
 
     assert_eq!(buffer.count(), 4);
@@ -1806,19 +1806,19 @@ fn test_default_material_buffer_defaults() {
 #[test]
 fn test_sync_materials_texture_slot_writes_layer() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create a texture with 3 layers
     let tex_desc = TextureDesc {
-        renderer: renderer.clone(),
-        texture: renderer::TextureDesc {
+        graphics_device: graphics_device.clone(),
+        texture: graphics_device::TextureDesc {
             width: 64, height: 64,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 3,
             data: None,
-            mipmap: renderer::MipmapMode::None,
-            texture_type: renderer::TextureType::Array2D,
+            mipmap: graphics_device::MipmapMode::None,
+            texture_type: graphics_device::TextureType::Array2D,
         },
         layers: vec![
             LayerDesc { name: "grass".to_string(), layer_index: 0, data: None, regions: vec![] },
@@ -1829,7 +1829,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
     let texture = rm.create_texture("atlas".to_string(), tex_desc).unwrap();
 
     // Pipeline + material with a texture slot targeting layer 2
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat_desc = MaterialDesc {
@@ -1839,7 +1839,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
             texture: texture.clone(),
             layer: Some(LayerRef::Index(2)),
             region: None,
-            sampler_type: renderer::SamplerType::LinearRepeat,
+            sampler_type: graphics_device::SamplerType::LinearRepeat,
         }],
         params: vec![],
     };
@@ -1847,7 +1847,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
 
     // Buffer with a UInt field matching the slot name
     let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::UInt },
@@ -1862,12 +1862,12 @@ fn test_sync_materials_texture_slot_writes_layer() {
 #[test]
 fn test_sync_materials_texture_slot_no_layer_writes_zero() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let tex_desc = create_test_texture_desc(renderer.clone(), "tex", 64, 64);
+    let tex_desc = create_test_texture_desc(graphics_device.clone(), "tex", 64, 64);
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     // Material with texture slot but NO layer (layer = None → writes 0)
@@ -1878,14 +1878,14 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
             texture: texture.clone(),
             layer: None,
             region: None,
-            sampler_type: renderer::SamplerType::LinearRepeat,
+            sampler_type: graphics_device::SamplerType::LinearRepeat,
         }],
         params: vec![],
     };
     rm.create_material("flat".to_string(), mat_desc).unwrap();
 
     let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::UInt },
@@ -1899,12 +1899,12 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
 #[test]
 fn test_sync_materials_texture_slot_missing_field_skips() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let tex_desc = create_test_texture_desc(renderer.clone(), "tex", 64, 64);
+    let tex_desc = create_test_texture_desc(graphics_device.clone(), "tex", 64, 64);
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat_desc = MaterialDesc {
@@ -1914,7 +1914,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
             texture: texture.clone(),
             layer: None,
             region: None,
-            sampler_type: renderer::SamplerType::LinearRepeat,
+            sampler_type: graphics_device::SamplerType::LinearRepeat,
         }],
         params: vec![],
     };
@@ -1922,7 +1922,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
 
     // Buffer has NO field named "albedoTexture" → warning, no error
     let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "roughness".to_string(), field_type: FieldType::Float },
@@ -1936,12 +1936,12 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
 #[test]
 fn test_sync_materials_texture_slot_wrong_type_skips() {
     let mut rm = ResourceManager::new();
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
-    let tex_desc = create_test_texture_desc(renderer.clone(), "tex", 64, 64);
+    let tex_desc = create_test_texture_desc(graphics_device.clone(), "tex", 64, 64);
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
-    let pipe_desc = create_test_pipeline_desc(renderer.clone(), "standard");
+    let pipe_desc = create_test_pipeline_desc(graphics_device.clone(), "standard");
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc).unwrap();
 
     let mat_desc = MaterialDesc {
@@ -1951,7 +1951,7 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
             texture: texture.clone(),
             layer: None,
             region: None,
-            sampler_type: renderer::SamplerType::LinearRepeat,
+            sampler_type: graphics_device::SamplerType::LinearRepeat,
         }],
         params: vec![],
     };
@@ -1959,7 +1959,7 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
 
     // Buffer has "albedoTexture" but as Float, not UInt → warning, no error
     let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::Float },

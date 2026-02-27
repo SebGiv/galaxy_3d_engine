@@ -1,5 +1,5 @@
 /*!
-# Galaxy 3D Engine - Vulkan Renderer Backend
+# Galaxy 3D Engine - Vulkan GraphicsDevice Backend
 
 Vulkan implementation of the Galaxy 3D rendering engine.
 
@@ -27,8 +27,8 @@ mod vulkan_frame_buffer;
 
 // Main galaxy3d namespace module
 pub mod galaxy3d {
-    // VulkanRenderer at root of galaxy3d
-    pub use crate::vulkan::VulkanRenderer;
+    // VulkanGraphicsDevice at root of galaxy3d
+    pub use crate::vulkan::VulkanGraphicsDevice;
 
     // Vulkan sub-module with all implementations
     pub mod vulkan {
@@ -53,5 +53,5 @@ pub mod galaxy3d {
 /// Register the Vulkan backend with the plugin system
 pub fn register() {
     // TODO: Implement plugin registration
-    // galaxy_3d_engine::register_renderer_plugin("vulkan", create_vulkan_renderer);
+    // galaxy_3d_engine::register_graphics_device_plugin("vulkan", create_vulkan_graphics_device);
 }

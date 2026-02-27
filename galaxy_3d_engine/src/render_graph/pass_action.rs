@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use crate::error::Result;
-use crate::renderer::{self, CommandList};
+use crate::graphics_device::{self, CommandList};
 
 /// Action executed by a render pass
 ///
@@ -22,14 +22,14 @@ pub trait PassAction: Send + Sync {
 /// triangle (3 vertices). Used for post-processing passes
 /// (bloom, blur, tone mapping, etc.).
 pub struct FullscreenAction {
-    pipeline: Arc<dyn renderer::Pipeline>,
-    binding_group: Arc<dyn renderer::BindingGroup>,
+    pipeline: Arc<dyn graphics_device::Pipeline>,
+    binding_group: Arc<dyn graphics_device::BindingGroup>,
 }
 
 impl FullscreenAction {
     pub fn new(
-        pipeline: Arc<dyn renderer::Pipeline>,
-        binding_group: Arc<dyn renderer::BindingGroup>,
+        pipeline: Arc<dyn graphics_device::Pipeline>,
+        binding_group: Arc<dyn graphics_device::BindingGroup>,
     ) -> Self {
         Self { pipeline, binding_group }
     }

@@ -1,14 +1,14 @@
 //! Unit tests for Pipeline resource
 //!
 //! Tests Pipeline, PipelineVariant, and PipelinePass hierarchy without requiring GPU.
-//! Uses MockRenderer for testing.
+//! Uses MockGraphicsDevice for testing.
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
-use crate::renderer;
+use crate::graphics_device;
 #[cfg(test)]
-use renderer::Renderer as _;
+use graphics_device::GraphicsDevice as _;
 #[cfg(test)]
 use crate::resource::{
     Pipeline, PipelineDesc, PipelineVariantDesc, PipelinePassDesc,
@@ -19,50 +19,50 @@ use crate::resource::{
 // ============================================================================
 
 /// Create a simple vertex layout for testing
-fn create_simple_vertex_layout() -> renderer::VertexLayout {
-    renderer::VertexLayout {
+fn create_simple_vertex_layout() -> graphics_device::VertexLayout {
+    graphics_device::VertexLayout {
         bindings: vec![
-            renderer::VertexBinding {
+            graphics_device::VertexBinding {
                 binding: 0,
                 stride: 8,
-                input_rate: renderer::VertexInputRate::Vertex,
+                input_rate: graphics_device::VertexInputRate::Vertex,
             }
         ],
         attributes: vec![
-            renderer::VertexAttribute {
+            graphics_device::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: renderer::BufferFormat::R32G32_SFLOAT,
+                format: graphics_device::BufferFormat::R32G32_SFLOAT,
                 offset: 0,
             }
         ],
     }
 }
 
-/// Create a mock renderer::PipelineDesc for testing
-fn create_mock_render_pipeline_desc() -> renderer::PipelineDesc {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
-    let mut renderer_lock = renderer.lock().unwrap();
+/// Create a mock graphics_device::PipelineDesc for testing
+fn create_mock_render_pipeline_desc() -> graphics_device::PipelineDesc {
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+    let mut graphics_device_lock = graphics_device.lock().unwrap();
 
-    let vertex_shader = renderer_lock.create_shader(renderer::ShaderDesc {
-        stage: renderer::ShaderStage::Vertex,
+    let vertex_shader = graphics_device_lock.create_shader(graphics_device::ShaderDesc {
+        stage: graphics_device::ShaderStage::Vertex,
         entry_point: "main".to_string(),
         code: &[],
     }).unwrap();
 
-    let fragment_shader = renderer_lock.create_shader(renderer::ShaderDesc {
-        stage: renderer::ShaderStage::Fragment,
+    let fragment_shader = graphics_device_lock.create_shader(graphics_device::ShaderDesc {
+        stage: graphics_device::ShaderStage::Fragment,
         entry_point: "main".to_string(),
         code: &[],
     }).unwrap();
 
-    drop(renderer_lock);
+    drop(graphics_device_lock);
 
-    renderer::PipelineDesc {
+    graphics_device::PipelineDesc {
         vertex_shader,
         fragment_shader,
         vertex_layout: create_simple_vertex_layout(),
-        topology: renderer::PrimitiveTopology::TriangleList,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
         push_constant_ranges: vec![],
         binding_group_layouts: vec![],
         rasterization: Default::default(),
@@ -104,10 +104,10 @@ fn create_multi_pass_variant(name: &str, pass_count: usize) -> PipelineVariantDe
 
 #[test]
 fn test_create_pipeline_single_variant_single_pass() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_single_pass_variant("default")],
     };
 
@@ -121,10 +121,10 @@ fn test_create_pipeline_single_variant_single_pass() {
 
 #[test]
 fn test_create_pipeline_multiple_variants() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             create_single_pass_variant("static"),
             create_single_pass_variant("animated"),
@@ -142,10 +142,10 @@ fn test_create_pipeline_multiple_variants() {
 
 #[test]
 fn test_create_pipeline_multi_pass_variant() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_multi_pass_variant("toon_outline", 2)],
     };
 
@@ -162,10 +162,10 @@ fn test_create_pipeline_multi_pass_variant() {
 
 #[test]
 fn test_create_pipeline_mixed_pass_counts() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             create_single_pass_variant("standard"),     // 1 pass
             create_multi_pass_variant("toon", 2),       // 2 passes
@@ -186,10 +186,10 @@ fn test_create_pipeline_mixed_pass_counts() {
 
 #[test]
 fn test_create_pipeline_duplicate_variant_names_fails() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             create_single_pass_variant("default"),
             create_single_pass_variant("default"), // DUPLICATE!
@@ -206,10 +206,10 @@ fn test_create_pipeline_duplicate_variant_names_fails() {
 
 #[test]
 fn test_create_pipeline_empty_passes_fails() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             PipelineVariantDesc {
                 name: "empty".to_string(),
@@ -228,10 +228,10 @@ fn test_create_pipeline_empty_passes_fails() {
 
 #[test]
 fn test_add_variant_duplicate_name_fails() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_single_pass_variant("default")],
     };
 
@@ -247,10 +247,10 @@ fn test_add_variant_duplicate_name_fails() {
 
 #[test]
 fn test_add_variant_empty_passes_fails() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_single_pass_variant("default")],
     };
 
@@ -273,10 +273,10 @@ fn test_add_variant_empty_passes_fails() {
 
 #[test]
 fn test_variant_by_name_found() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             create_single_pass_variant("alpha"),
             create_single_pass_variant("beta"),
@@ -292,10 +292,10 @@ fn test_variant_by_name_found() {
 
 #[test]
 fn test_variant_by_name_not_found() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_single_pass_variant("alpha")],
     };
 
@@ -307,10 +307,10 @@ fn test_variant_by_name_not_found() {
 
 #[test]
 fn test_variant_by_index_found() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             create_single_pass_variant("first"),
             create_single_pass_variant("second"),
@@ -327,10 +327,10 @@ fn test_variant_by_index_found() {
 
 #[test]
 fn test_variant_by_index_out_of_bounds() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_single_pass_variant("only")],
     };
 
@@ -343,10 +343,10 @@ fn test_variant_by_index_out_of_bounds() {
 
 #[test]
 fn test_variant_index_from_name() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             create_single_pass_variant("zero"),
             create_single_pass_variant("one"),
@@ -368,10 +368,10 @@ fn test_variant_index_from_name() {
 
 #[test]
 fn test_pass_by_index() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_multi_pass_variant("toon", 3)],
     };
 
@@ -386,11 +386,11 @@ fn test_pass_by_index() {
 }
 
 #[test]
-fn test_pass_renderer_pipeline_getter() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+fn test_pass_graphics_device_pipeline_getter() {
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_multi_pass_variant("toon", 2)],
     };
 
@@ -400,12 +400,12 @@ fn test_pass_renderer_pipeline_getter() {
     let pass_0 = variant.pass(0).unwrap();
     let pass_1 = variant.pass(1).unwrap();
 
-    // Both passes should have valid renderer pipelines
-    assert!(Arc::strong_count(pass_0.renderer_pipeline()) >= 1);
-    assert!(Arc::strong_count(pass_1.renderer_pipeline()) >= 1);
+    // Both passes should have valid graphics_device pipelines
+    assert!(Arc::strong_count(pass_0.graphics_device_pipeline()) >= 1);
+    assert!(Arc::strong_count(pass_1.graphics_device_pipeline()) >= 1);
 
-    // Passes should have different renderer pipelines
-    assert!(!Arc::ptr_eq(pass_0.renderer_pipeline(), pass_1.renderer_pipeline()));
+    // Passes should have different graphics_device pipelines
+    assert!(!Arc::ptr_eq(pass_0.graphics_device_pipeline(), pass_1.graphics_device_pipeline()));
 }
 
 // ============================================================================
@@ -414,10 +414,10 @@ fn test_pass_renderer_pipeline_getter() {
 
 #[test]
 fn test_max_pass_count_single_variant() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_multi_pass_variant("toon", 3)],
     };
 
@@ -427,10 +427,10 @@ fn test_max_pass_count_single_variant() {
 
 #[test]
 fn test_max_pass_count_mixed_variants() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             create_single_pass_variant("standard"),     // 1 pass
             create_multi_pass_variant("toon", 2),       // 2 passes
@@ -444,10 +444,10 @@ fn test_max_pass_count_mixed_variants() {
 
 #[test]
 fn test_max_pass_count_empty_pipeline() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![],
     };
 
@@ -461,10 +461,10 @@ fn test_max_pass_count_empty_pipeline() {
 
 #[test]
 fn test_variant_names_case_sensitive() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![
             create_single_pass_variant("Default"),
             create_single_pass_variant("default"), // Different case
@@ -480,10 +480,10 @@ fn test_variant_names_case_sensitive() {
 
 #[test]
 fn test_add_variant_increases_count() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_single_pass_variant("initial")],
     };
 
@@ -501,10 +501,10 @@ fn test_add_variant_increases_count() {
 
 #[test]
 fn test_add_multi_pass_variant() {
-    let renderer = Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()));
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
 
     let desc = PipelineDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         variants: vec![create_single_pass_variant("standard")],
     };
 

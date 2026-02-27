@@ -9,7 +9,7 @@ use slotmap::SlotMap;
 use glam::Mat4;
 use crate::error::Result;
 use crate::engine_err;
-use crate::renderer::{self, BindingGroup, BindingResource};
+use crate::graphics_device::{self, BindingGroup, BindingResource};
 use crate::resource::buffer::Buffer;
 use crate::resource::mesh::Mesh;
 use crate::utils::SlotAllocator;
@@ -21,10 +21,10 @@ use super::render_instance::{
 ///
 /// Instances are managed via stable keys (RenderInstanceKey).
 /// Keys remain valid even after other instances are removed.
-/// The scene holds a reference to the Renderer for creating GPU binding groups.
+/// The scene holds a reference to the GraphicsDevice for creating GPU binding groups.
 pub struct Scene {
-    /// Renderer for creating GPU resources (binding groups)
-    renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    /// Graphics device for creating GPU resources (binding groups)
+    graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     /// Render instances stored in a slot map for O(1) insert/remove
     render_instances: SlotMap<RenderInstanceKey, RenderInstance>,
     /// Allocator for unique draw slot indices (one per submesh in the GPU scene SSBO)
@@ -48,18 +48,18 @@ impl Scene {
     ///
     /// # Arguments
     ///
-    /// * `renderer` - Renderer for creating GPU resources
+    /// * `graphics_device` - GraphicsDevice for creating GPU resources
     /// * `frame_buffer` - Per-frame uniform buffer (camera, lighting, time)
     /// * `instance_buffer` - Per-instance storage buffer (world matrices, flags)
     /// * `material_buffer` - Material storage buffer (shared material parameters)
     pub(crate) fn new(
-        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         frame_buffer: Arc<Buffer>,
         instance_buffer: Arc<Buffer>,
         material_buffer: Arc<Buffer>,
     ) -> Self {
         Self {
-            renderer,
+            graphics_device,
             render_instances: SlotMap::with_key(),
             draw_slot_allocator: SlotAllocator::new(),
             frame_buffer,
@@ -213,14 +213,14 @@ impl Scene {
             .ok_or_else(|| engine_err!("galaxy3d::Scene",
                 "Pipeline variant has no passes"))?;
 
-        let renderer_lock = self.renderer.lock().unwrap();
-        let bg = renderer_lock.create_binding_group(
-            pass.renderer_pipeline(),
+        let graphics_device_lock = self.graphics_device.lock().unwrap();
+        let bg = graphics_device_lock.create_binding_group(
+            pass.graphics_device_pipeline(),
             0,
             &[
-                BindingResource::UniformBuffer(self.frame_buffer.renderer_buffer().as_ref()),
-                BindingResource::StorageBuffer(self.instance_buffer.renderer_buffer().as_ref()),
-                BindingResource::StorageBuffer(self.material_buffer.renderer_buffer().as_ref()),
+                BindingResource::UniformBuffer(self.frame_buffer.graphics_device_buffer().as_ref()),
+                BindingResource::StorageBuffer(self.instance_buffer.graphics_device_buffer().as_ref()),
+                BindingResource::StorageBuffer(self.material_buffer.graphics_device_buffer().as_ref()),
             ],
         )?;
 

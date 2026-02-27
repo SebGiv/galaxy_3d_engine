@@ -1,4 +1,4 @@
-/// BindingGroup - Vulkan implementation of renderer::BindingGroup trait
+/// BindingGroup - Vulkan implementation of graphics_device::BindingGroup trait
 
 use galaxy_3d_engine::galaxy3d::render::BindingGroup as RendererBindingGroup;
 use ash::vk;

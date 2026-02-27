@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail};
-use crate::renderer;
+use crate::graphics_device;
 use crate::resource::buffer::Buffer;
 use super::scene::Scene;
 
@@ -34,7 +34,7 @@ impl SceneManager {
     /// # Arguments
     ///
     /// * `name` - Unique scene name
-    /// * `renderer` - Renderer for creating GPU resources
+    /// * `graphics_device` - GraphicsDevice for creating GPU resources
     /// * `frame_buffer` - Per-frame uniform buffer (camera, lighting, time)
     /// * `instance_buffer` - Per-instance storage buffer (world matrices, flags)
     /// * `material_buffer` - Material storage buffer (shared material parameters)
@@ -45,7 +45,7 @@ impl SceneManager {
     pub fn create_scene(
         &mut self,
         name: &str,
-        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         frame_buffer: Arc<Buffer>,
         instance_buffer: Arc<Buffer>,
         material_buffer: Arc<Buffer>,
@@ -56,7 +56,7 @@ impl SceneManager {
         }
 
         let scene = Arc::new(Mutex::new(Scene::new(
-            renderer, frame_buffer, instance_buffer, material_buffer,
+            graphics_device, frame_buffer, instance_buffer, material_buffer,
         )));
         self.scenes.insert(name.to_string(), Arc::clone(&scene));
         Ok(scene)

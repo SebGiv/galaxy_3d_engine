@@ -7,12 +7,12 @@
 /// attachments change (e.g., window resize).
 
 use std::sync::Arc;
-use crate::renderer::{RenderPass, RenderTarget};
+use crate::graphics_device::{RenderPass, RenderTarget};
 
 /// Framebuffer — groups color and depth/stencil attachments together
 ///
 /// Represents the set of render target views that a render pass renders into.
-/// Created via `Renderer::create_framebuffer()`.
+/// Created via `GraphicsDevice::create_framebuffer()`.
 pub trait Framebuffer: Send + Sync {
     /// Get the width in pixels
     fn width(&self) -> u32;

@@ -1,7 +1,7 @@
 /// Render instance types for the scene system.
 ///
 /// A RenderInstance is a flattened, GPU-ready representation of a resource::Mesh.
-/// It extracts all renderer-level objects (buffers, pipelines, binding groups)
+/// It extracts all graphics_device-level objects (buffers, pipelines, binding groups)
 /// from the resource hierarchy into a flat structure optimized for rendering.
 
 use std::sync::Arc;
@@ -9,10 +9,10 @@ use glam::{Vec3, Mat4};
 use slotmap::new_key_type;
 use crate::error::Result;
 use crate::engine_err;
-use crate::renderer::{
+use crate::graphics_device::{
     self,
     Buffer,
-    Pipeline as RendererPipeline,
+    Pipeline as GraphicsDevicePipeline,
     BindingGroup,
     PrimitiveTopology,
 };
@@ -60,8 +60,8 @@ pub const FLAG_RECEIVE_SHADOW: u64 = 1 << 2;
 /// Contains a pipeline and texture binding groups (Sets 1+).
 /// The global binding group (Set 0) is owned by Scene and shared across all instances.
 pub struct RenderPass {
-    /// The renderer pipeline for this pass
-    pipeline: Arc<dyn RendererPipeline>,
+    /// The graphics_device pipeline for this pass
+    pipeline: Arc<dyn GraphicsDevicePipeline>,
     /// Sets 1+: texture bindings (Arc clones from Material, shared across instances)
     texture_binding_groups: Vec<Arc<dyn BindingGroup>>,
 }
@@ -105,7 +105,7 @@ pub struct RenderLOD {
 
 /// A flattened, GPU-ready renderable object.
 ///
-/// Created from a resource::Mesh, it contains all renderer-level references
+/// Created from a resource::Mesh, it contains all graphics_device-level references
 /// needed to issue draw calls without traversing the resource hierarchy.
 pub struct RenderInstance {
     /// Shared vertex buffer (from Geometry)
@@ -113,7 +113,7 @@ pub struct RenderInstance {
     /// Shared index buffer (from Geometry, None for non-indexed)
     index_buffer: Option<Arc<dyn Buffer>>,
     /// Index type (U16 or U32), only meaningful if index_buffer is Some
-    index_type: renderer::IndexType,
+    index_type: graphics_device::IndexType,
     /// LOD levels (index 0 = most detailed)
     lods: Vec<RenderLOD>,
     /// World transform matrix (pre-computed by game engine)
@@ -131,7 +131,7 @@ pub struct RenderInstance {
 impl RenderInstance {
     /// Create a RenderInstance from a resource::Mesh
     ///
-    /// Extracts all renderer-level objects from the resource hierarchy
+    /// Extracts all graphics_device-level objects from the resource hierarchy
     /// into a flat structure optimized for rendering. Resolves binding groups
     /// and push constants against pipeline reflection data.
     ///
@@ -141,7 +141,7 @@ impl RenderInstance {
     /// * `world_matrix` - World transform matrix
     /// * `bounding_box` - AABB in local space
     /// * `variant_index` - Pipeline variant to use (0 = default)
-    /// * `renderer` - Renderer for creating binding groups
+    /// * `graphics_device` - GraphicsDevice for creating binding groups
     pub(crate) fn from_mesh(
         mesh: &Mesh,
         world_matrix: Mat4,
@@ -198,7 +198,7 @@ impl RenderInstance {
                             "Pass index {} out of range in variant {}",
                             pass_idx, variant_index))?;
 
-                    let renderer_pipeline = pass.renderer_pipeline();
+                    let graphics_device_pipeline = pass.graphics_device_pipeline();
 
                     // Sets 1+: texture bindings (shared from Material)
                     let texture_bgs = material.texture_binding_groups(
@@ -206,7 +206,7 @@ impl RenderInstance {
                     ).unwrap_or(&[]).to_vec();
 
                     passes.push(RenderPass {
-                        pipeline: Arc::clone(renderer_pipeline),
+                        pipeline: Arc::clone(graphics_device_pipeline),
                         texture_binding_groups: texture_bgs,
                     });
                 }
@@ -251,7 +251,7 @@ impl RenderInstance {
     }
 
     /// Get the index type (U16 or U32, only meaningful if indexed)
-    pub fn index_type(&self) -> renderer::IndexType {
+    pub fn index_type(&self) -> graphics_device::IndexType {
         self.index_type
     }
 
@@ -382,8 +382,8 @@ impl RenderSubMesh {
 // ===== RENDER PASS ACCESSORS =====
 
 impl RenderPass {
-    /// Get the renderer pipeline
-    pub fn pipeline(&self) -> &Arc<dyn RendererPipeline> {
+    /// Get the graphics_device pipeline
+    pub fn pipeline(&self) -> &Arc<dyn GraphicsDevicePipeline> {
         &self.pipeline
     }
 

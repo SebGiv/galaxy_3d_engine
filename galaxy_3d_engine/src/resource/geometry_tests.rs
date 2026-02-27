@@ -1,12 +1,12 @@
 /// Unit tests for geometry.rs
 ///
 /// Tests the Geometry, GeometryMesh, GeometryLOD, and GeometrySubMesh hierarchy without requiring GPU.
-/// Uses MockRenderer for testing.
+/// Uses MockGraphicsDevice for testing.
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
-use crate::renderer;
+use crate::graphics_device;
 #[cfg(test)]
 use crate::resource::{
     Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc, GeometrySubMesh,
@@ -16,27 +16,27 @@ use crate::resource::{
 // HELPER FUNCTIONS
 // ============================================================================
 
-/// Create a mock renderer for testing
-fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
-    let renderer = renderer::mock_renderer::MockRenderer::new();
-    Arc::new(Mutex::new(renderer))
+/// Create a mock graphics_device for testing
+fn create_mock_graphics_device() -> Arc<Mutex<dyn graphics_device::GraphicsDevice>> {
+    let graphics_device = graphics_device::mock_graphics_device::MockGraphicsDevice::new();
+    Arc::new(Mutex::new(graphics_device))
 }
 
 /// Create a simple vertex layout (Position2D)
-fn create_simple_vertex_layout() -> renderer::VertexLayout {
-    renderer::VertexLayout {
+fn create_simple_vertex_layout() -> graphics_device::VertexLayout {
+    graphics_device::VertexLayout {
         bindings: vec![
-            renderer::VertexBinding {
+            graphics_device::VertexBinding {
                 binding: 0,
                 stride: 8, // 2 floats (x, y) = 8 bytes
-                input_rate: renderer::VertexInputRate::Vertex,
+                input_rate: graphics_device::VertexInputRate::Vertex,
             }
         ],
         attributes: vec![
-            renderer::VertexAttribute {
+            graphics_device::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: renderer::BufferFormat::R32G32_SFLOAT, // vec2 of floats
+                format: graphics_device::BufferFormat::R32G32_SFLOAT, // vec2 of floats
                 offset: 0,
             }
         ],
@@ -78,7 +78,7 @@ fn create_simple_submesh_desc() -> GeometrySubMeshDesc {
         vertex_count: 4,
         index_offset: 0,
         index_count: 6,
-        topology: renderer::PrimitiveTopology::TriangleList,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
     }
 }
 
@@ -88,14 +88,14 @@ fn create_simple_submesh_desc() -> GeometrySubMeshDesc {
 
 #[test]
 fn test_create_geometry_indexed() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![],
     };
 
@@ -105,19 +105,19 @@ fn test_create_geometry_indexed() {
     assert_eq!(geom.total_vertex_count(), 4);
     assert_eq!(geom.total_index_count(), 6);
     assert!(geom.is_indexed());
-    assert_eq!(geom.index_type(), renderer::IndexType::U16);
+    assert_eq!(geom.index_type(), graphics_device::IndexType::U16);
 }
 
 #[test]
 fn test_create_geometry_non_indexed() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: None, // Non-indexed
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![],
     };
 
@@ -132,14 +132,14 @@ fn test_create_geometry_non_indexed() {
 
 #[test]
 fn test_create_geometry_with_mesh() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -161,14 +161,14 @@ fn test_create_geometry_with_mesh() {
 
 #[test]
 fn test_create_geometry_invalid_vertex_stride() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: vec![1, 2, 3], // 3 bytes, not divisible by stride 8
         index_data: None,
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![],
     };
 
@@ -178,14 +178,14 @@ fn test_create_geometry_invalid_vertex_stride() {
 
 #[test]
 fn test_create_geometry_invalid_index_stride() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(vec![1, 2, 3]), // 3 bytes, not divisible by u16 size (2)
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![],
     };
 
@@ -199,14 +199,14 @@ fn test_create_geometry_invalid_index_stride() {
 
 #[test]
 fn test_add_mesh() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![],
     };
 
@@ -231,14 +231,14 @@ fn test_add_mesh() {
 
 #[test]
 fn test_get_mesh_by_name() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -258,14 +258,14 @@ fn test_get_mesh_by_name() {
 
 #[test]
 fn test_get_mesh_by_id() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -285,14 +285,14 @@ fn test_get_mesh_by_id() {
 
 #[test]
 fn test_add_duplicate_mesh() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -318,14 +318,14 @@ fn test_add_duplicate_mesh() {
 
 #[test]
 fn test_add_lod() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -352,14 +352,14 @@ fn test_add_lod() {
 
 #[test]
 fn test_multiple_lods() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -397,21 +397,21 @@ fn test_submesh_accessors() {
         vertex_count: 20,
         index_offset: 5,
         index_count: 30,
-        topology: renderer::PrimitiveTopology::TriangleStrip,
+        topology: graphics_device::PrimitiveTopology::TriangleStrip,
     };
 
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     // Create geometry with enough vertices/indices to accommodate submesh
     let vertex_data = vec![0u8; 30 * 8]; // 30 vertices * 8 bytes stride
     let index_data = vec![0u8; 35 * 2]; // 35 indices * 2 bytes (u16)
 
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data,
         index_data: Some(index_data),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -433,19 +433,19 @@ fn test_submesh_accessors() {
     assert_eq!(submesh.vertex_count(), 20);
     assert_eq!(submesh.index_offset(), 5);
     assert_eq!(submesh.index_count(), 30);
-    assert_eq!(submesh.topology(), renderer::PrimitiveTopology::TriangleStrip);
+    assert_eq!(submesh.topology(), graphics_device::PrimitiveTopology::TriangleStrip);
 }
 
 #[test]
 fn test_add_submesh() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -467,7 +467,7 @@ fn test_add_submesh() {
         vertex_count: 4,
         index_offset: 0,
         index_count: 6,
-        topology: renderer::PrimitiveTopology::TriangleList,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
     let mesh_id = geom.mesh_id("hero").unwrap();
@@ -482,14 +482,14 @@ fn test_add_submesh() {
 
 #[test]
 fn test_submesh_validation_vertex_overflow() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(), // 4 vertices
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![],
     };
 
@@ -507,7 +507,7 @@ fn test_submesh_validation_vertex_overflow() {
                         vertex_count: 10, // Exceeds total_vertex_count (4)
                         index_offset: 0,
                         index_count: 6,
-                        topology: renderer::PrimitiveTopology::TriangleList,
+                        topology: graphics_device::PrimitiveTopology::TriangleList,
                     }
                 ],
             }
@@ -520,14 +520,14 @@ fn test_submesh_validation_vertex_overflow() {
 
 #[test]
 fn test_submesh_validation_index_overflow() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()), // 6 indices
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![],
     };
 
@@ -545,7 +545,7 @@ fn test_submesh_validation_index_overflow() {
                         vertex_count: 4,
                         index_offset: 0,
                         index_count: 20, // Exceeds total_index_count (6)
-                        topology: renderer::PrimitiveTopology::TriangleList,
+                        topology: graphics_device::PrimitiveTopology::TriangleList,
                     }
                 ],
             }
@@ -562,14 +562,14 @@ fn test_submesh_validation_index_overflow() {
 
 #[test]
 fn test_submesh_lookup_by_name() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -583,7 +583,7 @@ fn test_submesh_lookup_by_name() {
                                 vertex_count: 4,
                                 index_offset: 0,
                                 index_count: 6,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -609,14 +609,14 @@ fn test_submesh_lookup_by_name() {
 
 #[test]
 fn test_multiple_submeshes_in_lod() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -630,7 +630,7 @@ fn test_multiple_submeshes_in_lod() {
                                 vertex_count: 2,
                                 index_offset: 0,
                                 index_count: 3,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "armor".to_string(),
@@ -638,7 +638,7 @@ fn test_multiple_submeshes_in_lod() {
                                 vertex_count: 2,
                                 index_offset: 3,
                                 index_count: 3,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -663,7 +663,7 @@ fn test_multiple_submeshes_in_lod() {
 
 #[test]
 fn test_complex_geometry_hierarchy() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // Create a large buffer to accommodate multiple meshes
     let vertex_data = vec![0u8; 100 * 8]; // 100 vertices
@@ -671,11 +671,11 @@ fn test_complex_geometry_hierarchy() {
 
     let desc = GeometryDesc {
         name: "characters".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data,
         index_data: Some(index_data),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -689,7 +689,7 @@ fn test_complex_geometry_hierarchy() {
                                 vertex_count: 10,
                                 index_offset: 0,
                                 index_count: 15,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "armor".to_string(),
@@ -697,7 +697,7 @@ fn test_complex_geometry_hierarchy() {
                                 vertex_count: 5,
                                 index_offset: 15,
                                 index_count: 9,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     },
@@ -710,7 +710,7 @@ fn test_complex_geometry_hierarchy() {
                                 vertex_count: 8,
                                 index_offset: 0,
                                 index_count: 12,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     },
@@ -728,7 +728,7 @@ fn test_complex_geometry_hierarchy() {
                                 vertex_count: 12,
                                 index_offset: 30,
                                 index_count: 18,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -767,21 +767,21 @@ fn test_complex_geometry_hierarchy() {
 
 #[test]
 fn test_geometry_getters() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![],
     };
 
     let geom = Geometry::from_desc(desc).unwrap();
 
-    // Test renderer()
-    assert!(Arc::ptr_eq(&geom.renderer(), &renderer));
+    // Test graphics_device()
+    assert!(Arc::ptr_eq(&geom.graphics_device(), &graphics_device));
 
     // Test vertex_buffer()
     let vb = geom.vertex_buffer();
@@ -801,14 +801,14 @@ fn test_geometry_getters() {
 
 #[test]
 fn test_submesh_by_id() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -822,7 +822,7 @@ fn test_submesh_by_id() {
                                 vertex_count: 2,
                                 index_offset: 0,
                                 index_count: 3,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "armor".to_string(),
@@ -830,7 +830,7 @@ fn test_submesh_by_id() {
                                 vertex_count: 2,
                                 index_offset: 3,
                                 index_count: 3,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }
@@ -869,14 +869,14 @@ fn test_submesh_by_id() {
 
 #[test]
 fn test_submeshes_iterator() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
-        index_type: renderer::IndexType::U16,
+        index_type: graphics_device::IndexType::U16,
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
@@ -890,7 +890,7 @@ fn test_submeshes_iterator() {
                                 vertex_count: 2,
                                 index_offset: 0,
                                 index_count: 3,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "armor".to_string(),
@@ -898,7 +898,7 @@ fn test_submeshes_iterator() {
                                 vertex_count: 2,
                                 index_offset: 3,
                                 index_count: 3,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             },
                             GeometrySubMeshDesc {
                                 name: "weapon".to_string(),
@@ -906,7 +906,7 @@ fn test_submeshes_iterator() {
                                 vertex_count: 4,
                                 index_offset: 0,
                                 index_count: 6,
-                                topology: renderer::PrimitiveTopology::TriangleList,
+                                topology: graphics_device::PrimitiveTopology::TriangleList,
                             }
                         ],
                     }

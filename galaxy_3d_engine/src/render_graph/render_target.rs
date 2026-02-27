@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 use crate::error::Result;
-use crate::renderer;
+use crate::graphics_device;
 use crate::resource;
 
 /// Per-target load/store/clear configuration.
@@ -27,9 +27,9 @@ pub enum TargetOps {
         /// Clear color (RGBA), default: opaque black
         clear_color: [f32; 4],
         /// Load operation, default: Clear
-        load_op: renderer::LoadOp,
+        load_op: graphics_device::LoadOp,
         /// Store operation, default: Store
-        store_op: renderer::StoreOp,
+        store_op: graphics_device::StoreOp,
     },
     /// Configuration for depth/stencil attachments
     DepthStencil {
@@ -38,13 +38,13 @@ pub enum TargetOps {
         /// Stencil clear value, default: 0
         stencil_clear: u32,
         /// Depth load operation, default: Clear
-        depth_load_op: renderer::LoadOp,
+        depth_load_op: graphics_device::LoadOp,
         /// Depth store operation, default: DontCare
-        depth_store_op: renderer::StoreOp,
+        depth_store_op: graphics_device::StoreOp,
         /// Stencil load operation, default: DontCare
-        stencil_load_op: renderer::LoadOp,
+        stencil_load_op: graphics_device::LoadOp,
         /// Stencil store operation, default: DontCare
-        stencil_store_op: renderer::StoreOp,
+        stencil_store_op: graphics_device::StoreOp,
     },
 }
 
@@ -53,8 +53,8 @@ impl TargetOps {
     pub fn default_color() -> Self {
         Self::Color {
             clear_color: [0.0, 0.0, 0.0, 1.0],
-            load_op: renderer::LoadOp::Clear,
-            store_op: renderer::StoreOp::Store,
+            load_op: graphics_device::LoadOp::Clear,
+            store_op: graphics_device::StoreOp::Store,
         }
     }
 
@@ -63,10 +63,10 @@ impl TargetOps {
         Self::DepthStencil {
             depth_clear: 1.0,
             stencil_clear: 0,
-            depth_load_op: renderer::LoadOp::Clear,
-            depth_store_op: renderer::StoreOp::DontCare,
-            stencil_load_op: renderer::LoadOp::DontCare,
-            stencil_store_op: renderer::StoreOp::DontCare,
+            depth_load_op: graphics_device::LoadOp::Clear,
+            depth_store_op: graphics_device::StoreOp::DontCare,
+            stencil_load_op: graphics_device::LoadOp::DontCare,
+            stencil_store_op: graphics_device::StoreOp::DontCare,
         }
     }
 }
@@ -79,7 +79,7 @@ pub struct RenderTarget {
     /// Mip level (0 for full resolution)
     mip_level: u32,
     /// Resolved GPU render target (image view targeting this layer/mip)
-    renderer_render_target: Arc<dyn renderer::RenderTarget>,
+    graphics_device_render_target: Arc<dyn graphics_device::RenderTarget>,
     /// Pass index that writes to this target (at most one)
     written_by: Option<usize>,
     /// Per-target load/store/clear configuration
@@ -91,18 +91,18 @@ impl RenderTarget {
         texture: Arc<resource::Texture>,
         layer: u32,
         mip_level: u32,
-        renderer: &dyn renderer::Renderer,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
-        let renderer_render_target = renderer.create_render_target_texture(
-            texture.renderer_texture().as_ref(),
+        let graphics_device_render_target = graphics_device.create_render_target_texture(
+            texture.graphics_device_texture().as_ref(),
             layer,
             mip_level,
         )?;
 
         // Auto-detect ops from texture usage
-        let usage = texture.renderer_texture().info().usage;
+        let usage = texture.graphics_device_texture().info().usage;
         let ops = match usage {
-            renderer::TextureUsage::DepthStencil => TargetOps::default_depth_stencil(),
+            graphics_device::TextureUsage::DepthStencil => TargetOps::default_depth_stencil(),
             _ => TargetOps::default_color(),
         };
 
@@ -110,7 +110,7 @@ impl RenderTarget {
             texture,
             layer,
             mip_level,
-            renderer_render_target,
+            graphics_device_render_target,
             written_by: None,
             ops,
         })
@@ -132,8 +132,8 @@ impl RenderTarget {
     }
 
     /// Get the resolved GPU render target
-    pub fn renderer_render_target(&self) -> &Arc<dyn renderer::RenderTarget> {
-        &self.renderer_render_target
+    pub fn graphics_device_render_target(&self) -> &Arc<dyn graphics_device::RenderTarget> {
+        &self.graphics_device_render_target
     }
 
     /// Get the pass index that writes to this target

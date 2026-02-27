@@ -4,7 +4,7 @@
 //! for all vertex attribute and index buffer formats.
 
 #[cfg(test)]
-use crate::renderer::BufferFormat;
+use crate::graphics_device::BufferFormat;
 
 // ============================================================================
 // FLOAT FORMATS

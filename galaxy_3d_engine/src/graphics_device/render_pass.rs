@@ -1,6 +1,6 @@
 /// RenderPass trait - describes how to configure a render pass
 
-use crate::renderer::TextureFormat;
+use crate::graphics_device::TextureFormat;
 
 /// Render pass trait
 ///

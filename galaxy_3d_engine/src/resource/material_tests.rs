@@ -1,10 +1,10 @@
 /// Tests for Material resource
 ///
-/// These tests use MockRenderer to create real Texture and Pipeline resources,
+/// These tests use MockGraphicsDevice to create real Texture and Pipeline resources,
 /// then validate Material creation, LayerRef/RegionRef resolution, and error handling.
 
 use super::*;
-use crate::renderer::{self, SamplerType};
+use crate::graphics_device::{self, SamplerType};
 use crate::resource::texture::{TextureDesc, LayerDesc, AtlasRegion, AtlasRegionDesc};
 use crate::resource::pipeline::{PipelineDesc, PipelineVariantDesc, PipelinePassDesc};
 use std::sync::{Arc, Mutex};
@@ -13,24 +13,24 @@ use std::sync::{Arc, Mutex};
 // Helper Functions
 // ============================================================================
 
-/// Create a MockRenderer wrapped in Arc<Mutex<>>
-fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
-    Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()))
+/// Create a MockGraphicsDevice wrapped in Arc<Mutex<>>
+fn create_mock_graphics_device() -> Arc<Mutex<dyn graphics_device::GraphicsDevice>> {
+    Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()))
 }
 
 /// Create a simple texture (1 layer, no regions)
-fn create_simple_texture(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Texture> {
+fn create_simple_texture(graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>) -> Arc<Texture> {
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            usage: renderer::TextureUsage::Sampled,
-            texture_type: renderer::TextureType::Tex2D,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            usage: graphics_device::TextureUsage::Sampled,
+            texture_type: graphics_device::TextureType::Tex2D,
             array_layers: 1,
-            data: Some(renderer::TextureData::Single(vec![255u8; 256 * 256 * 4])),
-            mipmap: renderer::MipmapMode::None,
+            data: Some(graphics_device::TextureData::Single(vec![255u8; 256 * 256 * 4])),
+            mipmap: graphics_device::MipmapMode::None,
         },
         layers: vec![LayerDesc {
             name: "default".to_string(),
@@ -43,18 +43,18 @@ fn create_simple_texture(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Te
 }
 
 /// Create an indexed texture (4 layers, with atlas regions on layer 0)
-fn create_indexed_texture_with_regions(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Texture> {
+fn create_indexed_texture_with_regions(graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>) -> Arc<Texture> {
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            usage: renderer::TextureUsage::Sampled,
-            texture_type: renderer::TextureType::Array2D,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            usage: graphics_device::TextureUsage::Sampled,
+            texture_type: graphics_device::TextureType::Array2D,
             array_layers: 4,
             data: None,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
         },
         layers: vec![
             LayerDesc {
@@ -90,31 +90,31 @@ fn create_indexed_texture_with_regions(renderer: Arc<Mutex<dyn renderer::Rendere
 }
 
 /// Create a test pipeline
-fn create_test_pipeline(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Pipeline> {
-    let vertex_layout = renderer::VertexLayout {
-        bindings: vec![renderer::VertexBinding {
+fn create_test_pipeline(graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>) -> Arc<Pipeline> {
+    let vertex_layout = graphics_device::VertexLayout {
+        bindings: vec![graphics_device::VertexBinding {
             binding: 0,
             stride: 16,
-            input_rate: renderer::VertexInputRate::Vertex,
+            input_rate: graphics_device::VertexInputRate::Vertex,
         }],
-        attributes: vec![renderer::VertexAttribute {
+        attributes: vec![graphics_device::VertexAttribute {
             location: 0,
             binding: 0,
-            format: renderer::BufferFormat::R32G32_SFLOAT,
+            format: graphics_device::BufferFormat::R32G32_SFLOAT,
             offset: 0,
         }],
     };
 
     let desc = PipelineDesc {
-        renderer,
+        graphics_device,
         variants: vec![PipelineVariantDesc {
             name: "default".to_string(),
             passes: vec![PipelinePassDesc {
-                pipeline: renderer::PipelineDesc {
-                    vertex_shader: Arc::new(renderer::mock_renderer::MockShader::new("vert".to_string())),
-                    fragment_shader: Arc::new(renderer::mock_renderer::MockShader::new("frag".to_string())),
+                pipeline: graphics_device::PipelineDesc {
+                    vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
+                    fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
                     vertex_layout,
-                    topology: renderer::PrimitiveTopology::TriangleList,
+                    topology: graphics_device::PrimitiveTopology::TriangleList,
                     push_constant_ranges: vec![],
                     binding_group_layouts: vec![],
                     rasterization: Default::default(),
@@ -134,8 +134,8 @@ fn create_test_pipeline(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> Arc<Pip
 
 #[test]
 fn test_create_material_minimal() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline: pipeline.clone(),
@@ -151,9 +151,9 @@ fn test_create_material_minimal() {
 
 #[test]
 fn test_create_material_with_simple_texture() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_simple_texture(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_simple_texture(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -179,8 +179,8 @@ fn test_create_material_with_simple_texture() {
 
 #[test]
 fn test_create_material_with_params() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -214,8 +214,8 @@ fn test_create_material_with_params() {
 
 #[test]
 fn test_create_material_with_all_param_types() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -264,9 +264,9 @@ fn test_create_material_with_all_param_types() {
 
 #[test]
 fn test_layer_ref_by_index() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -288,9 +288,9 @@ fn test_layer_ref_by_index() {
 
 #[test]
 fn test_layer_ref_by_name() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -312,9 +312,9 @@ fn test_layer_ref_by_name() {
 
 #[test]
 fn test_layer_ref_invalid_index() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -334,9 +334,9 @@ fn test_layer_ref_invalid_index() {
 
 #[test]
 fn test_layer_ref_invalid_name() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -360,9 +360,9 @@ fn test_layer_ref_invalid_name() {
 
 #[test]
 fn test_region_ref_by_index() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -384,9 +384,9 @@ fn test_region_ref_by_index() {
 
 #[test]
 fn test_region_ref_by_name() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -408,9 +408,9 @@ fn test_region_ref_by_name() {
 
 #[test]
 fn test_region_ref_invalid_index() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -430,9 +430,9 @@ fn test_region_ref_invalid_index() {
 
 #[test]
 fn test_region_ref_invalid_name() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -452,9 +452,9 @@ fn test_region_ref_invalid_name() {
 
 #[test]
 fn test_region_without_layer_fails() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -478,9 +478,9 @@ fn test_region_without_layer_fails() {
 
 #[test]
 fn test_duplicate_texture_slot_name_fails() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_simple_texture(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_simple_texture(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -509,8 +509,8 @@ fn test_duplicate_texture_slot_name_fails() {
 
 #[test]
 fn test_duplicate_param_name_fails() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -531,10 +531,10 @@ fn test_duplicate_param_name_fails() {
 
 #[test]
 fn test_multiple_texture_slots() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture1 = create_simple_texture(renderer.clone());
-    let texture2 = create_simple_texture(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture1 = create_simple_texture(graphics_device.clone());
+    let texture2 = create_simple_texture(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -579,11 +579,11 @@ fn test_multiple_texture_slots() {
 
 #[test]
 fn test_full_pbr_material() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let albedo_tex = create_simple_texture(renderer.clone());
-    let normal_tex = create_simple_texture(renderer.clone());
-    let indexed_tex = create_indexed_texture_with_regions(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let albedo_tex = create_simple_texture(graphics_device.clone());
+    let normal_tex = create_simple_texture(graphics_device.clone());
+    let indexed_tex = create_indexed_texture_with_regions(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline: pipeline.clone(),
@@ -645,8 +645,8 @@ fn test_full_pbr_material() {
 
 #[test]
 fn test_param_not_found() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -661,8 +661,8 @@ fn test_param_not_found() {
 
 #[test]
 fn test_texture_slot_not_found() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -681,8 +681,8 @@ fn test_texture_slot_not_found() {
 
 #[test]
 fn test_typed_accessors_correct_type() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -711,9 +711,9 @@ fn test_typed_accessors_correct_type() {
 
 #[test]
 fn test_texture_slots_slice() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_simple_texture(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_simple_texture(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -745,8 +745,8 @@ fn test_texture_slots_slice() {
 
 #[test]
 fn test_params_slice() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -772,8 +772,8 @@ fn test_params_slice() {
 
 #[test]
 fn test_param_id() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -792,9 +792,9 @@ fn test_param_id() {
 
 #[test]
 fn test_texture_slot_id() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_simple_texture(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_simple_texture(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,
@@ -819,8 +819,8 @@ fn test_texture_slot_id() {
 
 #[test]
 fn test_slot_id() {
-    let renderer = create_mock_renderer();
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let pipeline = create_test_pipeline(graphics_device.clone());
 
     let desc = MaterialDesc {
         pipeline,

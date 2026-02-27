@@ -4,7 +4,7 @@
 /// Implementations range from simple forward rendering to sorted/instanced approaches.
 
 use crate::error::Result;
-use crate::renderer::{CommandList, ShaderStage};
+use crate::graphics_device::{CommandList, ShaderStage};
 use crate::camera::RenderView;
 use super::scene::Scene;
 

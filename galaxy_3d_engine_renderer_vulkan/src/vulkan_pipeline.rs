@@ -10,7 +10,7 @@ use ash::vk;
 ///
 /// Stores the descriptor set layouts internally (Option B design).
 /// The layouts are created from BindingGroupLayoutDesc at pipeline creation time
-/// and used by VulkanRenderer::create_binding_group() to allocate descriptor sets.
+/// and used by VulkanGraphicsDevice::create_binding_group() to allocate descriptor sets.
 pub struct Pipeline {
     /// Vulkan graphics pipeline
     pub(crate) pipeline: vk::Pipeline,

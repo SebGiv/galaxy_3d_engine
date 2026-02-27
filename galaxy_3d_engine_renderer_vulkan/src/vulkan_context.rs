@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 /// This struct is shared (via `Arc`) by all GPU resources (textures, buffers, etc.)
 /// to avoid duplicating device/allocator/queue references in each resource.
 ///
-/// Note: Device and instance destruction is handled by VulkanRenderer::drop()
+/// Note: Device and instance destruction is handled by VulkanGraphicsDevice::drop()
 /// to avoid issues with drop ordering and callback exceptions on Windows.
 pub struct GpuContext {
     /// Vulkan logical device
@@ -36,7 +36,7 @@ pub struct GpuContext {
     /// (created with TRANSIENT + RESET_COMMAND_BUFFER flags)
     pub upload_command_pool: Mutex<vk::CommandPool>,
 
-    /// Vulkan instance (kept for reference, destroyed by VulkanRenderer)
+    /// Vulkan instance (kept for reference, destroyed by VulkanGraphicsDevice)
     #[allow(dead_code)]
     instance: ash::Instance,
 
@@ -85,7 +85,7 @@ impl GpuContext {
 
 impl Drop for GpuContext {
     fn drop(&mut self) {
-        // NOTE: Device and instance destruction is handled by VulkanRenderer::drop()
+        // NOTE: Device and instance destruction is handled by VulkanGraphicsDevice::drop()
         // to avoid issues with drop ordering and callback exceptions on Windows.
         // This Drop impl intentionally does nothing.
     }

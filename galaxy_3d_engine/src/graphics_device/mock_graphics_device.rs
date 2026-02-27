@@ -1,6 +1,6 @@
-/// Mock Renderer for unit tests (no GPU required)
+/// Mock GraphicsDevice for unit tests (no GPU required)
 ///
-/// This mock renderer allows testing ResourceManager and other components
+/// This mock graphics device allows testing ResourceManager and other components
 /// without requiring a real GPU or graphics backend.
 
 #[cfg(test)]
@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use winit::window::Window;
 
 #[cfg(test)]
-use crate::renderer::{
-    Renderer, Buffer, Texture, Shader, Pipeline, CommandList,
+use crate::graphics_device::{
+    GraphicsDevice, Buffer, Texture, Shader, Pipeline, CommandList,
     RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
     BufferDesc, TextureDesc, ShaderDesc, ShaderStage, PipelineDesc,
     BindingResource,
@@ -65,13 +65,13 @@ pub struct MockTexture {
 
 #[cfg(test)]
 impl MockTexture {
-    pub fn new(width: u32, height: u32, array_layers: u32, texture_type: crate::renderer::TextureType, name: String) -> Self {
+    pub fn new(width: u32, height: u32, array_layers: u32, texture_type: crate::graphics_device::TextureType, name: String) -> Self {
         Self {
             info: TextureInfo {
                 width,
                 height,
-                format: crate::renderer::TextureFormat::R8G8B8A8_UNORM,
-                usage: crate::renderer::TextureUsage::Sampled,
+                format: crate::graphics_device::TextureFormat::R8G8B8A8_UNORM,
+                usage: crate::graphics_device::TextureUsage::Sampled,
                 array_layers,
                 mip_levels: 1,
                 texture_type,
@@ -276,8 +276,8 @@ impl RenderTarget for MockRenderTarget {
         self.height
     }
 
-    fn format(&self) -> crate::renderer::TextureFormat {
-        crate::renderer::TextureFormat::R8G8B8A8_UNORM
+    fn format(&self) -> crate::graphics_device::TextureFormat {
+        crate::graphics_device::TextureFormat::R8G8B8A8_UNORM
     }
 }
 
@@ -358,8 +358,8 @@ impl Swapchain for MockSwapchain {
         600
     }
 
-    fn format(&self) -> crate::renderer::TextureFormat {
-        crate::renderer::TextureFormat::B8G8R8A8_UNORM
+    fn format(&self) -> crate::graphics_device::TextureFormat {
+        crate::graphics_device::TextureFormat::B8G8R8A8_UNORM
     }
 
     fn recreate(&mut self, _width: u32, _height: u32) -> Result<()> {
@@ -391,13 +391,13 @@ impl BindingGroup for MockBindingGroup {
 }
 
 // ============================================================================
-// Mock Renderer
+// Mock GraphicsDevice
 // ============================================================================
 
-/// Mock Renderer that tracks created resources without GPU
+/// Mock GraphicsDevice that tracks created resources without GPU
 #[cfg(test)]
 #[derive(Debug)]
-pub struct MockRenderer {
+pub struct MockGraphicsDevice {
     /// Track created buffers
     pub created_buffers: Arc<Mutex<Vec<String>>>,
     /// Track created textures
@@ -409,8 +409,8 @@ pub struct MockRenderer {
 }
 
 #[cfg(test)]
-impl MockRenderer {
-    /// Create a new mock renderer
+impl MockGraphicsDevice {
+    /// Create a new mock graphics device
     pub fn new() -> Self {
         Self {
             created_buffers: Arc::new(Mutex::new(Vec::new())),
@@ -442,7 +442,7 @@ impl MockRenderer {
 }
 
 #[cfg(test)]
-impl Renderer for MockRenderer {
+impl GraphicsDevice for MockGraphicsDevice {
     fn create_texture(&mut self, desc: TextureDesc) -> Result<Arc<dyn Texture>> {
         let name = format!("texture_{}x{}", desc.width, desc.height);
         self.created_textures.lock().unwrap().push(name.clone());
@@ -544,8 +544,8 @@ impl Renderer for MockRenderer {
         Ok(())
     }
 
-    fn stats(&self) -> crate::renderer::RendererStats {
-        crate::renderer::RendererStats::default()
+    fn stats(&self) -> crate::graphics_device::GraphicsDeviceStats {
+        crate::graphics_device::GraphicsDeviceStats::default()
     }
 
     fn resize(&mut self, _width: u32, _height: u32) {
@@ -558,5 +558,5 @@ impl Renderer for MockRenderer {
 // ============================================================================
 
 #[cfg(test)]
-#[path = "mock_renderer_tests.rs"]
+#[path = "mock_graphics_device_tests.rs"]
 mod tests;

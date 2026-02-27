@@ -1,7 +1,7 @@
 /// Framebuffer - Vulkan implementation of RendererFramebuffer trait
 ///
 /// Wraps a VkFramebuffer that groups color and depth/stencil attachments.
-/// Created once via Renderer::create_framebuffer(), reused each frame.
+/// Created once via GraphicsDevice::create_framebuffer(), reused each frame.
 
 use galaxy_3d_engine::galaxy3d::render::Framebuffer as RendererFramebuffer;
 use ash::vk;

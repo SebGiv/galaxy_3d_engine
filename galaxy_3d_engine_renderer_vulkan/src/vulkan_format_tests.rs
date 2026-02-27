@@ -14,7 +14,7 @@ use ash::vk;
 
 #[test]
 fn test_buffer_format_to_vk_float_formats() {
-    // Create a minimal VulkanRenderer instance is not needed for these tests
+    // Create a minimal VulkanGraphicsDevice instance is not needed for these tests
     // We'll test the logic directly through the conversion mappings
 
     // Test that float formats map correctly
@@ -197,7 +197,7 @@ fn test_texture_format_to_vk_depth_stencil_format() {
 // ============================================================================
 
 /// Helper to test buffer format conversion logic
-/// This replicates the conversion logic without needing a VulkanRenderer instance
+/// This replicates the conversion logic without needing a VulkanGraphicsDevice instance
 fn buffer_format_mapping(format: BufferFormat) -> vk::Format {
     match format {
         // Float formats

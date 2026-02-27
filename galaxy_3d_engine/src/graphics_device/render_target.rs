@@ -1,6 +1,6 @@
 /// RenderTarget trait - represents a render target (texture or swapchain image)
 
-use crate::renderer::TextureFormat;
+use crate::graphics_device::TextureFormat;
 
 /// Render target trait
 ///

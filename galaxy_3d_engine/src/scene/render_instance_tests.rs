@@ -1,12 +1,12 @@
 /// Tests for RenderInstance, RenderLOD, RenderSubMesh, and AABB
 ///
-/// These tests use MockRenderer to create real Geometry, Pipeline, Texture, Material,
+/// These tests use MockGraphicsDevice to create real Geometry, Pipeline, Texture, Material,
 /// and Mesh resources, then validate RenderInstance creation, data extraction, accessors,
 /// and error handling.
 
 use super::*;
-use crate::renderer::mock_renderer::{MockRenderer, MockShader};
-use crate::renderer::{
+use crate::graphics_device::mock_graphics_device::{MockGraphicsDevice, MockShader};
+use crate::graphics_device::{
     PrimitiveTopology, BufferFormat, TextureFormat, TextureUsage,
     MipmapMode, TextureData, SamplerType,
     VertexLayout, VertexBinding, VertexAttribute,
@@ -34,8 +34,8 @@ use std::sync::{Arc, Mutex};
 // Helper Functions
 // ============================================================================
 
-fn create_mock_renderer() -> Arc<Mutex<dyn crate::renderer::Renderer>> {
-    Arc::new(Mutex::new(MockRenderer::new()))
+fn create_mock_graphics_device() -> Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>> {
+    Arc::new(Mutex::new(MockGraphicsDevice::new()))
 }
 
 fn create_vertex_layout() -> VertexLayout {
@@ -56,10 +56,10 @@ fn create_vertex_layout() -> VertexLayout {
 
 /// Create a geometry with:
 /// - GeometryMesh "object": LOD 0 (body, head), LOD 1 (body_low)
-fn create_test_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Geometry> {
+fn create_test_geometry(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Geometry> {
     let desc = GeometryDesc {
         name: "test_geo".to_string(),
-        renderer,
+        graphics_device,
         vertex_data: vec![0u8; 120],  // 15 vertices * 8 bytes
         index_data: Some(vec![0u8; 36]), // 18 indices * 2 bytes
         vertex_layout: create_vertex_layout(),
@@ -104,10 +104,10 @@ fn create_test_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
 }
 
 /// Create a geometry with no index buffer
-fn create_non_indexed_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Geometry> {
+fn create_non_indexed_geometry(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Geometry> {
     let desc = GeometryDesc {
         name: "non_indexed_geo".to_string(),
-        renderer,
+        graphics_device,
         vertex_data: vec![0u8; 48],  // 6 vertices * 8 bytes
         index_data: None,
         vertex_layout: create_vertex_layout(),
@@ -134,8 +134,8 @@ fn create_non_indexed_geometry(renderer: Arc<Mutex<dyn crate::renderer::Renderer
     Arc::new(Geometry::from_desc(desc).unwrap())
 }
 
-fn create_render_pipeline_desc() -> crate::renderer::PipelineDesc {
-    crate::renderer::PipelineDesc {
+fn create_render_pipeline_desc() -> crate::graphics_device::PipelineDesc {
+    crate::graphics_device::PipelineDesc {
         vertex_shader: Arc::new(MockShader::new("vert".to_string())),
         fragment_shader: Arc::new(MockShader::new("frag".to_string())),
         vertex_layout: create_vertex_layout(),
@@ -150,9 +150,9 @@ fn create_render_pipeline_desc() -> crate::renderer::PipelineDesc {
 }
 
 /// Create a pipeline with a single variant "default" (1 pass)
-fn create_test_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Pipeline> {
+fn create_test_pipeline(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Pipeline> {
     let desc = PipelineDesc {
-        renderer,
+        graphics_device,
         variants: vec![PipelineVariantDesc {
             name: "default".to_string(),
             passes: vec![PipelinePassDesc {
@@ -164,9 +164,9 @@ fn create_test_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> 
 }
 
 /// Create a pipeline with 2 variants: "default" (1 pass) and "shadow" (1 pass)
-fn create_multi_variant_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Pipeline> {
+fn create_multi_variant_pipeline(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Pipeline> {
     let desc = PipelineDesc {
-        renderer,
+        graphics_device,
         variants: vec![
             PipelineVariantDesc {
                 name: "default".to_string(),
@@ -186,9 +186,9 @@ fn create_multi_variant_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Render
 }
 
 /// Create a pipeline with 1 variant "default" (2 passes: base + outline)
-fn create_multi_pass_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Pipeline> {
+fn create_multi_pass_pipeline(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Pipeline> {
     let desc = PipelineDesc {
-        renderer,
+        graphics_device,
         variants: vec![PipelineVariantDesc {
             name: "default".to_string(),
             passes: vec![
@@ -200,10 +200,10 @@ fn create_multi_pass_pipeline(renderer: Arc<Mutex<dyn crate::renderer::Renderer>
     Arc::new(Pipeline::from_desc(desc).unwrap())
 }
 
-fn create_test_texture(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> Arc<Texture> {
+fn create_test_texture(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Texture> {
     let desc = TextureDesc {
-        renderer,
-        texture: crate::renderer::TextureDesc {
+        graphics_device,
+        texture: crate::graphics_device::TextureDesc {
             width: 64,
             height: 64,
             format: TextureFormat::R8G8B8A8_UNORM,
@@ -211,7 +211,7 @@ fn create_test_texture(renderer: Arc<Mutex<dyn crate::renderer::Renderer>>) -> A
             array_layers: 1,
             data: Some(TextureData::Single(vec![255u8; 64 * 64 * 4])),
             mipmap: MipmapMode::None,
-            texture_type: crate::renderer::TextureType::Tex2D,
+            texture_type: crate::graphics_device::TextureType::Tex2D,
         },
         layers: vec![LayerDesc {
             name: "default".to_string(),
@@ -388,9 +388,9 @@ fn test_flag_individual_bits() {
 
 #[test]
 fn test_from_mesh_basic() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -407,9 +407,9 @@ fn test_from_mesh_basic() {
 
 #[test]
 fn test_from_mesh_lod_count() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -426,9 +426,9 @@ fn test_from_mesh_lod_count() {
 
 #[test]
 fn test_from_mesh_submesh_count_per_lod() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -444,9 +444,9 @@ fn test_from_mesh_submesh_count_per_lod() {
 
 #[test]
 fn test_from_mesh_extracts_geometry_data() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -479,9 +479,9 @@ fn test_from_mesh_extracts_geometry_data() {
 
 #[test]
 fn test_from_mesh_extracts_pipeline_passes() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -496,9 +496,9 @@ fn test_from_mesh_extracts_pipeline_passes() {
 
 #[test]
 fn test_from_mesh_multi_pass_pipeline() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_multi_pass_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_multi_pass_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -513,9 +513,9 @@ fn test_from_mesh_multi_pass_pipeline() {
 
 #[test]
 fn test_from_mesh_render_pass_structure() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -536,10 +536,10 @@ fn test_from_mesh_render_pass_structure() {
 
 #[test]
 fn test_from_mesh_material_with_texture_no_matching_reflection() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_test_texture(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_test_texture(graphics_device.clone());
     let material = create_test_material_with_texture(&pipeline, &texture);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -556,9 +556,9 @@ fn test_from_mesh_material_with_texture_no_matching_reflection() {
 
 #[test]
 fn test_from_mesh_non_indexed_geometry() {
-    let renderer = create_mock_renderer();
-    let geometry = create_non_indexed_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_non_indexed_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_non_indexed_mesh(&geometry, &material);
 
@@ -577,9 +577,9 @@ fn test_from_mesh_non_indexed_geometry() {
 
 #[test]
 fn test_from_mesh_indexed_geometry_has_buffers() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -593,9 +593,9 @@ fn test_from_mesh_indexed_geometry_has_buffers() {
 
 #[test]
 fn test_from_mesh_variant_index_selection() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_multi_variant_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_multi_variant_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -612,9 +612,9 @@ fn test_from_mesh_variant_index_selection() {
 
 #[test]
 fn test_from_mesh_default_flags() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -629,9 +629,9 @@ fn test_from_mesh_default_flags() {
 
 #[test]
 fn test_from_mesh_stores_bounding_box() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -653,9 +653,9 @@ fn test_from_mesh_stores_bounding_box() {
 
 #[test]
 fn test_from_mesh_invalid_variant_index() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone()); // Only 1 variant
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone()); // Only 1 variant
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -672,9 +672,9 @@ fn test_from_mesh_invalid_variant_index() {
 
 #[test]
 fn test_set_world_matrix() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -691,9 +691,9 @@ fn test_set_world_matrix() {
 
 #[test]
 fn test_set_flags() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -708,9 +708,9 @@ fn test_set_flags() {
 
 #[test]
 fn test_set_visible_true() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -734,9 +734,9 @@ fn test_set_visible_true() {
 
 #[test]
 fn test_set_visible_preserves_other_flags() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -765,9 +765,9 @@ fn test_set_visible_preserves_other_flags() {
 
 #[test]
 fn test_render_lod_sub_mesh_access() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -787,10 +787,10 @@ fn test_render_lod_sub_mesh_access() {
 
 #[test]
 fn test_render_submesh_all_accessors() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
-    let texture = create_test_texture(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
+    let texture = create_test_texture(graphics_device.clone());
     let material = create_test_material_with_texture(&pipeline, &texture);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -833,9 +833,9 @@ fn test_render_instance_key_is_copy() {
 
 #[test]
 fn test_draw_slot_allocation() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -859,9 +859,9 @@ fn test_draw_slot_allocation() {
 
 #[test]
 fn test_draw_slot_sequential_allocation() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -881,9 +881,9 @@ fn test_draw_slot_sequential_allocation() {
 
 #[test]
 fn test_draw_slot_shared_allocator() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 
@@ -909,9 +909,9 @@ fn test_draw_slot_shared_allocator() {
 
 #[test]
 fn test_free_draw_slots() {
-    let renderer = create_mock_renderer();
-    let geometry = create_test_geometry(renderer.clone());
-    let pipeline = create_test_pipeline(renderer.clone());
+    let graphics_device = create_mock_graphics_device();
+    let geometry = create_test_geometry(graphics_device.clone());
+    let pipeline = create_test_pipeline(graphics_device.clone());
     let material = create_test_material(&pipeline);
     let mesh = create_simple_mesh(&geometry, &material);
 

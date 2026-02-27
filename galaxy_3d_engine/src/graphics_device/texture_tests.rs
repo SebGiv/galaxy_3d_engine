@@ -4,7 +4,7 @@
 //! for all texture formats (color and depth/stencil).
 
 #[cfg(test)]
-use crate::renderer::TextureFormat;
+use crate::graphics_device::TextureFormat;
 
 // ============================================================================
 // COLOR FORMATS
@@ -97,7 +97,7 @@ fn test_texture_format_total_size_calculations() {
 // MIPMAP MODE TESTS
 // ============================================================================
 
-use crate::renderer::{MipmapMode, ManualMipmapData, LayerMipmapData};
+use crate::graphics_device::{MipmapMode, ManualMipmapData, LayerMipmapData};
 
 #[test]
 fn test_mipmap_mode_none() {
@@ -209,7 +209,7 @@ fn test_mipmap_mode_default() {
 // TEXTURE INFO TESTS
 // ============================================================================
 
-use crate::renderer::{TextureInfo, TextureType, TextureUsage};
+use crate::graphics_device::{TextureInfo, TextureType, TextureUsage};
 
 #[test]
 fn test_texture_info_texture_type() {

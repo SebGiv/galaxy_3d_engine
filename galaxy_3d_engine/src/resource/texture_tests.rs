@@ -1,12 +1,12 @@
 /// Unit tests for texture.rs
 ///
 /// Tests the Texture, TextureLayer, and AtlasRegion types without requiring GPU.
-/// Uses MockRenderer for testing.
+/// Uses MockGraphicsDevice for testing.
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
-use crate::renderer;
+use crate::graphics_device;
 #[cfg(test)]
 use crate::resource::{
     Texture, TextureDesc, LayerDesc, AtlasRegionDesc, AtlasRegion,
@@ -16,24 +16,24 @@ use crate::resource::{
 // HELPER FUNCTIONS
 // ============================================================================
 
-/// Create a mock renderer for testing
-fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
-    let renderer = renderer::mock_renderer::MockRenderer::new();
-    Arc::new(Mutex::new(renderer))
+/// Create a mock graphics_device for testing
+fn create_mock_graphics_device() -> Arc<Mutex<dyn graphics_device::GraphicsDevice>> {
+    let graphics_device = graphics_device::mock_graphics_device::MockGraphicsDevice::new();
+    Arc::new(Mutex::new(graphics_device))
 }
 
 /// Create a simple texture descriptor (simple texture, 256x256)
-fn create_simple_texture_desc(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> TextureDesc {
+fn create_simple_texture_desc(graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>) -> TextureDesc {
     TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -48,17 +48,17 @@ fn create_simple_texture_desc(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> T
 }
 
 /// Create an indexed texture descriptor (4 layers, 256x256)
-fn create_indexed_texture_desc(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> TextureDesc {
+fn create_indexed_texture_desc(graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>) -> TextureDesc {
     TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Array2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Array2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 4,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -84,8 +84,8 @@ fn create_indexed_texture_desc(renderer: Arc<Mutex<dyn renderer::Renderer>>) -> 
 
 #[test]
 fn test_create_simple_texture() {
-    let renderer = create_mock_renderer();
-    let desc = create_simple_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_simple_texture_desc(graphics_device);
 
     let texture = Texture::from_desc(desc).unwrap();
 
@@ -96,17 +96,17 @@ fn test_create_simple_texture() {
 
 #[test]
 fn test_simple_texture_requires_one_layer() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1, // Simple texture
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![], // ERROR: must have exactly 1 layer
@@ -118,17 +118,17 @@ fn test_simple_texture_requires_one_layer() {
 
 #[test]
 fn test_simple_texture_layer_must_be_index_0() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -147,17 +147,17 @@ fn test_simple_texture_layer_must_be_index_0() {
 
 #[test]
 fn test_simple_texture_with_atlas_region() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -201,8 +201,8 @@ fn test_simple_texture_with_atlas_region() {
 
 #[test]
 fn test_create_indexed_texture() {
-    let renderer = create_mock_renderer();
-    let desc = create_indexed_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_indexed_texture_desc(graphics_device);
 
     let texture = Texture::from_desc(desc).unwrap();
 
@@ -213,17 +213,17 @@ fn test_create_indexed_texture() {
 
 #[test]
 fn test_indexed_texture_can_be_empty() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Array2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Array2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 4, // Indexed
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![], // OK: indexed can start empty
@@ -237,17 +237,17 @@ fn test_indexed_texture_can_be_empty() {
 
 #[test]
 fn test_indexed_texture_layer_bounds() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Array2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Array2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 2, // Only 2 layers
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -276,8 +276,8 @@ fn test_indexed_texture_layer_bounds() {
 
 #[test]
 fn test_layer_access_by_index() {
-    let renderer = create_mock_renderer();
-    let desc = create_indexed_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_indexed_texture_desc(graphics_device);
 
     let texture = Texture::from_desc(desc).unwrap();
 
@@ -293,8 +293,8 @@ fn test_layer_access_by_index() {
 
 #[test]
 fn test_layer_access_by_name() {
-    let renderer = create_mock_renderer();
-    let desc = create_indexed_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_indexed_texture_desc(graphics_device);
 
     let texture = Texture::from_desc(desc).unwrap();
 
@@ -308,8 +308,8 @@ fn test_layer_access_by_name() {
 
 #[test]
 fn test_layer_index_by_name() {
-    let renderer = create_mock_renderer();
-    let desc = create_indexed_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_indexed_texture_desc(graphics_device);
 
     let texture = Texture::from_desc(desc).unwrap();
 
@@ -326,8 +326,8 @@ fn test_layer_index_by_name() {
 
 #[test]
 fn test_add_layer_to_indexed_texture() {
-    let renderer = create_mock_renderer();
-    let desc = create_indexed_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_indexed_texture_desc(graphics_device);
 
     let mut texture = Texture::from_desc(desc).unwrap();
 
@@ -347,8 +347,8 @@ fn test_add_layer_to_indexed_texture() {
 
 #[test]
 fn test_add_layer_to_simple_texture_fails() {
-    let renderer = create_mock_renderer();
-    let desc = create_simple_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_simple_texture_desc(graphics_device);
 
     let mut texture = Texture::from_desc(desc).unwrap();
 
@@ -365,8 +365,8 @@ fn test_add_layer_to_simple_texture_fails() {
 
 #[test]
 fn test_add_duplicate_layer_name() {
-    let renderer = create_mock_renderer();
-    let desc = create_indexed_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_indexed_texture_desc(graphics_device);
 
     let mut texture = Texture::from_desc(desc).unwrap();
 
@@ -383,8 +383,8 @@ fn test_add_duplicate_layer_name() {
 
 #[test]
 fn test_add_duplicate_layer_index() {
-    let renderer = create_mock_renderer();
-    let desc = create_indexed_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_indexed_texture_desc(graphics_device);
 
     let mut texture = Texture::from_desc(desc).unwrap();
 
@@ -405,8 +405,8 @@ fn test_add_duplicate_layer_index() {
 
 #[test]
 fn test_add_region_to_layer() {
-    let renderer = create_mock_renderer();
-    let desc = create_simple_texture_desc(renderer);
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_simple_texture_desc(graphics_device);
 
     let mut texture = Texture::from_desc(desc).unwrap();
 
@@ -429,17 +429,17 @@ fn test_add_region_to_layer() {
 
 #[test]
 fn test_region_bounds_validation() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -468,17 +468,17 @@ fn test_region_bounds_validation() {
 
 #[test]
 fn test_region_zero_dimension() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -507,17 +507,17 @@ fn test_region_zero_dimension() {
 
 #[test]
 fn test_region_lookup() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -564,17 +564,17 @@ fn test_region_lookup() {
 
 #[test]
 fn test_duplicate_region_names() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -616,17 +616,17 @@ fn test_duplicate_region_names() {
 
 #[test]
 fn test_duplicate_layer_names() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Array2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Array2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 4,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -651,17 +651,17 @@ fn test_duplicate_layer_names() {
 
 #[test]
 fn test_duplicate_layer_indices() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Array2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Array2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 4,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -690,17 +690,17 @@ fn test_duplicate_layer_indices() {
 
 #[test]
 fn test_complex_indexed_texture_with_atlas() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 512,
             height: 512,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Array2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Array2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 3,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -772,31 +772,31 @@ fn test_complex_indexed_texture_with_atlas() {
 // ============================================================================
 
 #[test]
-fn test_renderer_texture_getter() {
-    let renderer = create_mock_renderer();
-    let desc = create_simple_texture_desc(renderer);
+fn test_graphics_device_texture_getter() {
+    let graphics_device = create_mock_graphics_device();
+    let desc = create_simple_texture_desc(graphics_device);
 
     let texture = Texture::from_desc(desc).unwrap();
 
-    // renderer_texture() should return a valid Arc
-    let renderer_tex = texture.renderer_texture();
+    // graphics_device_texture() should return a valid Arc
+    let renderer_tex = texture.graphics_device_texture();
     assert!(renderer_tex.info().width == 256);
     assert!(renderer_tex.info().height == 256);
 }
 
 #[test]
 fn test_texture_layer_getters() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -844,22 +844,22 @@ fn test_texture_layer_getters() {
 
 #[test]
 fn test_layer_data_size_validation_rgba8() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
 
     // For 256x256 RGBA8 texture: expected size = 256 * 256 * 4 = 262144 bytes
     let correct_size = 256 * 256 * 4;
     let wrong_size = 1000;
 
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -876,17 +876,17 @@ fn test_layer_data_size_validation_rgba8() {
     assert!(result.is_err());
 
     // Now test with correct size
-    let renderer2 = create_mock_renderer();
+    let graphics_device2 = create_mock_graphics_device();
     let desc_correct = TextureDesc {
-        renderer: renderer2,
-        texture: renderer::TextureDesc {
+        graphics_device: graphics_device2,
+        texture: graphics_device::TextureDesc {
             width: 256,
             height: 256,
-            format: renderer::TextureFormat::R8G8B8A8_UNORM,
-            texture_type: renderer::TextureType::Tex2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+            texture_type: graphics_device::TextureType::Tex2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 1,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![
@@ -905,19 +905,19 @@ fn test_layer_data_size_validation_rgba8() {
 
 #[test]
 fn test_layer_data_upload_multiple_layers() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let layer_size = 128 * 128 * 4; // 128x128 RGBA8
 
     let desc = TextureDesc {
-        renderer,
-        texture: renderer::TextureDesc {
+        graphics_device,
+        texture: graphics_device::TextureDesc {
             width: 128,
             height: 128,
-            format: renderer::TextureFormat::B8G8R8A8_SRGB,
-            texture_type: renderer::TextureType::Array2D,
-            usage: renderer::TextureUsage::Sampled,
+            format: graphics_device::TextureFormat::B8G8R8A8_SRGB,
+            texture_type: graphics_device::TextureType::Array2D,
+            usage: graphics_device::TextureUsage::Sampled,
             array_layers: 3,
-            mipmap: renderer::MipmapMode::None,
+            mipmap: graphics_device::MipmapMode::None,
             data: None,
         },
         layers: vec![

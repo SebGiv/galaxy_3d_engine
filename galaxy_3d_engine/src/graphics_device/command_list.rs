@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use crate::error::Result;
-use crate::renderer::{
+use crate::graphics_device::{
     RenderPass, Framebuffer, Pipeline, Buffer,
     BindingGroup, IndexType, ShaderStage,
 };

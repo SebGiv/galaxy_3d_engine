@@ -1,17 +1,17 @@
-//! Unit tests for VulkanRenderer backend
+//! Unit tests for VulkanGraphicsDevice backend
 //!
-//! These tests verify that VulkanRenderer correctly implements the Renderer trait.
+//! These tests verify that VulkanGraphicsDevice correctly implements the GraphicsDevice trait.
 //! All tests require a GPU and are marked with #[ignore].
 //!
 //! Run with: cargo test --test vulkan_renderer_tests -- --ignored
 
-use galaxy_3d_engine::galaxy3d::Renderer;
+use galaxy_3d_engine::galaxy3d::GraphicsDevice;
 use galaxy_3d_engine::galaxy3d::render::{
     TextureDesc, TextureFormat, TextureUsage, TextureType, MipmapMode, TextureData,
     BufferDesc, BufferUsage, ShaderDesc, ShaderStage,
     Config,
 };
-use galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanRenderer;
+use galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanGraphicsDevice;
 use winit::event_loop::EventLoop;
 use winit::window::Window;
 
@@ -20,7 +20,7 @@ use winit::window::Window;
 fn create_test_window() -> (Window, EventLoop<()>) {
     let event_loop = EventLoop::new().unwrap();
     let window_attrs = Window::default_attributes()
-        .with_title("Vulkan Renderer Test")
+        .with_title("Vulkan GraphicsDevice Test")
         .with_inner_size(winit::dpi::LogicalSize::new(800, 600))
         .with_visible(false); // Hidden window for tests
     let window = event_loop.create_window(window_attrs).unwrap();
@@ -35,7 +35,7 @@ fn create_test_window() -> (Window, EventLoop<()>) {
 #[ignore] // Requires GPU
 fn test_vulkan_create_simple_texture() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     let desc = TextureDesc {
         width: 256,
@@ -48,7 +48,7 @@ fn test_vulkan_create_simple_texture() {
         data: None,
     };
 
-    let texture = renderer.create_texture(desc).unwrap();
+    let texture = graphics_device.create_texture(desc).unwrap();
     let info = texture.info();
 
     assert_eq!(info.width, 256);
@@ -61,7 +61,7 @@ fn test_vulkan_create_simple_texture() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_texture_with_data() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     // Create 4x4 RGBA texture (64 bytes total)
     let data: Vec<u8> = (0..64).collect();
@@ -77,7 +77,7 @@ fn test_vulkan_create_texture_with_data() {
         data: Some(TextureData::Single(data)),
     };
 
-    let texture = renderer.create_texture(desc).unwrap();
+    let texture = graphics_device.create_texture(desc).unwrap();
     let info = texture.info();
 
     assert_eq!(info.width, 4);
@@ -88,7 +88,7 @@ fn test_vulkan_create_texture_with_data() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_texture_array() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     let desc = TextureDesc {
         width: 128,
@@ -101,7 +101,7 @@ fn test_vulkan_create_texture_array() {
         data: None,
     };
 
-    let texture = renderer.create_texture(desc).unwrap();
+    let texture = graphics_device.create_texture(desc).unwrap();
     let info = texture.info();
 
     assert_eq!(info.array_layers, 4);
@@ -111,7 +111,7 @@ fn test_vulkan_create_texture_array() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_depth_texture() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     let desc = TextureDesc {
         width: 512,
@@ -124,7 +124,7 @@ fn test_vulkan_create_depth_texture() {
         data: None,
     };
 
-    let texture = renderer.create_texture(desc).unwrap();
+    let texture = graphics_device.create_texture(desc).unwrap();
     let info = texture.info();
 
     assert_eq!(info.format, TextureFormat::D32_FLOAT);
@@ -138,14 +138,14 @@ fn test_vulkan_create_depth_texture() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_vertex_buffer() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     let desc = BufferDesc {
         size: 1024,
         usage: BufferUsage::Vertex,
     };
 
-    let buffer = renderer.create_buffer(desc).unwrap();
+    let buffer = graphics_device.create_buffer(desc).unwrap();
 
     // Try to update buffer
     let data: Vec<u8> = vec![0u8; 256];
@@ -156,14 +156,14 @@ fn test_vulkan_create_vertex_buffer() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_index_buffer() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     let desc = BufferDesc {
         size: 512,
         usage: BufferUsage::Index,
     };
 
-    let buffer = renderer.create_buffer(desc).unwrap();
+    let buffer = graphics_device.create_buffer(desc).unwrap();
 
     // Create index data
     let indices: Vec<u16> = vec![0, 1, 2, 2, 3, 0];
@@ -178,14 +178,14 @@ fn test_vulkan_create_index_buffer() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_uniform_buffer() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     let desc = BufferDesc {
         size: 256,
         usage: BufferUsage::Uniform,
     };
 
-    let buffer = renderer.create_buffer(desc).unwrap();
+    let buffer = graphics_device.create_buffer(desc).unwrap();
 
     // Update with uniform data (e.g., MVP matrix)
     let data: Vec<u8> = vec![0u8; 64];
@@ -200,7 +200,7 @@ fn test_vulkan_create_uniform_buffer() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_vertex_shader() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     // Minimal valid SPIR-V shader (just the header)
     // This is a dummy shader for testing - in real usage, you'd load compiled shaders
@@ -213,7 +213,7 @@ fn test_vulkan_create_vertex_shader() {
     };
 
     // Note: This will likely fail with invalid SPIR-V, but tests the API
-    let _result = renderer.create_shader(desc);
+    let _result = graphics_device.create_shader(desc);
 
     // We don't assert success because we're using dummy SPIR-V
     // In a real test, you'd use valid compiled shaders
@@ -223,7 +223,7 @@ fn test_vulkan_create_vertex_shader() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_fragment_shader() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     let spirv_code = create_dummy_spirv_fragment_shader();
 
@@ -233,7 +233,7 @@ fn test_vulkan_create_fragment_shader() {
         code: &spirv_code,
     };
 
-    let _result = renderer.create_shader(desc);
+    let _result = graphics_device.create_shader(desc);
 }
 
 // ============================================================================
@@ -244,9 +244,9 @@ fn test_vulkan_create_fragment_shader() {
 #[ignore] // Requires GPU
 fn test_vulkan_create_command_list() {
     let (window, _event_loop) = create_test_window();
-    let renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
-    let mut cmd_list = renderer.create_command_list().unwrap();
+    let mut cmd_list = graphics_device.create_command_list().unwrap();
 
     // Test basic command list operations
     cmd_list.begin().unwrap();
@@ -257,12 +257,12 @@ fn test_vulkan_create_command_list() {
 #[ignore] // Requires GPU
 fn test_vulkan_multiple_command_lists() {
     let (window, _event_loop) = create_test_window();
-    let renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     // Create multiple command lists
-    let mut cmd1 = renderer.create_command_list().unwrap();
-    let mut cmd2 = renderer.create_command_list().unwrap();
-    let mut cmd3 = renderer.create_command_list().unwrap();
+    let mut cmd1 = graphics_device.create_command_list().unwrap();
+    let mut cmd2 = graphics_device.create_command_list().unwrap();
+    let mut cmd3 = graphics_device.create_command_list().unwrap();
 
     cmd1.begin().unwrap();
     cmd1.end().unwrap();
@@ -282,18 +282,18 @@ fn test_vulkan_multiple_command_lists() {
 #[ignore] // Requires GPU
 fn test_vulkan_wait_idle() {
     let (window, _event_loop) = create_test_window();
-    let renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
-    renderer.wait_idle().unwrap();
+    graphics_device.wait_idle().unwrap();
 }
 
 #[test]
 #[ignore] // Requires GPU
 fn test_vulkan_get_stats() {
     let (window, _event_loop) = create_test_window();
-    let renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
-    let stats = renderer.stats();
+    let stats = graphics_device.stats();
 
     // Stats should be initialized
     assert_eq!(stats.draw_calls, 0);
@@ -304,11 +304,11 @@ fn test_vulkan_get_stats() {
 #[ignore] // Requires GPU
 fn test_vulkan_resize() {
     let (window, _event_loop) = create_test_window();
-    let mut renderer = VulkanRenderer::new(&window, Config::default()).unwrap();
+    let mut graphics_device = VulkanGraphicsDevice::new(&window, Config::default()).unwrap();
 
     // Test resize operation
-    renderer.resize(1024, 768);
-    renderer.resize(1920, 1080);
+    graphics_device.resize(1024, 768);
+    graphics_device.resize(1920, 1080);
 }
 
 // ============================================================================

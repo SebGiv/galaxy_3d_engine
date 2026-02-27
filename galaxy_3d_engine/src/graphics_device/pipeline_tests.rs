@@ -2,7 +2,7 @@
 //!
 //! Tests IndexType, PrimitiveTopology, VertexInputRate, and VertexLayout types.
 
-use crate::renderer::{
+use crate::graphics_device::{
     IndexType, PrimitiveTopology, VertexInputRate, VertexLayout,
     VertexBinding, VertexAttribute, BufferFormat,
 };

@@ -36,7 +36,7 @@ impl SamplerCache {
     }
 
     /// Destroy all cached VkSamplers and release the GpuContext reference.
-    /// Must be called during VulkanRenderer::drop() while the device is still alive.
+    /// Must be called during VulkanGraphicsDevice::drop() while the device is still alive.
     pub(crate) fn shutdown(&mut self) {
         if let Some(ctx) = &self.ctx {
             for (_, sampler) in self.cache.drain() {

@@ -1,11 +1,11 @@
-/// Renderer trait - main rendering factory interface
+/// GraphicsDevice trait - main rendering factory interface
 
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::collections::HashMap;
 use winit::window::Window;
 
-use crate::renderer::{
+use crate::graphics_device::{
     Buffer, Texture, Shader, Pipeline, BindingGroup,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
     BindingResource,
@@ -106,7 +106,7 @@ impl ValidationStats {
     }
 }
 
-/// Renderer configuration
+/// Graphics device configuration
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Enable validation/debug layers
@@ -145,9 +145,9 @@ impl Default for Config {
     }
 }
 
-/// Renderer statistics
+/// Graphics device statistics
 #[derive(Debug, Clone, Copy, Default)]
-pub struct RendererStats {
+pub struct GraphicsDeviceStats {
     /// Number of draw calls this frame
     pub draw_calls: u32,
     /// Number of triangles drawn this frame
@@ -157,14 +157,14 @@ pub struct RendererStats {
 }
 
 // ============================================================================
-// Renderer trait
+// GraphicsDevice trait
 // ============================================================================
 
-/// Main renderer trait
+/// Main graphics device trait
 ///
 /// This is the central factory interface for creating GPU resources.
-/// Implemented by backend-specific renderers (e.g., VulkanRenderer).
-pub trait Renderer: Send + Sync {
+/// Implemented by backend-specific devices (e.g., VulkanGraphicsDevice).
+pub trait GraphicsDevice: Send + Sync {
     /// Create a texture
     ///
     /// # Arguments
@@ -300,7 +300,7 @@ pub trait Renderer: Send + Sync {
     /// Create an immutable binding group (descriptor set) for a pipeline
     ///
     /// The binding group layout is deduced from the pipeline at the given set index.
-    /// The pool is managed internally by the renderer.
+    /// The pool is managed internally by the graphics device.
     ///
     /// # Arguments
     ///
@@ -321,10 +321,10 @@ pub trait Renderer: Send + Sync {
     /// Wait for all GPU operations to complete
     fn wait_idle(&self) -> Result<()>;
 
-    /// Get statistics about the renderer
-    fn stats(&self) -> RendererStats;
+    /// Get statistics about the graphics device
+    fn stats(&self) -> GraphicsDeviceStats;
 
-    /// Notify renderer that the window has been resized
+    /// Notify graphics device that the window has been resized
     ///
     /// # Arguments
     ///
@@ -334,18 +334,18 @@ pub trait Renderer: Send + Sync {
 }
 
 // ============================================================================
-// Plugin system for registering renderer backends
+// Plugin system for registering graphics device backends
 // ============================================================================
 
-/// Renderer plugin factory function type
-type RendererPluginFactory = Box<dyn Fn(&Window, Config) -> Result<Arc<Mutex<dyn Renderer>>> + Send + Sync>;
+/// Graphics device plugin factory function type
+type GraphicsDevicePluginFactory = Box<dyn Fn(&Window, Config) -> Result<Arc<Mutex<dyn GraphicsDevice>>> + Send + Sync>;
 
-/// Plugin registry for renderer backends
-pub struct RendererPluginRegistry {
-    plugins: HashMap<&'static str, RendererPluginFactory>,
+/// Plugin registry for graphics device backends
+pub struct GraphicsDevicePluginRegistry {
+    plugins: HashMap<&'static str, GraphicsDevicePluginFactory>,
 }
 
-impl RendererPluginRegistry {
+impl GraphicsDevicePluginRegistry {
     /// Create a new plugin registry
     fn new() -> Self {
         Self {
@@ -361,23 +361,23 @@ impl RendererPluginRegistry {
     /// * `factory` - Factory function to create the plugin
     pub fn register_plugin<F>(&mut self, name: &'static str, factory: F)
     where
-        F: Fn(&Window, Config) -> Result<Arc<Mutex<dyn Renderer>>> + Send + Sync + 'static,
+        F: Fn(&Window, Config) -> Result<Arc<Mutex<dyn GraphicsDevice>>> + Send + Sync + 'static,
     {
         self.plugins.insert(name, Box::new(factory));
     }
 
-    /// Create a renderer using a registered plugin
+    /// Create a graphics device using a registered plugin
     ///
     /// # Arguments
     ///
     /// * `plugin_name` - Name of the plugin to use
     /// * `window` - Window to render to
-    /// * `config` - Renderer configuration
+    /// * `config` - Graphics device configuration
     ///
     /// # Returns
     ///
-    /// A shared, thread-safe renderer instance
-    pub fn create_renderer(&self, plugin_name: &str, window: &Window, config: Config) -> Result<Arc<Mutex<dyn Renderer>>> {
+    /// A shared, thread-safe graphics device instance
+    pub fn create_graphics_device(&self, plugin_name: &str, window: &Window, config: Config) -> Result<Arc<Mutex<dyn GraphicsDevice>>> {
         self.plugins
             .get(plugin_name)
             .ok_or_else(|| Error::InitializationFailed(format!("Plugin '{}' not found", plugin_name)))?
@@ -385,30 +385,30 @@ impl RendererPluginRegistry {
     }
 }
 
-static RENDERER_REGISTRY: Mutex<Option<RendererPluginRegistry>> = Mutex::new(None);
+static GRAPHICS_DEVICE_REGISTRY: Mutex<Option<GraphicsDevicePluginRegistry>> = Mutex::new(None);
 
-/// Get the global renderer plugin registry
-pub fn renderer_plugin_registry() -> &'static Mutex<Option<RendererPluginRegistry>> {
+/// Get the global graphics device plugin registry
+pub fn graphics_device_plugin_registry() -> &'static Mutex<Option<GraphicsDevicePluginRegistry>> {
     // Initialize on first access
-    let mut registry = RENDERER_REGISTRY.lock().unwrap();
+    let mut registry = GRAPHICS_DEVICE_REGISTRY.lock().unwrap();
     if registry.is_none() {
-        *registry = Some(RendererPluginRegistry::new());
+        *registry = Some(GraphicsDevicePluginRegistry::new());
     }
     drop(registry);
-    &RENDERER_REGISTRY
+    &GRAPHICS_DEVICE_REGISTRY
 }
 
-/// Register a renderer plugin in the global registry
+/// Register a graphics device plugin in the global registry
 ///
 /// # Arguments
 ///
 /// * `name` - Plugin name
 /// * `factory` - Factory function
-pub fn register_renderer_plugin<F>(name: &'static str, factory: F)
+pub fn register_graphics_device_plugin<F>(name: &'static str, factory: F)
 where
-    F: Fn(&Window, Config) -> Result<Arc<Mutex<dyn Renderer>>> + Send + Sync + 'static,
+    F: Fn(&Window, Config) -> Result<Arc<Mutex<dyn GraphicsDevice>>> + Send + Sync + 'static,
 {
-    renderer_plugin_registry()
+    graphics_device_plugin_registry()
         .lock()
         .unwrap()
         .as_mut()

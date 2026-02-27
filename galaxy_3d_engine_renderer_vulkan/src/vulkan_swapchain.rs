@@ -225,7 +225,7 @@ impl Swapchain {
     /// Get synchronization info for submitting with this swapchain (crate-private)
     ///
     /// Returns (wait_semaphore, signal_semaphore) for the current frame and image.
-    /// This is used internally by VulkanRenderer::submit_with_swapchain().
+    /// This is used internally by VulkanGraphicsDevice::submit_with_swapchain().
     pub(crate) fn sync_info(&self, image_index: u32) -> (vk::Semaphore, vk::Semaphore) {
         (
             self.image_available_semaphores[self.current_frame],

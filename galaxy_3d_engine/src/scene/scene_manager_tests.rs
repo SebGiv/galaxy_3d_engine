@@ -5,34 +5,34 @@
 
 use super::*;
 use std::sync::{Arc, Mutex};
-use crate::renderer::mock_renderer::MockRenderer;
+use crate::graphics_device::mock_graphics_device::MockGraphicsDevice;
 use crate::resource::buffer::{Buffer, BufferDesc, BufferKind, FieldDesc, FieldType};
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-fn create_mock_renderer() -> Arc<Mutex<dyn crate::renderer::Renderer>> {
-    Arc::new(Mutex::new(MockRenderer::new()))
+fn create_mock_graphics_device() -> Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>> {
+    Arc::new(Mutex::new(MockGraphicsDevice::new()))
 }
 
 fn create_test_buffers(
-    renderer: Arc<Mutex<dyn crate::renderer::Renderer>>,
+    graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>,
 ) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
     let frame_buffer = Arc::new(Buffer::from_desc(BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Uniform,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap());
     let instance_buffer = Arc::new(Buffer::from_desc(BufferDesc {
-        renderer: renderer.clone(),
+        graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap());
     let material_buffer = Arc::new(Buffer::from_desc(BufferDesc {
-        renderer,
+        graphics_device,
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
@@ -44,9 +44,9 @@ fn create_scene_with_mock(
     sm: &mut SceneManager,
     name: &str,
 ) -> crate::error::Result<Arc<Mutex<Scene>>> {
-    let renderer = create_mock_renderer();
-    let (fb, ib, mb) = create_test_buffers(renderer.clone());
-    sm.create_scene(name, renderer, fb, ib, mb)
+    let graphics_device = create_mock_graphics_device();
+    let (fb, ib, mb) = create_test_buffers(graphics_device.clone());
+    sm.create_scene(name, graphics_device, fb, ib, mb)
 }
 
 // ============================================================================

@@ -20,7 +20,7 @@ pub enum Error {
     /// Invalid resource (texture, buffer, shader, etc.)
     InvalidResource(String),
 
-    /// Initialization failed (engine, renderer, subsystems)
+    /// Initialization failed (engine, graphics_device, subsystems)
     InitializationFailed(String),
 }
 

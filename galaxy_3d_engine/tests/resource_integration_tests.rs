@@ -12,7 +12,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     BufferFormat, VertexLayout, VertexBinding, VertexAttribute, VertexInputRate,
     IndexType, PrimitiveTopology,
 };
-use gpu_test_utils::get_test_renderer;
+use gpu_test_utils::get_test_graphics_device;
 use serial_test::serial;
 
 // ============================================================================
@@ -23,15 +23,15 @@ use serial_test::serial;
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_create_texture_with_vulkan() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
 
     // Create texture descriptor
     let desc = TextureDesc {
-        renderer: renderer_arc.clone(),
+        graphics_device: graphics_device_arc.clone(),
         texture: RenderTextureDesc {
             width: 256,
             height: 256,
@@ -64,8 +64,8 @@ fn test_integration_create_texture_with_vulkan() {
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_create_geometry_with_vulkan() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
@@ -109,7 +109,7 @@ fn test_integration_create_geometry_with_vulkan() {
     // Create geometry descriptor
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
-        renderer: renderer_arc.clone(),
+        graphics_device: graphics_device_arc.clone(),
         vertex_data,
         index_data: Some(index_data),
         vertex_layout,
@@ -153,8 +153,8 @@ fn test_integration_create_geometry_with_vulkan() {
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_multiple_resources() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
@@ -162,7 +162,7 @@ fn test_integration_multiple_resources() {
     // Create multiple textures
     for i in 0..3 {
         let desc = TextureDesc {
-            renderer: renderer_arc.clone(),
+            graphics_device: graphics_device_arc.clone(),
             texture: RenderTextureDesc {
                 width: 128,
                 height: 128,
@@ -203,8 +203,8 @@ fn test_integration_multiple_resources() {
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_geometry_with_multiple_lods() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
@@ -254,7 +254,7 @@ fn test_integration_geometry_with_multiple_lods() {
     // Create geometry descriptor with 3 LODs
     let desc = GeometryDesc {
         name: "lod_geom".to_string(),
-        renderer: renderer_arc.clone(),
+        graphics_device: graphics_device_arc.clone(),
         vertex_data,
         index_data: Some(index_data),
         vertex_layout,
@@ -330,8 +330,8 @@ fn test_integration_geometry_with_multiple_lods() {
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_geometry_with_multiple_submeshes() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
@@ -374,7 +374,7 @@ fn test_integration_geometry_with_multiple_submeshes() {
     // Create geometry descriptor with multiple submeshes
     let desc = GeometryDesc {
         name: "multi_submesh".to_string(),
-        renderer: renderer_arc.clone(),
+        graphics_device: graphics_device_arc.clone(),
         vertex_data,
         index_data: Some(index_data),
         vertex_layout,
@@ -435,8 +435,8 @@ fn test_integration_geometry_with_multiple_submeshes() {
 #[ignore] // Requires GPU - Stress test
 #[serial]
 fn test_integration_many_resources_stress_test() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
@@ -444,7 +444,7 @@ fn test_integration_many_resources_stress_test() {
     // Create many textures (50 textures)
     for i in 0..50 {
         let desc = TextureDesc {
-            renderer: renderer_arc.clone(),
+            graphics_device: graphics_device_arc.clone(),
             texture: RenderTextureDesc {
                 width: 64,
                 height: 64,
@@ -502,7 +502,7 @@ fn test_integration_many_resources_stress_test() {
 
         let desc = GeometryDesc {
             name: format!("geom_{}", i),
-            renderer: renderer_arc.clone(),
+            graphics_device: graphics_device_arc.clone(),
             vertex_data,
             index_data: Some(index_data),
             vertex_layout,

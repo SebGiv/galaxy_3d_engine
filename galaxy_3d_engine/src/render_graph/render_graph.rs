@@ -13,7 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use crate::error::Result;
 use crate::engine_bail;
-use crate::renderer;
+use crate::graphics_device;
 use crate::resource;
 use super::pass_action::PassAction;
 use super::render_pass::RenderPass;
@@ -31,7 +31,7 @@ pub struct RenderGraph {
     /// Sequential execution order (filled by compile)
     execution_order: Vec<usize>,
     /// Command lists for double/triple buffering (created by compile)
-    command_lists: Vec<Box<dyn renderer::CommandList>>,
+    command_lists: Vec<Box<dyn graphics_device::CommandList>>,
     /// Current frame index (points to the active command list)
     current_frame: usize,
 }
@@ -89,7 +89,7 @@ impl RenderGraph {
         texture: Arc<resource::Texture>,
         layer: u32,
         mip_level: u32,
-        renderer: &dyn renderer::Renderer,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<usize> {
         if self.target_names.contains_key(name) {
             engine_bail!("galaxy3d::RenderGraph",
@@ -97,7 +97,7 @@ impl RenderGraph {
         }
 
         let id = self.targets.len();
-        self.targets.push(RenderTarget::new(texture, layer, mip_level, renderer)?);
+        self.targets.push(RenderTarget::new(texture, layer, mip_level, graphics_device)?);
         self.target_names.insert(name.to_string(), id);
         Ok(id)
     }
@@ -244,7 +244,7 @@ impl RenderGraph {
     ///
     /// Returns an error if the target index is out of bounds or if the
     /// target is not a color target.
-    pub fn set_color_load_op(&mut self, target_id: usize, op: renderer::LoadOp) -> Result<()> {
+    pub fn set_color_load_op(&mut self, target_id: usize, op: graphics_device::LoadOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
             TargetOps::Color { load_op, .. } => {
@@ -264,7 +264,7 @@ impl RenderGraph {
     ///
     /// Returns an error if the target index is out of bounds or if the
     /// target is not a color target.
-    pub fn set_color_store_op(&mut self, target_id: usize, op: renderer::StoreOp) -> Result<()> {
+    pub fn set_color_store_op(&mut self, target_id: usize, op: graphics_device::StoreOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
             TargetOps::Color { store_op, .. } => {
@@ -324,7 +324,7 @@ impl RenderGraph {
     ///
     /// Returns an error if the target index is out of bounds or if the
     /// target is not a depth/stencil target.
-    pub fn set_depth_load_op(&mut self, target_id: usize, op: renderer::LoadOp) -> Result<()> {
+    pub fn set_depth_load_op(&mut self, target_id: usize, op: graphics_device::LoadOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
             TargetOps::DepthStencil { depth_load_op, .. } => {
@@ -344,7 +344,7 @@ impl RenderGraph {
     ///
     /// Returns an error if the target index is out of bounds or if the
     /// target is not a depth/stencil target.
-    pub fn set_depth_store_op(&mut self, target_id: usize, op: renderer::StoreOp) -> Result<()> {
+    pub fn set_depth_store_op(&mut self, target_id: usize, op: graphics_device::StoreOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
             TargetOps::DepthStencil { depth_store_op, .. } => {
@@ -364,7 +364,7 @@ impl RenderGraph {
     ///
     /// Returns an error if the target index is out of bounds or if the
     /// target is not a depth/stencil target.
-    pub fn set_stencil_load_op(&mut self, target_id: usize, op: renderer::LoadOp) -> Result<()> {
+    pub fn set_stencil_load_op(&mut self, target_id: usize, op: graphics_device::LoadOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
             TargetOps::DepthStencil { stencil_load_op, .. } => {
@@ -384,7 +384,7 @@ impl RenderGraph {
     ///
     /// Returns an error if the target index is out of bounds or if the
     /// target is not a depth/stencil target.
-    pub fn set_stencil_store_op(&mut self, target_id: usize, op: renderer::StoreOp) -> Result<()> {
+    pub fn set_stencil_store_op(&mut self, target_id: usize, op: graphics_device::StoreOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
             TargetOps::DepthStencil { stencil_store_op, .. } => {
@@ -413,8 +413,8 @@ impl RenderGraph {
     ///
     /// This method:
     /// 1. Computes the execution order via topological sort (Kahn's algorithm)
-    /// 2. For each pass with outputs, creates a `renderer::RenderPass`
-    ///    and a `renderer::Framebuffer` from its output targets
+    /// 2. For each pass with outputs, creates a `graphics_device::RenderPass`
+    ///    and a `graphics_device::Framebuffer` from its output targets
     /// 3. Creates `frames_in_flight` command lists for double/triple buffering
     ///
     /// Call once after building the graph. Call `execute()` each frame.
@@ -425,7 +425,7 @@ impl RenderGraph {
     /// or if `frames_in_flight` is 0.
     pub fn compile(
         &mut self,
-        renderer: &dyn renderer::Renderer,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
         frames_in_flight: usize,
     ) -> Result<()> {
         if frames_in_flight == 0 {
@@ -453,7 +453,7 @@ impl RenderGraph {
 
             for &target_id in &outputs {
                 let target = &self.targets[target_id];
-                let rt = target.renderer_render_target().clone();
+                let rt = target.graphics_device_render_target().clone();
 
                 // Use dimensions from the first output target
                 if fb_width == 0 {
@@ -463,15 +463,15 @@ impl RenderGraph {
 
                 match target.ops() {
                     TargetOps::Color { load_op, store_op, .. } => {
-                        color_attachment_descs.push(renderer::AttachmentDesc {
+                        color_attachment_descs.push(graphics_device::AttachmentDesc {
                             format: rt.format(),
                             samples: 1,
                             load_op: *load_op,
                             store_op: *store_op,
-                            stencil_load_op: renderer::LoadOp::DontCare,
-                            stencil_store_op: renderer::StoreOp::DontCare,
-                            initial_layout: renderer::ImageLayout::Undefined,
-                            final_layout: renderer::ImageLayout::ColorAttachment,
+                            stencil_load_op: graphics_device::LoadOp::DontCare,
+                            stencil_store_op: graphics_device::StoreOp::DontCare,
+                            initial_layout: graphics_device::ImageLayout::Undefined,
+                            final_layout: graphics_device::ImageLayout::ColorAttachment,
                         });
                         color_targets.push(rt);
                     }
@@ -479,15 +479,15 @@ impl RenderGraph {
                         depth_load_op, depth_store_op,
                         stencil_load_op, stencil_store_op, ..
                     } => {
-                        depth_attachment_desc = Some(renderer::AttachmentDesc {
+                        depth_attachment_desc = Some(graphics_device::AttachmentDesc {
                             format: rt.format(),
                             samples: 1,
                             load_op: *depth_load_op,
                             store_op: *depth_store_op,
                             stencil_load_op: *stencil_load_op,
                             stencil_store_op: *stencil_store_op,
-                            initial_layout: renderer::ImageLayout::Undefined,
-                            final_layout: renderer::ImageLayout::DepthStencilAttachment,
+                            initial_layout: graphics_device::ImageLayout::Undefined,
+                            final_layout: graphics_device::ImageLayout::DepthStencilAttachment,
                         });
                         depth_target = Some(rt);
                     }
@@ -495,30 +495,30 @@ impl RenderGraph {
             }
 
             // Create GPU render pass
-            let render_pass_desc = renderer::RenderPassDesc {
+            let render_pass_desc = graphics_device::RenderPassDesc {
                 color_attachments: color_attachment_descs,
                 depth_stencil_attachment: depth_attachment_desc,
             };
-            let render_pass = renderer.create_render_pass(&render_pass_desc)?;
+            let render_pass = graphics_device.create_render_pass(&render_pass_desc)?;
 
             // Create GPU framebuffer
-            let fb_desc = renderer::FramebufferDesc {
+            let fb_desc = graphics_device::FramebufferDesc {
                 render_pass: &render_pass,
                 color_attachments: color_targets,
                 depth_stencil_attachment: depth_target,
                 width: fb_width,
                 height: fb_height,
             };
-            let framebuffer = renderer.create_framebuffer(&fb_desc)?;
+            let framebuffer = graphics_device.create_framebuffer(&fb_desc)?;
 
-            self.passes[pass_idx].set_renderer_render_pass(render_pass);
-            self.passes[pass_idx].set_renderer_framebuffer(framebuffer);
+            self.passes[pass_idx].set_graphics_device_render_pass(render_pass);
+            self.passes[pass_idx].set_graphics_device_framebuffer(framebuffer);
         }
 
         // Create command lists for double/triple buffering
         self.command_lists.clear();
         for _ in 0..frames_in_flight {
-            self.command_lists.push(renderer.create_command_list()?);
+            self.command_lists.push(graphics_device.create_command_list()?);
         }
         // Initialize so that first execute() advances to index 0
         self.current_frame = frames_in_flight - 1;
@@ -591,7 +591,7 @@ impl RenderGraph {
     /// Returns an error if compile() was not called, or if any recording fails.
     pub fn execute<F>(&mut self, post_passes: F) -> Result<()>
     where
-        F: FnOnce(&mut dyn renderer::CommandList) -> Result<()>,
+        F: FnOnce(&mut dyn graphics_device::CommandList) -> Result<()>,
     {
         if self.command_lists.is_empty() {
             engine_bail!("galaxy3d::RenderGraph",
@@ -612,13 +612,13 @@ impl RenderGraph {
         let order = self.execution_order.clone();
 
         for &pass_idx in &order {
-            let rp = self.passes[pass_idx].renderer_render_pass()
+            let rp = self.passes[pass_idx].graphics_device_render_pass()
                 .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
-                    "Pass {} has no renderer render pass (not compiled?)", pass_idx))?
+                    "Pass {} has no graphics_device render pass (not compiled?)", pass_idx))?
                 .clone();
-            let fb = self.passes[pass_idx].renderer_framebuffer()
+            let fb = self.passes[pass_idx].graphics_device_framebuffer()
                 .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
-                    "Pass {} has no renderer framebuffer (not compiled?)", pass_idx))?
+                    "Pass {} has no graphics_device framebuffer (not compiled?)", pass_idx))?
                 .clone();
 
             // Build clear values from per-target ops
@@ -647,7 +647,7 @@ impl RenderGraph {
     /// # Errors
     ///
     /// Returns an error if compile() was not called.
-    pub fn command_list(&self) -> Result<&dyn renderer::CommandList> {
+    pub fn command_list(&self) -> Result<&dyn graphics_device::CommandList> {
         if self.command_lists.is_empty() {
             engine_bail!("galaxy3d::RenderGraph",
                 "No command lists — call compile() first");
@@ -658,21 +658,21 @@ impl RenderGraph {
     /// Build clear values for a pass based on its output targets' ops.
     ///
     /// Color attachments first (matching compile() order), then depth/stencil.
-    fn build_clear_values(&self, pass_idx: usize) -> Vec<renderer::ClearValue> {
+    fn build_clear_values(&self, pass_idx: usize) -> Vec<graphics_device::ClearValue> {
         let pass = &self.passes[pass_idx];
         let mut clear_values = Vec::new();
 
         // Color attachments first
         for &target_id in pass.outputs() {
             if let TargetOps::Color { clear_color, .. } = self.targets[target_id].ops() {
-                clear_values.push(renderer::ClearValue::Color(*clear_color));
+                clear_values.push(graphics_device::ClearValue::Color(*clear_color));
             }
         }
 
         // Depth/stencil attachment last
         for &target_id in pass.outputs() {
             if let TargetOps::DepthStencil { depth_clear, stencil_clear, .. } = self.targets[target_id].ops() {
-                clear_values.push(renderer::ClearValue::DepthStencil {
+                clear_values.push(graphics_device::ClearValue::DepthStencil {
                     depth: *depth_clear,
                     stencil: *stencil_clear,
                 });

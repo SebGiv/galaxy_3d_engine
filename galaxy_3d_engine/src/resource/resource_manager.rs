@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
-use crate::renderer;
+use crate::graphics_device;
 use crate::resource::texture::{
     Texture,
     TextureDesc, LayerDesc, AtlasRegionDesc,
@@ -103,13 +103,13 @@ impl ResourceManager {
 
     /// Create a texture (simple or indexed, with optional atlas regions per layer)
     ///
-    /// Internally creates the GPU texture and descriptor set via the renderer.
+    /// Internally creates the GPU texture and descriptor set via the graphics_device.
     /// Returns the created texture for immediate use.
     ///
     /// # Arguments
     ///
     /// * `name` - Unique name for this texture resource
-    /// * `desc` - Texture descriptor with renderer, texture settings, and layers
+    /// * `desc` - Texture descriptor with graphics_device, texture settings, and layers
     ///
     pub fn create_texture(&mut self, name: String, desc: TextureDesc) -> Result<Arc<Texture>> {
         if self.textures.contains_key(&name) {
@@ -220,7 +220,7 @@ impl ResourceManager {
     /// # Arguments
     ///
     /// * `name` - Unique name for this geometry resource (group name)
-    /// * `desc` - Geometry description with renderer, vertex/index data and meshes
+    /// * `desc` - Geometry description with graphics_device, vertex/index data and meshes
     ///
     pub fn create_geometry(&mut self, name: String, desc: GeometryDesc) -> Result<Arc<Geometry>> {
         if self.geometries.contains_key(&name) {
@@ -361,13 +361,13 @@ impl ResourceManager {
 
     /// Create a pipeline resource with optional variants
     ///
-    /// Internally creates GPU pipelines for each variant via the renderer.
+    /// Internally creates GPU pipelines for each variant via the graphics_device.
     /// Returns the created pipeline for immediate use.
     ///
     /// # Arguments
     ///
     /// * `name` - Unique name for this pipeline resource
-    /// * `desc` - Pipeline descriptor with renderer and variant configurations
+    /// * `desc` - Pipeline descriptor with graphics_device and variant configurations
     ///
     pub fn create_pipeline(&mut self, name: String, desc: PipelineDesc) -> Result<Arc<Pipeline>> {
         if self.pipelines.contains_key(&name) {
@@ -660,7 +660,7 @@ impl ResourceManager {
     /// # Arguments
     ///
     /// * `name` - Unique name for this buffer resource
-    /// * `desc` - Buffer descriptor with renderer, kind, fields, and element count
+    /// * `desc` - Buffer descriptor with graphics_device, kind, fields, and element count
     ///
     pub fn create_buffer(&mut self, name: String, desc: BufferDesc) -> Result<Arc<Buffer>> {
         if self.buffers.contains_key(&name) {
@@ -718,10 +718,10 @@ impl ResourceManager {
     pub fn create_default_frame_uniform_buffer(
         &mut self,
         name: String,
-        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     ) -> Result<Arc<Buffer>> {
         let buffer = self.create_buffer(name, BufferDesc {
-            renderer,
+            graphics_device,
             kind: BufferKind::Uniform,
             fields: vec![
                 FieldDesc { name: "view".to_string(),             field_type: FieldType::Mat4 },
@@ -771,11 +771,11 @@ impl ResourceManager {
     pub fn create_default_instance_buffer(
         &mut self,
         name: String,
-        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
     ) -> Result<Arc<Buffer>> {
         self.create_buffer(name, BufferDesc {
-            renderer,
+            graphics_device,
             kind: BufferKind::Storage,
             fields: vec![
                 FieldDesc { name: "world".to_string(),          field_type: FieldType::Mat4 },
@@ -804,11 +804,11 @@ impl ResourceManager {
     pub fn create_default_material_buffer(
         &mut self,
         name: String,
-        renderer: Arc<Mutex<dyn renderer::Renderer>>,
+        graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
     ) -> Result<Arc<Buffer>> {
         let buffer = self.create_buffer(name, BufferDesc {
-            renderer,
+            graphics_device,
             kind: BufferKind::Storage,
             fields: vec![
                 FieldDesc { name: "baseColor".to_string(),                field_type: FieldType::Vec4 },

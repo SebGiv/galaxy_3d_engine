@@ -1,6 +1,6 @@
-/// VulkanRenderer - Vulkan implementation of Renderer trait
+/// VulkanGraphicsDevice - Vulkan implementation of GraphicsDevice trait
 
-use galaxy_3d_engine::galaxy3d::{Renderer, Result, Error};
+use galaxy_3d_engine::galaxy3d::{GraphicsDevice, Result, Error};
 use galaxy_3d_engine::galaxy3d::render::{
     CommandList as RendererCommandList, RenderTarget as RendererRenderTarget,
     RenderPass as RendererRenderPass, Swapchain as RendererSwapchain,
@@ -15,7 +15,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     ScalarKind, PipelineReflection,
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
-    RendererStats, VertexInputRate,
+    GraphicsDeviceStats, VertexInputRate,
     Config, DebugSeverity, TextureUsage,
     MipmapMode, ManualMipmapData,
     CullMode, FrontFace, PolygonMode, CompareOp, StencilOp, StencilOpState,
@@ -46,7 +46,7 @@ use crate::vulkan_context::GpuContext;
 ///
 /// Central object for creating resources and submitting commands.
 /// Completely separated from swapchain and presentation logic.
-pub struct VulkanRenderer {
+pub struct VulkanGraphicsDevice {
     /// Vulkan entry (needed for swapchain surface creation)
     _entry: ash::Entry,
     /// Vulkan instance reference (stored in GpuContext, kept here for swapchain creation)
@@ -81,7 +81,7 @@ pub struct VulkanRenderer {
     gpu_context: Arc<GpuContext>,
 }
 
-impl VulkanRenderer {
+impl VulkanGraphicsDevice {
     /// Submit command lists with synchronization for swapchain presentation
     ///
     /// # Arguments
@@ -147,7 +147,7 @@ impl VulkanRenderer {
     /// # Arguments
     ///
     /// * `window` - Window for surface creation
-    /// * `config` - Renderer configuration
+    /// * `config` - GraphicsDevice configuration
     ///
     /// Create a descriptor pool with fixed capacity (1024 sets).
     /// Called during init and when the current pool is exhausted.
@@ -530,7 +530,7 @@ impl VulkanRenderer {
         }
     }
 
-    /// Convert renderer ShaderStage to ShaderStageFlags
+    /// Convert graphics_device ShaderStage to ShaderStageFlags
     fn shader_stage_to_flags(stage: ShaderStage) -> ShaderStageFlags {
         match stage {
             ShaderStage::Vertex => ShaderStageFlags::VERTEX,
@@ -587,7 +587,7 @@ impl VulkanRenderer {
         Ok((bindings, push_constants))
     }
 
-    /// Convert spirq descriptor type to renderer BindingType
+    /// Convert spirq descriptor type to graphics_device BindingType
     fn spirq_desc_type_to_binding_type(desc_ty: spirq::ty::DescriptorType) -> Result<BindingType> {
         use spirq::ty::DescriptorType;
         match desc_ty {
@@ -940,7 +940,7 @@ impl VulkanRenderer {
 
 }
 
-impl Renderer for VulkanRenderer {
+impl GraphicsDevice for VulkanGraphicsDevice {
     fn create_command_list(&self) -> Result<Box<dyn RendererCommandList>> {
         let cmd_list = CommandList::new(
             self.device.clone(),
@@ -2550,8 +2550,8 @@ impl Renderer for VulkanRenderer {
         }
     }
 
-    fn stats(&self) -> RendererStats {
-        RendererStats::default()
+    fn stats(&self) -> GraphicsDeviceStats {
+        GraphicsDeviceStats::default()
     }
 
     fn resize(&mut self, _width: u32, _height: u32) {
@@ -2559,7 +2559,7 @@ impl Renderer for VulkanRenderer {
     }
 }
 
-impl Drop for VulkanRenderer {
+impl Drop for VulkanGraphicsDevice {
     fn drop(&mut self) {
         unsafe {
             // Wait for device to finish
@@ -2570,7 +2570,7 @@ impl Drop for VulkanRenderer {
             //    After this, self.gpu_context is the sole Arc<GpuContext> owner.
             self.sampler_cache.get_mut().unwrap().shutdown();
 
-            // 2. Destroy VulkanRenderer-owned Vulkan objects
+            // 2. Destroy VulkanGraphicsDevice-owned Vulkan objects
             for &fence in &self.submit_fences {
                 self.device.destroy_fence(fence, None);
             }
@@ -2588,7 +2588,7 @@ impl Drop for VulkanRenderer {
             }
 
             // 4. Drop allocator: free VkDeviceMemory pages BEFORE destroying device.
-            //    First drop VulkanRenderer's Arc, then GpuContext's ManuallyDrop Arc.
+            //    First drop VulkanGraphicsDevice's Arc, then GpuContext's ManuallyDrop Arc.
             ManuallyDrop::drop(&mut self.allocator);
             if let Some(ctx) = Arc::get_mut(&mut self.gpu_context) {
                 ManuallyDrop::drop(&mut ctx.allocator);

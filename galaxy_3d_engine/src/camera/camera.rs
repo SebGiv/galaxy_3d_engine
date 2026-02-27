@@ -8,7 +8,7 @@
 /// by the engine, owned and driven by the caller.
 
 use glam::Mat4;
-use crate::renderer::command_list::{Viewport, Rect2D};
+use crate::graphics_device::command_list::{Viewport, Rect2D};
 use super::frustum::Frustum;
 
 /// Low-level camera. A passive data container — computes nothing.

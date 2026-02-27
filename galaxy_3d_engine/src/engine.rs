@@ -1,13 +1,13 @@
 /// Galaxy3D Engine - Singleton manager for engine subsystems
 ///
-/// This module provides global singleton management for the renderer and other
+/// This module provides global singleton management for the graphics device and other
 /// engine subsystems. It uses thread-safe static storage with RwLock for safe
 /// concurrent access.
 
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock, Arc, Mutex};
 use std::time::SystemTime;
-use crate::renderer::Renderer;
+use crate::graphics_device::GraphicsDevice;
 use crate::resource::ResourceManager;
 use crate::scene::SceneManager;
 use crate::render_graph::RenderGraphManager;
@@ -24,8 +24,8 @@ static LOGGER: OnceLock<RwLock<Box<dyn Logger>>> = OnceLock::new();
 
 /// Internal state structure holding all engine singletons
 struct EngineState {
-    /// Named renderers (multiple renderers supported, keyed by name)
-    renderers: RwLock<HashMap<String, Arc<Mutex<dyn Renderer>>>>,
+    /// Named graphics devices (multiple devices supported, keyed by name)
+    graphics_devices: RwLock<HashMap<String, Arc<Mutex<dyn GraphicsDevice>>>>,
     /// Resource manager singleton
     resource_manager: RwLock<Option<Arc<Mutex<ResourceManager>>>>,
     /// Scene manager singleton
@@ -38,7 +38,7 @@ impl EngineState {
     /// Create a new empty engine state
     fn new() -> Self {
         Self {
-            renderers: RwLock::new(HashMap::new()),
+            graphics_devices: RwLock::new(HashMap::new()),
             resource_manager: RwLock::new(None),
             scene_manager: RwLock::new(None),
             render_graph_manager: RwLock::new(None),
@@ -50,7 +50,7 @@ impl EngineState {
 
 /// Main engine singleton manager
 ///
-/// Manages the lifecycle of all engine subsystems (renderer, resource manager, etc.)
+/// Manages the lifecycle of all engine subsystems (graphics_device, resource manager, etc.)
 /// using a singleton pattern with thread-safe access.
 pub struct Engine;
 
@@ -100,146 +100,146 @@ impl Engine {
             if let Ok(mut sm) = state.scene_manager.write() {
                 *sm = None;
             }
-            // Clear resource manager BEFORE renderers (resources reference GPU objects)
+            // Clear resource manager BEFORE graphics_devices (resources reference GPU objects)
             if let Ok(mut rm) = state.resource_manager.write() {
                 *rm = None;
             }
-            // Clear all renderers
-            if let Ok(mut renderers) = state.renderers.write() {
-                renderers.clear();
+            // Clear all graphics devices
+            if let Ok(mut graphics_devices) = state.graphics_devices.write() {
+                graphics_devices.clear();
             }
         }
     }
 
-    /// Create and register a named renderer
+    /// Create and register a named graphics device
     ///
-    /// Wraps the renderer in Arc and registers it in the global renderer map.
-    /// Returns the created renderer for immediate use.
+    /// Wraps the graphics device in Arc and registers it in the global graphics_device map.
+    /// Returns the created graphics device for immediate use.
     ///
     /// # Arguments
     ///
-    /// * `name` - Unique name for this renderer
-    /// * `renderer` - Any type implementing the Renderer trait
+    /// * `name` - Unique name for this graphics device
+    /// * `graphics_device` - Any type implementing the GraphicsDevice trait
     ///
     /// # Returns
     ///
-    /// The created renderer wrapped in `Arc<Mutex<dyn Renderer>>`
+    /// The created graphics device wrapped in `Arc<Mutex<dyn GraphicsDevice>>`
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The engine is not initialized
-    /// - A renderer with the same name already exists
-    /// - The renderers lock is poisoned
+    /// - A graphics device with the same name already exists
+    /// - The graphics devices lock is poisoned
     ///
-    pub fn create_renderer<R: Renderer + 'static>(name: &str, renderer: R) -> Result<Arc<Mutex<dyn Renderer>>> {
-        let arc_renderer: Arc<Mutex<dyn Renderer>> = Arc::new(Mutex::new(renderer));
+    pub fn create_graphics_device<R: GraphicsDevice + 'static>(name: &str, graphics_device: R) -> Result<Arc<Mutex<dyn GraphicsDevice>>> {
+        let arc_device: Arc<Mutex<dyn GraphicsDevice>> = Arc::new(Mutex::new(graphics_device));
 
-        Self::register_renderer(name, Arc::clone(&arc_renderer))?;
+        Self::register_graphics_device(name, Arc::clone(&arc_device))?;
 
-        crate::engine_info!("galaxy3d::Engine", "Renderer '{}' created successfully", name);
+        crate::engine_info!("galaxy3d::Engine", "GraphicsDevice '{}' created successfully", name);
 
-        Ok(arc_renderer)
+        Ok(arc_device)
     }
 
-    /// Register a renderer by name (internal use)
-    pub(crate) fn register_renderer(name: &str, renderer: Arc<Mutex<dyn Renderer>>) -> Result<()> {
+    /// Register a graphics device by name (internal use)
+    pub(crate) fn register_graphics_device(name: &str, graphics_device: Arc<Mutex<dyn GraphicsDevice>>) -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
             ))?;
 
-        let mut lock = state.renderers.write()
+        let mut lock = state.graphics_devices.write()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("Renderers lock poisoned".to_string())
+                Error::BackendError("GraphicsDevices lock poisoned".to_string())
             ))?;
 
         if lock.contains_key(name) {
             return Err(Self::log_and_return_error(
-                Error::InitializationFailed(format!("Renderer '{}' already exists. Call Engine::destroy_renderer() first.", name))
+                Error::InitializationFailed(format!("GraphicsDevice '{}' already exists. Call Engine::destroy_graphics_device() first.", name))
             ));
         }
 
-        lock.insert(name.to_string(), renderer);
+        lock.insert(name.to_string(), graphics_device);
         Ok(())
     }
 
-    /// Get a renderer by name
+    /// Get a graphics device by name
     ///
     /// # Arguments
     ///
-    /// * `name` - Name of the renderer to retrieve
+    /// * `name` - Name of the graphics device to retrieve
     ///
     /// # Returns
     ///
-    /// A shared pointer to the renderer wrapped in a Mutex for thread-safe access
+    /// A shared pointer to the graphics device wrapped in a Mutex for thread-safe access
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The engine is not initialized
-    /// - No renderer with the given name exists
+    /// - No graphics device with the given name exists
     ///
-    pub fn renderer(name: &str) -> Result<Arc<Mutex<dyn Renderer>>> {
+    pub fn graphics_device(name: &str) -> Result<Arc<Mutex<dyn GraphicsDevice>>> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized. Call Engine::initialize() first.".to_string())
             ))?;
 
-        let lock = state.renderers.read()
+        let lock = state.graphics_devices.read()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("Renderers lock poisoned".to_string())
+                Error::BackendError("GraphicsDevices lock poisoned".to_string())
             ))?;
 
         lock.get(name)
             .cloned()
             .ok_or_else(|| Self::log_and_return_error(
-                Error::InitializationFailed(format!("Renderer '{}' not found. Call Engine::create_renderer() first.", name))
+                Error::InitializationFailed(format!("GraphicsDevice '{}' not found. Call Engine::create_graphics_device() first.", name))
             ))
     }
 
-    /// Destroy a renderer by name
+    /// Destroy a graphics device by name
     ///
-    /// Removes the renderer from the map. Existing references remain valid until dropped.
+    /// Removes the graphics device from the map. Existing references remain valid until dropped.
     ///
     /// # Arguments
     ///
-    /// * `name` - Name of the renderer to destroy
+    /// * `name` - Name of the graphics device to destroy
     ///
     /// # Errors
     ///
     /// Returns an error if the engine is not initialized
     ///
-    pub fn destroy_renderer(name: &str) -> Result<()> {
+    pub fn destroy_graphics_device(name: &str) -> Result<()> {
         let state = ENGINE_STATE.get()
             .ok_or_else(|| Self::log_and_return_error(
                 Error::InitializationFailed("Engine not initialized".to_string())
             ))?;
 
-        let mut lock = state.renderers.write()
+        let mut lock = state.graphics_devices.write()
             .map_err(|_| Self::log_and_return_error(
-                Error::BackendError("Renderers lock poisoned".to_string())
+                Error::BackendError("GraphicsDevices lock poisoned".to_string())
             ))?;
 
         lock.remove(name);
 
-        crate::engine_info!("galaxy3d::Engine", "Renderer '{}' destroyed", name);
+        crate::engine_info!("galaxy3d::Engine", "GraphicsDevice '{}' destroyed", name);
 
         Ok(())
     }
 
-    /// Get the names of all registered renderers
-    pub fn renderer_names() -> Vec<String> {
+    /// Get the names of all registered graphics devices
+    pub fn graphics_device_names() -> Vec<String> {
         ENGINE_STATE.get()
-            .and_then(|state| state.renderers.read().ok())
+            .and_then(|state| state.graphics_devices.read().ok())
             .map(|lock| lock.keys().cloned().collect())
             .unwrap_or_default()
     }
 
-    /// Get the number of registered renderers
-    pub fn renderer_count() -> usize {
+    /// Get the number of registered graphics devices
+    pub fn graphics_device_count() -> usize {
         ENGINE_STATE.get()
-            .and_then(|state| state.renderers.read().ok())
+            .and_then(|state| state.graphics_devices.read().ok())
             .map(|lock| lock.len())
             .unwrap_or(0)
     }
@@ -536,8 +536,8 @@ impl Engine {
             if let Ok(mut rm) = state.resource_manager.write() {
                 *rm = None;
             }
-            if let Ok(mut renderers) = state.renderers.write() {
-                renderers.clear();
+            if let Ok(mut graphics_devices) = state.graphics_devices.write() {
+                graphics_devices.clear();
             }
         }
     }

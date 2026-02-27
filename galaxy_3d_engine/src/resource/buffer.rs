@@ -1,6 +1,6 @@
 /// Resource-level structured GPU buffer (UBO or SSBO).
 ///
-/// A Buffer wraps a renderer::Buffer with field metadata describing
+/// A Buffer wraps a graphics_device::Buffer with field metadata describing
 /// its internal structure. It knows the layout of each element
 /// and can provide safe or unsafe access to individual elements.
 ///
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
-use crate::renderer::{self, Buffer as RendererBuffer};
+use crate::graphics_device::{self, Buffer as GraphicsDeviceBuffer};
 
 // ===== BUFFER KIND =====
 
@@ -83,7 +83,7 @@ pub struct FieldDesc {
 
 /// Descriptor for creating a resource::Buffer
 pub struct BufferDesc {
-    pub renderer: Arc<Mutex<dyn renderer::Renderer>>,
+    pub graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     pub kind: BufferKind,
     pub fields: Vec<FieldDesc>,
     pub count: u32,
@@ -93,11 +93,11 @@ pub struct BufferDesc {
 
 /// GPU buffer resource with structured layout
 ///
-/// Wraps a renderer::Buffer (UBO or SSBO) with field metadata.
+/// Wraps a graphics_device::Buffer (UBO or SSBO) with field metadata.
 /// Knows its internal structure and can provide safe update methods
 /// or unsafe direct pointer access for performance-critical paths.
 pub struct Buffer {
-    renderer_buffer: Arc<dyn RendererBuffer>,
+    graphics_device_buffer: Arc<dyn GraphicsDeviceBuffer>,
     kind: BufferKind,
     fields: Vec<FieldDesc>,
     field_names: HashMap<String, usize>,
@@ -157,15 +157,15 @@ impl Buffer {
 
         // ========== CREATE GPU BUFFER ==========
         let usage = match desc.kind {
-            BufferKind::Uniform => renderer::BufferUsage::Uniform,
-            BufferKind::Storage => renderer::BufferUsage::Storage,
+            BufferKind::Uniform => graphics_device::BufferUsage::Uniform,
+            BufferKind::Storage => graphics_device::BufferUsage::Storage,
         };
 
-        let renderer_buffer = desc.renderer.lock().unwrap()
-            .create_buffer(renderer::BufferDesc { size, usage })?;
+        let graphics_device_buffer = desc.graphics_device.lock().unwrap()
+            .create_buffer(graphics_device::BufferDesc { size, usage })?;
 
         Ok(Self {
-            renderer_buffer,
+            graphics_device_buffer,
             kind: desc.kind,
             fields: desc.fields,
             field_names,
@@ -193,8 +193,8 @@ impl Buffer {
     /// Get field descriptors
     pub fn fields(&self) -> &[FieldDesc] { &self.fields }
 
-    /// Get the underlying renderer buffer
-    pub fn renderer_buffer(&self) -> &Arc<dyn RendererBuffer> { &self.renderer_buffer }
+    /// Get the underlying graphics device buffer
+    pub fn graphics_device_buffer(&self) -> &Arc<dyn GraphicsDeviceBuffer> { &self.graphics_device_buffer }
 
     /// Get field index by name
     pub fn field_id(&self, name: &str) -> Option<usize> {
@@ -219,7 +219,7 @@ impl Buffer {
                 "Data size {} exceeds stride {}", data.len(), self.stride);
         }
         let offset = self.stride * index as u64;
-        self.renderer_buffer.update(offset, data)
+        self.graphics_device_buffer.update(offset, data)
     }
 
     /// Update a specific field of a specific element
@@ -237,7 +237,7 @@ impl Buffer {
                 "Data size {} doesn't match field size {}", data.len(), field_size);
         }
         let offset = self.stride * index as u64 + field_offset;
-        self.renderer_buffer.update(offset, data)
+        self.graphics_device_buffer.update(offset, data)
     }
 
     /// Update raw bytes at arbitrary offset
@@ -247,7 +247,7 @@ impl Buffer {
                 "Write at offset {} with size {} exceeds buffer size {}",
                 offset, data.len(), self.size);
         }
-        self.renderer_buffer.update(offset, data)
+        self.graphics_device_buffer.update(offset, data)
     }
 
     // ===== UNSAFE DIRECT ACCESS =====
@@ -260,7 +260,7 @@ impl Buffer {
     ///   the GPU is not reading this buffer (e.g. double buffering)
     /// - No bounds checking on subsequent writes
     pub unsafe fn buffer_ptr(&self) -> Option<*mut u8> {
-        self.renderer_buffer.mapped_ptr()
+        self.graphics_device_buffer.mapped_ptr()
     }
 
     /// Raw pointer to the start of element at index
@@ -271,7 +271,7 @@ impl Buffer {
     /// - No bounds checking on subsequent writes
     /// - Caller must ensure index < count
     pub unsafe fn element_ptr(&self, index: u32) -> Option<*mut u8> {
-        self.renderer_buffer.mapped_ptr()
+        self.graphics_device_buffer.mapped_ptr()
             .map(|base| base.add((self.stride * index as u64) as usize))
     }
 }

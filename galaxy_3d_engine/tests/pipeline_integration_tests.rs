@@ -7,13 +7,13 @@
 
 mod gpu_test_utils;
 
-use galaxy_3d_engine::galaxy3d::Renderer;
+use galaxy_3d_engine::galaxy3d::GraphicsDevice;
 use galaxy_3d_engine::galaxy3d::resource::{ResourceManager, PipelineDesc, PipelineVariantDesc, PipelinePassDesc};
 use galaxy_3d_engine::galaxy3d::render::{
     PipelineDesc as RenderPipelineDesc, VertexLayout, VertexBinding, VertexAttribute,
     BufferFormat, VertexInputRate, PrimitiveTopology, ShaderDesc, ShaderStage,
 };
-use gpu_test_utils::get_test_renderer;
+use gpu_test_utils::get_test_graphics_device;
 use serial_test::serial;
 
 /// Helper to create minimal valid SPIR-V vertex shader
@@ -99,25 +99,25 @@ fn create_variant(
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_create_pipeline_single_variant() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
 
     // Create shaders
-    let mut renderer_lock = renderer_arc.lock().unwrap();
-    let vertex_shader = renderer_lock.create_shader(ShaderDesc {
+    let mut graphics_device_lock = graphics_device_arc.lock().unwrap();
+    let vertex_shader = graphics_device_lock.create_shader(ShaderDesc {
         stage: ShaderStage::Vertex,
         entry_point: "main".to_string(),
         code: &create_minimal_vertex_shader(),
     });
-    let fragment_shader = renderer_lock.create_shader(ShaderDesc {
+    let fragment_shader = graphics_device_lock.create_shader(ShaderDesc {
         stage: ShaderStage::Fragment,
         entry_point: "main".to_string(),
         code: &create_minimal_fragment_shader(),
     });
-    drop(renderer_lock);
+    drop(graphics_device_lock);
 
     // Skip test if shaders fail (invalid dummy SPIR-V)
     if vertex_shader.is_err() || fragment_shader.is_err() {
@@ -129,7 +129,7 @@ fn test_integration_create_pipeline_single_variant() {
 
     // Create pipeline descriptor
     let desc = PipelineDesc {
-        renderer: renderer_arc.clone(),
+        graphics_device: graphics_device_arc.clone(),
         variants: vec![
             create_variant("default", vertex_shader, fragment_shader, PrimitiveTopology::TriangleList, false),
         ],
@@ -154,25 +154,25 @@ fn test_integration_create_pipeline_single_variant() {
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_create_pipeline_multiple_variants() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
 
     // Create shaders
-    let mut renderer_lock = renderer_arc.lock().unwrap();
-    let vertex_shader = renderer_lock.create_shader(ShaderDesc {
+    let mut graphics_device_lock = graphics_device_arc.lock().unwrap();
+    let vertex_shader = graphics_device_lock.create_shader(ShaderDesc {
         stage: ShaderStage::Vertex,
         entry_point: "main".to_string(),
         code: &create_minimal_vertex_shader(),
     });
-    let fragment_shader = renderer_lock.create_shader(ShaderDesc {
+    let fragment_shader = graphics_device_lock.create_shader(ShaderDesc {
         stage: ShaderStage::Fragment,
         entry_point: "main".to_string(),
         code: &create_minimal_fragment_shader(),
     });
-    drop(renderer_lock);
+    drop(graphics_device_lock);
 
     // Skip test if shaders fail
     if vertex_shader.is_err() || fragment_shader.is_err() {
@@ -184,7 +184,7 @@ fn test_integration_create_pipeline_multiple_variants() {
 
     // Create pipeline descriptor with 3 variants
     let desc = PipelineDesc {
-        renderer: renderer_arc.clone(),
+        graphics_device: graphics_device_arc.clone(),
         variants: vec![
             create_variant("static", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, false),
             create_variant("animated", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, false),
@@ -216,25 +216,25 @@ fn test_integration_create_pipeline_multiple_variants() {
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_pipeline_variant_selection() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
 
     // Create shaders
-    let mut renderer_lock = renderer_arc.lock().unwrap();
-    let vertex_shader = renderer_lock.create_shader(ShaderDesc {
+    let mut graphics_device_lock = graphics_device_arc.lock().unwrap();
+    let vertex_shader = graphics_device_lock.create_shader(ShaderDesc {
         stage: ShaderStage::Vertex,
         entry_point: "main".to_string(),
         code: &create_minimal_vertex_shader(),
     });
-    let fragment_shader = renderer_lock.create_shader(ShaderDesc {
+    let fragment_shader = graphics_device_lock.create_shader(ShaderDesc {
         stage: ShaderStage::Fragment,
         entry_point: "main".to_string(),
         code: &create_minimal_fragment_shader(),
     });
-    drop(renderer_lock);
+    drop(graphics_device_lock);
 
     // Skip test if shaders fail
     if vertex_shader.is_err() || fragment_shader.is_err() {
@@ -246,7 +246,7 @@ fn test_integration_pipeline_variant_selection() {
 
     // Create pipeline with variants
     let desc = PipelineDesc {
-        renderer: renderer_arc.clone(),
+        graphics_device: graphics_device_arc.clone(),
         variants: vec![
             create_variant("opaque", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, false),
             create_variant("alpha", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, true),
@@ -281,25 +281,25 @@ fn test_integration_pipeline_variant_selection() {
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_pipeline_different_topologies() {
-    // Get shared Vulkan renderer
-    let renderer_arc = get_test_renderer();
+    // Get shared Vulkan graphics_device
+    let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
     let mut rm = ResourceManager::new();
 
     // Create shaders
-    let mut renderer_lock = renderer_arc.lock().unwrap();
-    let vertex_shader = renderer_lock.create_shader(ShaderDesc {
+    let mut graphics_device_lock = graphics_device_arc.lock().unwrap();
+    let vertex_shader = graphics_device_lock.create_shader(ShaderDesc {
         stage: ShaderStage::Vertex,
         entry_point: "main".to_string(),
         code: &create_minimal_vertex_shader(),
     });
-    let fragment_shader = renderer_lock.create_shader(ShaderDesc {
+    let fragment_shader = graphics_device_lock.create_shader(ShaderDesc {
         stage: ShaderStage::Fragment,
         entry_point: "main".to_string(),
         code: &create_minimal_fragment_shader(),
     });
-    drop(renderer_lock);
+    drop(graphics_device_lock);
 
     // Skip test if shaders fail
     if vertex_shader.is_err() || fragment_shader.is_err() {
@@ -311,7 +311,7 @@ fn test_integration_pipeline_different_topologies() {
 
     // Create pipeline with different topologies
     let desc = PipelineDesc {
-        renderer: renderer_arc.clone(),
+        graphics_device: graphics_device_arc.clone(),
         variants: vec![
             create_variant("triangles", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::TriangleList, false),
             create_variant("lines", vertex_shader.clone(), fragment_shader.clone(), PrimitiveTopology::LineList, false),

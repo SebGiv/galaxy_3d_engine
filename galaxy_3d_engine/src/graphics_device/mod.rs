@@ -1,7 +1,7 @@
-/// Renderer module - all rendering-related types and traits
+/// Graphics device module - all rendering-related types and traits
 
 // Module declarations
-pub mod renderer;
+pub mod graphics_device;
 pub mod texture;
 pub mod buffer;
 pub mod shader;
@@ -15,8 +15,8 @@ pub mod swapchain;
 pub mod binding_group;
 pub mod frame_buffer;
 
-// Re-export everything from renderer.rs
-pub use renderer::*;
+// Re-export everything from graphics_device.rs
+pub use graphics_device::*;
 
 // Re-export from other modules
 pub use texture::*;
@@ -32,6 +32,6 @@ pub use swapchain::*;
 pub use binding_group::*;
 pub use frame_buffer::*;
 
-// Mock renderer for tests (no GPU required)
+// Mock graphics device for tests (no GPU required)
 #[cfg(test)]
-pub mod mock_renderer;
+pub mod mock_graphics_device;

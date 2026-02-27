@@ -6,9 +6,9 @@
 /// Key properties:
 /// - Immutable after creation (no race conditions)
 /// - Layout deduced from the Pipeline (user never manipulates layouts directly)
-/// - Pool managed internally by the renderer
+/// - Pool managed internally by the graphics_device
 
-use crate::renderer::{Texture, Buffer, SamplerType, ShaderStage};
+use crate::graphics_device::{Texture, Buffer, SamplerType, ShaderStage};
 
 // ============================================================================
 // Binding types and layout description
@@ -73,7 +73,7 @@ pub struct BindingSlotDesc {
 
 /// Description of a BindingGroup layout (blueprint for a set of bindings)
 ///
-/// This replaces raw descriptor set layout handles in the abstract renderer layer.
+/// This replaces raw descriptor set layout handles in the abstract graphics_device layer.
 /// The backend creates the actual GPU layout object from this description.
 #[derive(Debug, Clone)]
 pub struct BindingGroupLayoutDesc {
@@ -101,7 +101,7 @@ pub enum BindingResource<'a> {
 
 /// An immutable set of GPU resource bindings.
 ///
-/// The layout and pool are managed internally by the renderer.
+/// The layout and pool are managed internally by the graphics_device.
 /// Once created, a BindingGroup cannot be modified — create a new one
 /// to change resources.
 pub trait BindingGroup: Send + Sync {

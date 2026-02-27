@@ -1,13 +1,13 @@
 use super::*;
-use crate::renderer;
+use crate::graphics_device;
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-fn create_mock_renderer() -> Arc<Mutex<dyn renderer::Renderer>> {
-    Arc::new(Mutex::new(renderer::mock_renderer::MockRenderer::new()))
+fn create_mock_graphics_device() -> Arc<Mutex<dyn graphics_device::GraphicsDevice>> {
+    Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()))
 }
 
 fn make_fields(specs: &[(&str, FieldType)]) -> Vec<FieldDesc> {
@@ -18,9 +18,9 @@ fn make_fields(specs: &[(&str, FieldType)]) -> Vec<FieldDesc> {
 }
 
 fn create_test_buffer(kind: BufferKind, fields: &[(&str, FieldType)], count: u32) -> Buffer {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     Buffer::from_desc(BufferDesc {
-        renderer,
+        graphics_device,
         kind,
         fields: make_fields(fields),
         count,
@@ -61,9 +61,9 @@ fn test_field_type_alignment() {
 
 #[test]
 fn test_empty_fields_fails() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let result = Buffer::from_desc(BufferDesc {
-        renderer,
+        graphics_device,
         kind: BufferKind::Storage,
         fields: vec![],
         count: 10,
@@ -73,9 +73,9 @@ fn test_empty_fields_fails() {
 
 #[test]
 fn test_zero_count_fails() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let result = Buffer::from_desc(BufferDesc {
-        renderer,
+        graphics_device,
         kind: BufferKind::Storage,
         fields: make_fields(&[("world", FieldType::Mat4)]),
         count: 0,
@@ -85,9 +85,9 @@ fn test_zero_count_fails() {
 
 #[test]
 fn test_duplicate_field_names_fails() {
-    let renderer = create_mock_renderer();
+    let graphics_device = create_mock_graphics_device();
     let result = Buffer::from_desc(BufferDesc {
-        renderer,
+        graphics_device,
         kind: BufferKind::Storage,
         fields: make_fields(&[
             ("world", FieldType::Mat4),

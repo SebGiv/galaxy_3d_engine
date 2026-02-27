@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::renderer::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc, BindingType, ShaderStageFlags};
+use crate::graphics_device::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc, BindingType, ShaderStageFlags};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

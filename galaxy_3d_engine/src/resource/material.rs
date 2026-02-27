@@ -19,7 +19,7 @@ use crate::error::Result;
 use crate::{engine_bail, engine_err};
 use crate::resource::texture::Texture;
 use crate::resource::pipeline::Pipeline;
-use crate::renderer::{SamplerType, BindingGroup, BindingResource, BindingType};
+use crate::graphics_device::{SamplerType, BindingGroup, BindingResource, BindingType};
 
 // ===== REFERENCE TYPES =====
 
@@ -254,7 +254,7 @@ impl Material {
         // ========== BUILD TEXTURE BINDING GROUPS ==========
         // For each variant/pass, match texture slot names against shader reflection
         // to create pre-built BindingGroups (descriptor sets for textures).
-        let renderer_lock = desc.pipeline.renderer().lock().unwrap();
+        let graphics_device_lock = desc.pipeline.graphics_device().lock().unwrap();
         let mut texture_bindings = Vec::with_capacity(desc.pipeline.variant_count());
 
         for variant_idx in 0..desc.pipeline.variant_count() {
@@ -263,8 +263,8 @@ impl Material {
 
             for pass_idx in 0..variant.pass_count() {
                 let pass = variant.pass(pass_idx as u32).unwrap();
-                let renderer_pipeline = pass.renderer_pipeline();
-                let reflection = renderer_pipeline.reflection();
+                let graphics_device_pipeline = pass.graphics_device_pipeline();
+                let reflection = graphics_device_pipeline.reflection();
 
                 // Group CombinedImageSampler bindings by set index
                 let mut sets: BTreeMap<u32, Vec<(u32, BindingResource)>> = BTreeMap::new();
@@ -275,11 +275,11 @@ impl Material {
                     if binding.binding_type == BindingType::CombinedImageSampler {
                         if let Some(&tex_idx) = texture_names.get(&binding.name) {
                             let slot = &textures[tex_idx];
-                            let renderer_texture = slot.texture().renderer_texture();
+                            let graphics_device_texture = slot.texture().graphics_device_texture();
                             sets.entry(binding.set)
                                 .or_default()
                                 .push((binding.binding, BindingResource::SampledTexture(
-                                    renderer_texture.as_ref(),
+                                    graphics_device_texture.as_ref(),
                                     slot.sampler_type(),
                                 )));
                         }
@@ -293,8 +293,8 @@ impl Material {
                     let resource_refs: Vec<BindingResource> = resources.into_iter()
                         .map(|(_, r)| r)
                         .collect();
-                    let bg = renderer_lock.create_binding_group(
-                        renderer_pipeline,
+                    let bg = graphics_device_lock.create_binding_group(
+                        graphics_device_pipeline,
                         set_index,
                         &resource_refs,
                     )?;
@@ -306,7 +306,7 @@ impl Material {
 
             texture_bindings.push(MaterialVariantBindings { passes: pass_bindings });
         }
-        drop(renderer_lock);
+        drop(graphics_device_lock);
 
         Ok(Self {
             slot_id,

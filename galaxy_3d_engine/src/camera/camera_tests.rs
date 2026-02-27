@@ -1,5 +1,5 @@
 use glam::{Mat4, Vec3};
-use crate::renderer::command_list::{Viewport, Rect2D};
+use crate::graphics_device::command_list::{Viewport, Rect2D};
 use super::*;
 
 fn create_test_viewport() -> Viewport {

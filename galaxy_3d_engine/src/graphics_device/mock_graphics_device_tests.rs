@@ -1,11 +1,11 @@
-/// Unit tests for MockRenderer and associated mock types.
+/// Unit tests for MockGraphicsDevice and associated mock types.
 ///
-/// Tests all methods of the mock renderer and mock types to ensure
+/// Tests all methods of the mock graphics_device and mock types to ensure
 /// complete test coverage.
 
-use crate::renderer::mock_renderer::*;
-use crate::renderer::{
-    Renderer, Buffer, Texture, Pipeline, CommandList,
+use crate::graphics_device::mock_graphics_device::*;
+use crate::graphics_device::{
+    GraphicsDevice, Buffer, Texture, Pipeline, CommandList,
     RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
     BufferDesc, BufferUsage, TextureDesc, TextureFormat,
     TextureUsage, MipmapMode, ShaderDesc, ShaderStage, PipelineDesc,
@@ -333,22 +333,22 @@ fn test_mock_binding_group_trait() {
 }
 
 // ============================================================================
-// MockRenderer Tests
+// MockGraphicsDevice Tests
 // ============================================================================
 
 #[test]
-fn test_mock_renderer_creation() {
-    let renderer = MockRenderer::new();
+fn test_mock_graphics_device_creation() {
+    let graphics_device = MockGraphicsDevice::new();
 
-    assert_eq!(renderer.get_created_buffers().len(), 0);
-    assert_eq!(renderer.get_created_textures().len(), 0);
-    assert_eq!(renderer.get_created_shaders().len(), 0);
-    assert_eq!(renderer.get_created_pipelines().len(), 0);
+    assert_eq!(graphics_device.get_created_buffers().len(), 0);
+    assert_eq!(graphics_device.get_created_textures().len(), 0);
+    assert_eq!(graphics_device.get_created_shaders().len(), 0);
+    assert_eq!(graphics_device.get_created_pipelines().len(), 0);
 }
 
 #[test]
-fn test_mock_renderer_create_texture() {
-    let mut renderer = MockRenderer::new();
+fn test_mock_graphics_device_create_texture() {
+    let mut graphics_device = MockGraphicsDevice::new();
 
     let desc = TextureDesc {
         width: 256,
@@ -361,32 +361,32 @@ fn test_mock_renderer_create_texture() {
         texture_type: TextureType::Tex2D,
     };
 
-    let _texture = renderer.create_texture(desc).unwrap();
+    let _texture = graphics_device.create_texture(desc).unwrap();
 
-    let created_textures = renderer.get_created_textures();
+    let created_textures = graphics_device.get_created_textures();
     assert_eq!(created_textures.len(), 1);
     assert_eq!(created_textures[0], "texture_256x256");
 }
 
 #[test]
-fn test_mock_renderer_create_buffer() {
-    let mut renderer = MockRenderer::new();
+fn test_mock_graphics_device_create_buffer() {
+    let mut graphics_device = MockGraphicsDevice::new();
 
     let desc = BufferDesc {
         size: 1024,
         usage: BufferUsage::Vertex,
     };
 
-    let _buffer = renderer.create_buffer(desc).unwrap();
+    let _buffer = graphics_device.create_buffer(desc).unwrap();
 
-    let created_buffers = renderer.get_created_buffers();
+    let created_buffers = graphics_device.get_created_buffers();
     assert_eq!(created_buffers.len(), 1);
     assert_eq!(created_buffers[0], "buffer_1024");
 }
 
 #[test]
-fn test_mock_renderer_create_shader() {
-    let mut renderer = MockRenderer::new();
+fn test_mock_graphics_device_create_shader() {
+    let mut graphics_device = MockGraphicsDevice::new();
 
     let desc = ShaderDesc {
         stage: ShaderStage::Vertex,
@@ -394,16 +394,16 @@ fn test_mock_renderer_create_shader() {
         entry_point: "main".to_string(),
     };
 
-    let _shader = renderer.create_shader(desc).unwrap();
+    let _shader = graphics_device.create_shader(desc).unwrap();
 
-    let created_shaders = renderer.get_created_shaders();
+    let created_shaders = graphics_device.get_created_shaders();
     assert_eq!(created_shaders.len(), 1);
     assert!(created_shaders[0].contains("Vertex"));
 }
 
 #[test]
-fn test_mock_renderer_create_shader_fragment() {
-    let mut renderer = MockRenderer::new();
+fn test_mock_graphics_device_create_shader_fragment() {
+    let mut graphics_device = MockGraphicsDevice::new();
 
     let desc = ShaderDesc {
         stage: ShaderStage::Fragment,
@@ -411,16 +411,16 @@ fn test_mock_renderer_create_shader_fragment() {
         entry_point: "main".to_string(),
     };
 
-    let _shader = renderer.create_shader(desc).unwrap();
+    let _shader = graphics_device.create_shader(desc).unwrap();
 
-    let created_shaders = renderer.get_created_shaders();
+    let created_shaders = graphics_device.get_created_shaders();
     assert_eq!(created_shaders.len(), 1);
     assert!(created_shaders[0].contains("Fragment"));
 }
 
 #[test]
-fn test_mock_renderer_create_pipeline() {
-    let mut renderer = MockRenderer::new();
+fn test_mock_graphics_device_create_pipeline() {
+    let mut graphics_device = MockGraphicsDevice::new();
 
     let vertex_shader = Arc::new(MockShader::new("vert".to_string()));
     let fragment_shader = Arc::new(MockShader::new("frag".to_string()));
@@ -456,31 +456,31 @@ fn test_mock_renderer_create_pipeline() {
         multisample: Default::default(),
     };
 
-    let _pipeline = renderer.create_pipeline(desc).unwrap();
+    let _pipeline = graphics_device.create_pipeline(desc).unwrap();
 
-    let created_pipelines = renderer.get_created_pipelines();
+    let created_pipelines = graphics_device.get_created_pipelines();
     assert_eq!(created_pipelines.len(), 1);
     assert_eq!(created_pipelines[0], "pipeline");
 }
 
 #[test]
-fn test_mock_renderer_create_command_list() {
-    let renderer = MockRenderer::new();
+fn test_mock_graphics_device_create_command_list() {
+    let graphics_device = MockGraphicsDevice::new();
 
-    let _cmd_list = renderer.create_command_list().unwrap();
+    let _cmd_list = graphics_device.create_command_list().unwrap();
     // CommandList is a boxed trait, can't easily inspect its contents
 }
 
 #[test]
-fn test_mock_renderer_create_render_pass() {
-    let renderer = MockRenderer::new();
+fn test_mock_graphics_device_create_render_pass() {
+    let graphics_device = MockGraphicsDevice::new();
 
     let desc = RenderPassDesc {
         color_attachments: vec![],
         depth_stencil_attachment: None,
     };
 
-    let _render_pass = renderer.create_render_pass(&desc).unwrap();
+    let _render_pass = graphics_device.create_render_pass(&desc).unwrap();
     // No methods to verify on RenderPass
 }
 
@@ -490,11 +490,11 @@ fn test_mock_renderer_create_render_pass() {
 
 #[test]
 fn test_mock_framebuffer_color_only() {
-    let renderer = MockRenderer::new();
+    let graphics_device = MockGraphicsDevice::new();
     let render_pass: Arc<dyn RenderPass> = Arc::new(MockRenderPass::new());
     let color_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(800, 600));
 
-    let framebuffer = renderer.create_framebuffer(&FramebufferDesc {
+    let framebuffer = graphics_device.create_framebuffer(&FramebufferDesc {
         render_pass: &render_pass,
         color_attachments: vec![color_rt],
         depth_stencil_attachment: None,
@@ -508,12 +508,12 @@ fn test_mock_framebuffer_color_only() {
 
 #[test]
 fn test_mock_framebuffer_color_and_depth_stencil() {
-    let renderer = MockRenderer::new();
+    let graphics_device = MockGraphicsDevice::new();
     let render_pass: Arc<dyn RenderPass> = Arc::new(MockRenderPass::new());
     let color_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1920, 1080));
     let depth_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1920, 1080));
 
-    let framebuffer = renderer.create_framebuffer(&FramebufferDesc {
+    let framebuffer = graphics_device.create_framebuffer(&FramebufferDesc {
         render_pass: &render_pass,
         color_attachments: vec![color_rt],
         depth_stencil_attachment: Some(depth_rt),
@@ -527,14 +527,14 @@ fn test_mock_framebuffer_color_and_depth_stencil() {
 
 #[test]
 fn test_mock_framebuffer_multiple_color_attachments() {
-    let renderer = MockRenderer::new();
+    let graphics_device = MockGraphicsDevice::new();
     let render_pass: Arc<dyn RenderPass> = Arc::new(MockRenderPass::new());
     let color_rt0: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1024, 1024));
     let color_rt1: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1024, 1024));
     let color_rt2: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1024, 1024));
     let depth_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1024, 1024));
 
-    let framebuffer = renderer.create_framebuffer(&FramebufferDesc {
+    let framebuffer = graphics_device.create_framebuffer(&FramebufferDesc {
         render_pass: &render_pass,
         color_attachments: vec![color_rt0, color_rt1, color_rt2],
         depth_stencil_attachment: Some(depth_rt),
@@ -548,11 +548,11 @@ fn test_mock_framebuffer_multiple_color_attachments() {
 
 #[test]
 fn test_mock_begin_render_pass_with_framebuffer() {
-    let renderer = MockRenderer::new();
+    let graphics_device = MockGraphicsDevice::new();
     let render_pass: Arc<dyn RenderPass> = Arc::new(MockRenderPass::new());
     let color_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(800, 600));
 
-    let framebuffer = renderer.create_framebuffer(&FramebufferDesc {
+    let framebuffer = graphics_device.create_framebuffer(&FramebufferDesc {
         render_pass: &render_pass,
         color_attachments: vec![color_rt],
         depth_stencil_attachment: None,
@@ -577,57 +577,57 @@ fn test_mock_begin_render_pass_with_framebuffer() {
     assert_eq!(cmd_list.commands[3], "end");
 }
 
-// Note: test_mock_renderer_create_swapchain removed
+// Note: test_mock_graphics_device_create_swapchain removed
 // EventLoop must be created on main thread, incompatible with test framework
 
 #[test]
-fn test_mock_renderer_submit() {
-    let renderer = MockRenderer::new();
+fn test_mock_graphics_device_submit() {
+    let graphics_device = MockGraphicsDevice::new();
     let cmd_list = MockCommandList::new();
 
     let commands: Vec<&dyn CommandList> = vec![&cmd_list];
-    let result = renderer.submit(&commands);
+    let result = graphics_device.submit(&commands);
     assert!(result.is_ok());
 }
 
 #[test]
-fn test_mock_renderer_submit_with_swapchain() {
-    let renderer = MockRenderer::new();
+fn test_mock_graphics_device_submit_with_swapchain() {
+    let graphics_device = MockGraphicsDevice::new();
     let cmd_list = MockCommandList::new();
     let swapchain = MockSwapchain::new(3);
 
     let commands: Vec<&dyn CommandList> = vec![&cmd_list];
-    let result = renderer.submit_with_swapchain(&commands, &swapchain, 0);
+    let result = graphics_device.submit_with_swapchain(&commands, &swapchain, 0);
     assert!(result.is_ok());
 }
 
 #[test]
-fn test_mock_renderer_wait_idle() {
-    let renderer = MockRenderer::new();
+fn test_mock_graphics_device_wait_idle() {
+    let graphics_device = MockGraphicsDevice::new();
 
-    let result = renderer.wait_idle();
+    let result = graphics_device.wait_idle();
     assert!(result.is_ok());
 }
 
 #[test]
-fn test_mock_renderer_stats() {
-    let renderer = MockRenderer::new();
+fn test_mock_graphics_device_stats() {
+    let graphics_device = MockGraphicsDevice::new();
 
-    let _stats = renderer.stats();
-    // RendererStats::default() should return all zeros
+    let _stats = graphics_device.stats();
+    // GraphicsDeviceStats::default() should return all zeros
 }
 
 #[test]
-fn test_mock_renderer_resize() {
-    let mut renderer = MockRenderer::new();
+fn test_mock_graphics_device_resize() {
+    let mut graphics_device = MockGraphicsDevice::new();
 
-    renderer.resize(1920, 1080);
+    graphics_device.resize(1920, 1080);
     // No state to verify, just ensure it doesn't panic
 }
 
 #[test]
-fn test_mock_renderer_multiple_resources() {
-    let mut renderer = MockRenderer::new();
+fn test_mock_graphics_device_multiple_resources() {
+    let mut graphics_device = MockGraphicsDevice::new();
 
     // Create multiple resources
     for i in 0..5 {
@@ -635,7 +635,7 @@ fn test_mock_renderer_multiple_resources() {
             size: 1024 * (i + 1) as u64,
             usage: BufferUsage::Vertex,
         };
-        renderer.create_buffer(buffer_desc).unwrap();
+        graphics_device.create_buffer(buffer_desc).unwrap();
 
         let texture_desc = TextureDesc {
             width: 256,
@@ -647,21 +647,21 @@ fn test_mock_renderer_multiple_resources() {
             data: None,
             texture_type: TextureType::Tex2D,
         };
-        renderer.create_texture(texture_desc).unwrap();
+        graphics_device.create_texture(texture_desc).unwrap();
     }
 
-    assert_eq!(renderer.get_created_buffers().len(), 5);
-    assert_eq!(renderer.get_created_textures().len(), 5);
+    assert_eq!(graphics_device.get_created_buffers().len(), 5);
+    assert_eq!(graphics_device.get_created_textures().len(), 5);
 }
 
 #[test]
-fn test_mock_renderer_tracking_persistence() {
-    let mock = Arc::new(Mutex::new(MockRenderer::new()));
-    let renderer: Arc<Mutex<dyn Renderer>> = mock.clone();
+fn test_mock_graphics_device_tracking_persistence() {
+    let mock = Arc::new(Mutex::new(MockGraphicsDevice::new()));
+    let graphics_device: Arc<Mutex<dyn GraphicsDevice>> = mock.clone();
 
     // Create some resources through the trait interface
     {
-        let mut r = renderer.lock().unwrap();
+        let mut r = graphics_device.lock().unwrap();
         let desc = BufferDesc {
             size: 2048,
             usage: BufferUsage::Index,
