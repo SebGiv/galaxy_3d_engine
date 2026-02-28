@@ -13,7 +13,8 @@
 /// - Texture bindings: pre-built BindingGroups organized by [variant][pass][set]
 /// - Parameters: named scalar/vector/matrix values (roughness, base_color, etc.)
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
@@ -123,9 +124,9 @@ pub struct Material {
     slot_id: u32,
     pipeline: Arc<Pipeline>,
     textures: Vec<MaterialTextureSlot>,
-    texture_names: HashMap<String, usize>,
+    texture_names: FxHashMap<String, usize>,
     params: Vec<MaterialParam>,
-    param_names: HashMap<String, usize>,
+    param_names: FxHashMap<String, usize>,
     /// Pre-built texture BindingGroups organized by [variant][pass][set].
     /// Built at creation time from pipeline reflection data.
     texture_bindings: Vec<MaterialVariantBindings>,
@@ -156,7 +157,7 @@ impl Material {
     pub(crate) fn from_desc(slot_id: u32, desc: MaterialDesc) -> Result<Self> {
 
         // ========== VALIDATION 1: No duplicate texture slot names ==========
-        let mut seen_names = std::collections::HashSet::new();
+        let mut seen_names = FxHashSet::default();
         for slot_desc in &desc.textures {
             if !seen_names.insert(&slot_desc.name) {
                 engine_bail!("galaxy3d::Material",
@@ -165,7 +166,7 @@ impl Material {
         }
 
         // ========== VALIDATION 2: No duplicate param names ==========
-        let mut seen_param_names = std::collections::HashSet::new();
+        let mut seen_param_names = FxHashSet::default();
         for (param_name, _) in &desc.params {
             if !seen_param_names.insert(param_name) {
                 engine_bail!("galaxy3d::Material",
@@ -175,7 +176,7 @@ impl Material {
 
         // ========== RESOLVE TEXTURE SLOTS ==========
         let mut textures = Vec::with_capacity(desc.textures.len());
-        let mut texture_names = HashMap::new();
+        let mut texture_names = FxHashMap::default();
 
         for (vec_index, slot_desc) in desc.textures.into_iter().enumerate() {
             // Resolve layer reference
@@ -244,7 +245,7 @@ impl Material {
 
         // ========== BUILD PARAMS ==========
         let mut params = Vec::with_capacity(desc.params.len());
-        let mut param_names = HashMap::new();
+        let mut param_names = FxHashMap::default();
 
         for (vec_index, (name, value)) in desc.params.into_iter().enumerate() {
             param_names.insert(name.clone(), vec_index);

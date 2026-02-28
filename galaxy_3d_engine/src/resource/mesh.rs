@@ -10,7 +10,7 @@
 /// - No pipeline stored at Mesh level: each Material has its own Pipeline reference
 /// - SubMesh entries are ordered to match GeometryLOD submesh order (O(1) access)
 
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
@@ -120,7 +120,7 @@ impl Mesh {
         // ========== VALIDATE LOD INDICES ==========
 
         // No duplicate lod_index
-        let mut seen_lod_indices = std::collections::HashSet::new();
+        let mut seen_lod_indices = FxHashSet::default();
         for lod_desc in &lods {
             if !seen_lod_indices.insert(lod_desc.lod_index) {
                 engine_bail!("galaxy3d::Mesh",
@@ -156,7 +156,7 @@ impl Mesh {
             let geom_submesh_count = geom_lod.submesh_count();
 
             // Resolve all submesh refs into a map: submesh_id → material
-            let mut submesh_map: HashMap<usize, Arc<Material>> = HashMap::new();
+            let mut submesh_map: FxHashMap<usize, Arc<Material>> = FxHashMap::default();
 
             for submesh_desc in lod_desc.submeshes {
                 let submesh_id = match &submesh_desc.submesh {
@@ -288,7 +288,7 @@ impl SubMesh {
 pub fn mesh_desc_from_name_mapping(
     geometry: &Arc<Geometry>,
     geometry_mesh: GeometryMeshRef,
-    name_to_material: &HashMap<String, Arc<Material>>,
+    name_to_material: &FxHashMap<String, Arc<Material>>,
 ) -> Result<MeshDesc> {
     // Resolve GeometryMeshRef to iterate LODs
     let mesh_id = match &geometry_mesh {

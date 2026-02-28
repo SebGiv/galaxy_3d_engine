@@ -8,7 +8,7 @@ use colored::*;
 use galaxy_3d_engine::galaxy3d::render::{DebugSeverity, DebugOutput, DebugMessageFilter, ValidationStats};
 use galaxy_3d_engine::galaxy3d::{Engine, log::LogSeverity};
 use galaxy_3d_engine::{engine_info, engine_error, engine_warn, engine_trace};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
@@ -86,7 +86,7 @@ impl ValidationStatsTracker {
 
 /// Message tracker for grouping identical messages
 struct MessageTracker {
-    messages: HashMap<String, u32>,
+    messages: FxHashMap<String, u32>,
 }
 
 impl MessageTracker {
@@ -104,7 +104,7 @@ pub fn init_debug_config(config: Config) {
 
     // Reset message tracker
     *MESSAGE_TRACKER.lock().unwrap() = Some(MessageTracker {
-        messages: HashMap::new(),
+        messages: FxHashMap::default(),
     });
 
     *DEBUG_CONFIG.lock().unwrap() = Some(config);
@@ -300,7 +300,7 @@ unsafe fn vulkan_debug_callback_inner(
                 } else {
                     // Initialize tracker if not done yet
                     *tracker_guard = Some(MessageTracker {
-                        messages: HashMap::new(),
+                        messages: FxHashMap::default(),
                     });
                     tracker_guard.as_mut().unwrap().track_message(message)
                 }

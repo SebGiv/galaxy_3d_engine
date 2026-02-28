@@ -4,7 +4,7 @@
 /// engine subsystems. It uses thread-safe static storage with RwLock for safe
 /// concurrent access.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{OnceLock, RwLock, Arc, Mutex};
 use std::time::SystemTime;
 use crate::graphics_device::GraphicsDevice;
@@ -25,7 +25,7 @@ static LOGGER: OnceLock<RwLock<Box<dyn Logger>>> = OnceLock::new();
 /// Internal state structure holding all engine singletons
 struct EngineState {
     /// Named graphics devices (multiple devices supported, keyed by name)
-    graphics_devices: RwLock<HashMap<String, Arc<Mutex<dyn GraphicsDevice>>>>,
+    graphics_devices: RwLock<FxHashMap<String, Arc<Mutex<dyn GraphicsDevice>>>>,
     /// Resource manager singleton
     resource_manager: RwLock<Option<Arc<Mutex<ResourceManager>>>>,
     /// Scene manager singleton
@@ -38,7 +38,7 @@ impl EngineState {
     /// Create a new empty engine state
     fn new() -> Self {
         Self {
-            graphics_devices: RwLock::new(HashMap::new()),
+            graphics_devices: RwLock::new(FxHashMap::default()),
             resource_manager: RwLock::new(None),
             scene_manager: RwLock::new(None),
             render_graph_manager: RwLock::new(None),

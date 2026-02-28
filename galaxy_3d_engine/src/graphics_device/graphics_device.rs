@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use winit::window::Window;
 
 use crate::graphics_device::{
@@ -321,6 +321,13 @@ pub trait GraphicsDevice: Send + Sync {
     /// Wait for all GPU operations to complete
     fn wait_idle(&self) -> Result<()>;
 
+    /// Wait for the previous GPU submit to complete.
+    ///
+    /// Call this before writing to shared GPU buffers (uniform, instance)
+    /// to ensure the GPU has finished reading from the previous frame.
+    /// This is idempotent — calling it multiple times before a submit is safe.
+    fn wait_for_previous_submit(&self) -> Result<()>;
+
     /// Get statistics about the graphics device
     fn stats(&self) -> GraphicsDeviceStats;
 
@@ -342,14 +349,14 @@ type GraphicsDevicePluginFactory = Box<dyn Fn(&Window, Config) -> Result<Arc<Mut
 
 /// Plugin registry for graphics device backends
 pub struct GraphicsDevicePluginRegistry {
-    plugins: HashMap<&'static str, GraphicsDevicePluginFactory>,
+    plugins: FxHashMap<&'static str, GraphicsDevicePluginFactory>,
 }
 
 impl GraphicsDevicePluginRegistry {
     /// Create a new plugin registry
     fn new() -> Self {
         Self {
-            plugins: HashMap::new(),
+            plugins: FxHashMap::default(),
         }
     }
 

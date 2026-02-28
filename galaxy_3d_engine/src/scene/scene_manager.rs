@@ -3,7 +3,7 @@
 /// Manages named scenes. Scenes are stored as Arc<Mutex<Scene>>
 /// for thread-safe shared access.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail};
@@ -16,14 +16,14 @@ use super::scene::Scene;
 /// Stores named scenes. Multiple scenes can be active simultaneously
 /// (main scene, UI overlay, minimap, etc.).
 pub struct SceneManager {
-    scenes: HashMap<String, Arc<Mutex<Scene>>>,
+    scenes: FxHashMap<String, Arc<Mutex<Scene>>>,
 }
 
 impl SceneManager {
     /// Create a new empty scene manager
     pub fn new() -> Self {
         Self {
-            scenes: HashMap::new(),
+            scenes: FxHashMap::default(),
         }
     }
 

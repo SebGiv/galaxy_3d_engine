@@ -145,7 +145,7 @@ fn test_alloc_free_alloc_cycle() {
 #[test]
 fn test_indices_are_unique() {
     let mut alloc = SlotAllocator::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = rustc_hash::FxHashSet::default();
 
     // Allocate, free some, allocate again — all live indices must be unique
     for _ in 0..50 {

@@ -5,11 +5,12 @@
 /// of a complete rendering pipeline.
 ///
 /// Passes and targets are stored in contiguous `Vec`s for cache-friendly
-/// iteration, with `HashMap<String, usize>` for name-based lookup.
+/// iteration, with `FxHashMap<String, usize>` for name-based lookup.
 ///
 /// Render graphs can only be created via `RenderGraphManager::create_render_graph()`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use crate::error::Result;
 use crate::engine_bail;
@@ -23,11 +24,11 @@ pub struct RenderGraph {
     /// Render passes (nodes) stored by index
     passes: Vec<RenderPass>,
     /// Pass name to index mapping
-    pass_names: HashMap<String, usize>,
+    pass_names: FxHashMap<String, usize>,
     /// Render targets (edges) stored by index
     targets: Vec<RenderTarget>,
     /// Target name to index mapping
-    target_names: HashMap<String, usize>,
+    target_names: FxHashMap<String, usize>,
     /// Sequential execution order (filled by compile)
     execution_order: Vec<usize>,
     /// Command lists for double/triple buffering (created by compile)
@@ -41,9 +42,9 @@ impl RenderGraph {
     pub(crate) fn new() -> Self {
         Self {
             passes: Vec::new(),
-            pass_names: HashMap::new(),
+            pass_names: FxHashMap::default(),
             targets: Vec::new(),
-            target_names: HashMap::new(),
+            target_names: FxHashMap::default(),
             execution_order: Vec::new(),
             command_lists: Vec::new(),
             current_frame: 0,

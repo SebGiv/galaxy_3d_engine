@@ -2550,6 +2550,22 @@ impl GraphicsDevice for VulkanGraphicsDevice {
         }
     }
 
+    fn wait_for_previous_submit(&self) -> Result<()> {
+        unsafe {
+            self.device
+                .wait_for_fences(
+                    &[self.submit_fences[self.current_submit_fence]],
+                    true,
+                    u64::MAX,
+                )
+                .map_err(|e| engine_err!(
+                    "galaxy3d::vulkan",
+                    "wait_for_previous_submit: failed to wait for fence: {:?}", e
+                ))?;
+        }
+        Ok(())
+    }
+
     fn stats(&self) -> GraphicsDeviceStats {
         GraphicsDeviceStats::default()
     }

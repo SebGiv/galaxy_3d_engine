@@ -9,7 +9,7 @@
 ///
 /// A layer can be an atlas texture if it has regions defined.
 
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
@@ -23,7 +23,7 @@ use crate::graphics_device;
 pub struct Texture {
     graphics_device_texture: Arc<dyn graphics_device::Texture>,
     layers: Vec<TextureLayer>,
-    layer_names: HashMap<String, usize>,
+    layer_names: FxHashMap<String, usize>,
 }
 
 /// A single layer in a texture
@@ -33,7 +33,7 @@ pub struct TextureLayer {
     name: String,
     layer_index: u32,
     regions: Vec<AtlasRegion>,
-    region_names: HashMap<String, usize>,
+    region_names: FxHashMap<String, usize>,
 }
 
 /// Atlas region definition
@@ -115,7 +115,7 @@ impl Texture {
         }
 
         // ========== VALIDATION 4: No duplicate layer names ==========
-        let mut seen_names = std::collections::HashSet::new();
+        let mut seen_names = FxHashSet::default();
         for layer_desc in &desc.layers {
             if !seen_names.insert(&layer_desc.name) {
                 engine_bail!("galaxy3d::Texture", "Duplicate layer name '{}'", layer_desc.name);
@@ -123,7 +123,7 @@ impl Texture {
         }
 
         // ========== VALIDATION 5: No duplicate layer indices ==========
-        let mut seen_indices = std::collections::HashSet::new();
+        let mut seen_indices = FxHashSet::default();
         for layer_desc in &desc.layers {
             if !seen_indices.insert(layer_desc.layer_index) {
                 engine_bail!("galaxy3d::Texture", "Duplicate layer index {}", layer_desc.layer_index);
@@ -159,7 +159,7 @@ impl Texture {
 
         // ========== VALIDATION 7: No duplicate region names within layer ==========
         for layer_desc in &desc.layers {
-            let mut seen_region_names = std::collections::HashSet::new();
+            let mut seen_region_names = FxHashSet::default();
             for region_desc in &layer_desc.regions {
                 if !seen_region_names.insert(&region_desc.name) {
                     engine_bail!("galaxy3d::Texture", "Duplicate region name '{}' in layer '{}'",
@@ -226,12 +226,12 @@ impl Texture {
         // ========== BUILD LAYERS ==========
 
         let mut layers = Vec::new();
-        let mut layer_names = HashMap::new();
+        let mut layer_names = FxHashMap::default();
 
         for (vec_index, layer_desc) in desc.layers.into_iter().enumerate() {
             // Build regions for this layer
             let mut regions = Vec::new();
-            let mut region_names = HashMap::new();
+            let mut region_names = FxHashMap::default();
 
             for (region_index, region_desc) in layer_desc.regions.into_iter().enumerate() {
                 regions.push(region_desc.region);
@@ -337,7 +337,7 @@ impl Texture {
 
         // Build regions
         let mut regions = Vec::new();
-        let mut region_names = HashMap::new();
+        let mut region_names = FxHashMap::default();
 
         for (region_index, region_desc) in desc.regions.into_iter().enumerate() {
             // Validate region bounds

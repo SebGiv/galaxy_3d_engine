@@ -1,6 +1,6 @@
 /// Pipeline trait and pipeline descriptor
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use crate::graphics_device::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc, BindingType, ShaderStageFlags};
 
@@ -522,7 +522,7 @@ pub struct ReflectedPushConstant {
 /// Merges vertex + fragment shader bindings into a single lookup table.
 pub struct PipelineReflection {
     bindings: Vec<ReflectedBinding>,
-    binding_names: HashMap<String, usize>,
+    binding_names: FxHashMap<String, usize>,
     push_constants: Vec<ReflectedPushConstant>,
 }
 
@@ -537,7 +537,7 @@ impl PipelineReflection {
 
     /// Create an empty reflection (no bindings)
     pub fn empty() -> Self {
-        Self { bindings: Vec::new(), binding_names: HashMap::new(), push_constants: Vec::new() }
+        Self { bindings: Vec::new(), binding_names: FxHashMap::default(), push_constants: Vec::new() }
     }
 
     /// Access by index (hot path, O(1))

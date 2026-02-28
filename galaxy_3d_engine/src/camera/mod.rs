@@ -10,7 +10,7 @@ mod render_view;
 
 pub use camera::Camera;
 pub use frustum::{
-    Frustum,
+    Frustum, FrustumTest,
     PLANE_LEFT, PLANE_RIGHT, PLANE_BOTTOM, PLANE_TOP, PLANE_NEAR, PLANE_FAR,
 };
 pub use render_view::RenderView;

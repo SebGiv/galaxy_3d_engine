@@ -6,20 +6,20 @@
 use galaxy_3d_engine::galaxy3d::render::SamplerType;
 use crate::vulkan_context::GpuContext;
 use ash::vk;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 /// Internal sampler cache — creates VkSampler on first use, destroys on shutdown/drop
 pub(crate) struct SamplerCache {
     ctx: Option<Arc<GpuContext>>,
-    cache: HashMap<SamplerType, vk::Sampler>,
+    cache: FxHashMap<SamplerType, vk::Sampler>,
 }
 
 impl SamplerCache {
     pub(crate) fn new(ctx: Arc<GpuContext>) -> Self {
         Self {
             ctx: Some(ctx),
-            cache: HashMap::new(),
+            cache: FxHashMap::default(),
         }
     }
 

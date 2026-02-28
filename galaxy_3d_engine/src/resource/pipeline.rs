@@ -7,7 +7,7 @@
 ///
 /// Can be created empty and variants added later (user responsibility).
 
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::graphics_device;
@@ -18,7 +18,7 @@ use crate::graphics_device;
 pub struct Pipeline {
     graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     variants: Vec<PipelineVariant>,
-    variant_names: HashMap<String, usize>,
+    variant_names: FxHashMap<String, usize>,
 }
 
 /// A single pipeline variant with one or more rendering passes
@@ -57,7 +57,7 @@ impl Pipeline {
     /// Create pipeline from descriptor (internal use by ResourceManager)
     pub(crate) fn from_desc(desc: PipelineDesc) -> Result<Self> {
         // ========== VALIDATION 1: No duplicate variant names ==========
-        let mut seen_names = std::collections::HashSet::new();
+        let mut seen_names = FxHashSet::default();
         for variant_desc in &desc.variants {
             if !seen_names.insert(&variant_desc.name) {
                 crate::engine_bail!("galaxy3d::Pipeline",
@@ -75,7 +75,7 @@ impl Pipeline {
 
         // ========== CREATE VARIANTS ==========
         let mut variants = Vec::new();
-        let mut variant_names = HashMap::new();
+        let mut variant_names = FxHashMap::default();
 
         for (vec_index, variant_desc) in desc.variants.into_iter().enumerate() {
             // Create GPU pipelines for each pass

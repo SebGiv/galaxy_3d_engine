@@ -10,7 +10,7 @@ use crate::resource::geometry::{
 };
 use crate::resource::pipeline::{Pipeline, PipelineDesc, PipelineVariantDesc, PipelinePassDesc};
 use crate::resource::material::{Material, MaterialDesc, ParamValue};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
@@ -727,7 +727,7 @@ fn test_mesh_desc_from_name_mapping() {
     let armor = create_test_material(&pipeline, 2.0);
     let pants = create_test_material(&pipeline, 3.0);
 
-    let mapping = HashMap::from([
+    let mapping = FxHashMap::from_iter([
         ("head".to_string(), skin.clone()),
         ("torso".to_string(), armor.clone()),
         ("legs".to_string(), pants.clone()),
@@ -763,7 +763,7 @@ fn test_mesh_desc_from_name_mapping_missing_material() {
     let skin = create_test_material(&pipeline, 1.0);
 
     // Only provide "head", missing "torso" and "legs"
-    let mapping = HashMap::from([
+    let mapping = FxHashMap::from_iter([
         ("head".to_string(), skin),
     ]);
 
@@ -781,7 +781,7 @@ fn test_mesh_desc_from_name_mapping_invalid_mesh_ref() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
 
-    let mapping = HashMap::new();
+    let mapping = FxHashMap::default();
 
     let result = mesh_desc_from_name_mapping(
         &geometry,
@@ -799,7 +799,7 @@ fn test_mesh_desc_from_name_mapping_by_index() {
     let pipeline = create_test_pipeline(graphics_device.clone());
     let mat = create_test_material(&pipeline, 1.0);
 
-    let mapping = HashMap::from([
+    let mapping = FxHashMap::from_iter([
         ("blade".to_string(), mat),
     ]);
 

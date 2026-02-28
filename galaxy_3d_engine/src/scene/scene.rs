@@ -3,7 +3,7 @@
 /// Uses a SlotMap for O(1) insert/remove with stable keys.
 /// Instances are stored contiguously for cache-friendly iteration.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::sync::{Arc, Mutex};
 use slotmap::SlotMap;
 use glam::Mat4;
@@ -36,9 +36,11 @@ pub struct Scene {
     /// Material storage buffer (shared material parameters)
     material_buffer: Arc<Buffer>,
     /// Instances whose world matrix changed since last take_dirty_transforms()
-    dirty_transforms: HashSet<RenderInstanceKey>,
+    dirty_transforms: FxHashSet<RenderInstanceKey>,
     /// Newly created instances pending full GPU buffer initialization
-    new_instances: HashSet<RenderInstanceKey>,
+    new_instances: FxHashSet<RenderInstanceKey>,
+    /// Instances marked for deferred removal (processed by Updater)
+    removed_instances: FxHashSet<RenderInstanceKey>,
     /// Set 0 binding group (frame UBO + instance SSBO + material SSBO), shared by all instances
     global_binding_group: Option<Arc<dyn BindingGroup>>,
 }
@@ -65,8 +67,9 @@ impl Scene {
             frame_buffer,
             instance_buffer,
             material_buffer,
-            dirty_transforms: HashSet::new(),
-            new_instances: HashSet::new(),
+            dirty_transforms: FxHashSet::default(),
+            new_instances: FxHashSet::default(),
+            removed_instances: FxHashSet::default(),
             global_binding_group: None,
         }
     }
@@ -105,19 +108,20 @@ impl Scene {
         Ok(key)
     }
 
-    /// Remove a RenderInstance by key
+    /// Mark a RenderInstance for deferred removal.
     ///
-    /// Returns the removed instance, or None if the key was invalid.
-    pub fn remove_render_instance(
-        &mut self,
-        key: RenderInstanceKey,
-    ) -> Option<RenderInstance> {
-        self.dirty_transforms.remove(&key);
-        self.new_instances.remove(&key);
-        if let Some(instance) = self.render_instances.get(key) {
-            instance.free_draw_slots(&mut self.draw_slot_allocator);
+    /// The instance stays in the scene until the Updater processes it
+    /// (via `take_removed_instances` + `commit_removals`).
+    /// Returns false if the key is invalid.
+    pub fn remove_render_instance(&mut self, key: RenderInstanceKey) -> bool {
+        if self.render_instances.contains_key(key) {
+            self.removed_instances.insert(key);
+            self.dirty_transforms.remove(&key);
+            self.new_instances.remove(&key);
+            true
+        } else {
+            false
         }
-        self.render_instances.remove(key)
     }
 
     /// Get a RenderInstance by key
@@ -140,23 +144,41 @@ impl Scene {
     }
 
     /// Get the set of instances with pending transform changes.
-    pub fn dirty_transforms(&self) -> &HashSet<RenderInstanceKey> {
+    pub fn dirty_transforms(&self) -> &FxHashSet<RenderInstanceKey> {
         &self.dirty_transforms
     }
 
     /// Take and clear the dirty transform set.
-    pub fn take_dirty_transforms(&mut self) -> HashSet<RenderInstanceKey> {
+    pub fn take_dirty_transforms(&mut self) -> FxHashSet<RenderInstanceKey> {
         std::mem::take(&mut self.dirty_transforms)
     }
 
     /// Get the set of newly created instances pending GPU initialization.
-    pub fn new_instances(&self) -> &HashSet<RenderInstanceKey> {
+    pub fn new_instances(&self) -> &FxHashSet<RenderInstanceKey> {
         &self.new_instances
     }
 
     /// Take and clear the new instances set.
-    pub fn take_new_instances(&mut self) -> HashSet<RenderInstanceKey> {
+    pub fn take_new_instances(&mut self) -> FxHashSet<RenderInstanceKey> {
         std::mem::take(&mut self.new_instances)
+    }
+
+    /// Take and clear the set of instances marked for removal.
+    pub fn take_removed_instances(&mut self) -> FxHashSet<RenderInstanceKey> {
+        std::mem::take(&mut self.removed_instances)
+    }
+
+    /// Actually remove instances from the SlotMap and free their draw slots.
+    ///
+    /// Called by the Updater after draining removed_instances and
+    /// cleaning up the SceneIndex.
+    pub(crate) fn commit_removals(&mut self, keys: &FxHashSet<RenderInstanceKey>) {
+        for &key in keys {
+            if let Some(instance) = self.render_instances.get(key) {
+                instance.free_draw_slots(&mut self.draw_slot_allocator);
+            }
+            self.render_instances.remove(key);
+        }
     }
 
     /// Iterate over all render instances (key, instance)
@@ -234,6 +256,7 @@ impl Scene {
         self.draw_slot_allocator = SlotAllocator::new();
         self.dirty_transforms.clear();
         self.new_instances.clear();
+        self.removed_instances.clear();
     }
 
     /// Minimum SSBO capacity needed (in number of slots)

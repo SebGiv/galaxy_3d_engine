@@ -3,7 +3,7 @@
 //! Stores and provides access to all engine resources (textures, geometries, etc.).
 //! Resources will be added incrementally as the engine evolves.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::graphics_device;
@@ -30,12 +30,12 @@ use crate::resource::material::ParamValue;
 use crate::utils::SlotAllocator;
 
 pub struct ResourceManager {
-    textures: HashMap<String, Arc<Texture>>,
-    geometries: HashMap<String, Arc<Geometry>>,
-    pipelines: HashMap<String, Arc<Pipeline>>,
-    materials: HashMap<String, Arc<Material>>,
-    meshes: HashMap<String, Arc<Mesh>>,
-    buffers: HashMap<String, Arc<Buffer>>,
+    textures: FxHashMap<String, Arc<Texture>>,
+    geometries: FxHashMap<String, Arc<Geometry>>,
+    pipelines: FxHashMap<String, Arc<Pipeline>>,
+    materials: FxHashMap<String, Arc<Material>>,
+    meshes: FxHashMap<String, Arc<Mesh>>,
+    buffers: FxHashMap<String, Arc<Buffer>>,
     material_slot_allocator: SlotAllocator,
 }
 
@@ -89,12 +89,12 @@ impl ResourceManager {
     /// Create a new empty resource manager
     pub fn new() -> Self {
         Self {
-            textures: HashMap::new(),
-            geometries: HashMap::new(),
-            pipelines: HashMap::new(),
-            materials: HashMap::new(),
-            meshes: HashMap::new(),
-            buffers: HashMap::new(),
+            textures: FxHashMap::default(),
+            geometries: FxHashMap::default(),
+            pipelines: FxHashMap::default(),
+            materials: FxHashMap::default(),
+            meshes: FxHashMap::default(),
+            buffers: FxHashMap::default(),
             material_slot_allocator: SlotAllocator::new(),
         }
     }

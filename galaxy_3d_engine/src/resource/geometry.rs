@@ -24,7 +24,7 @@
 //!         └── ...
 //! ```
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
@@ -94,7 +94,7 @@ pub struct GeometryLOD {
     /// SubMeshes stored by index (id)
     submeshes: Vec<GeometrySubMesh>,
     /// Name to id (index) mapping
-    submesh_names: HashMap<String, usize>,
+    submesh_names: FxHashMap<String, usize>,
 }
 
 impl GeometryLOD {
@@ -102,7 +102,7 @@ impl GeometryLOD {
     fn new() -> Self {
         Self {
             submeshes: Vec::new(),
-            submesh_names: HashMap::new(),
+            submesh_names: FxHashMap::default(),
         }
     }
 
@@ -244,7 +244,7 @@ pub struct Geometry {
     meshes: Vec<GeometryMesh>,
 
     /// Name to id (index) mapping
-    mesh_names: HashMap<String, usize>,
+    mesh_names: FxHashMap<String, usize>,
 }
 
 impl Geometry {
@@ -269,7 +269,7 @@ impl Geometry {
             total_vertex_count,
             total_index_count,
             meshes: Vec::new(),
-            mesh_names: HashMap::new(),
+            mesh_names: FxHashMap::default(),
         }
     }
 

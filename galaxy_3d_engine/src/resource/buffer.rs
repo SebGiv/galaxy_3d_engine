@@ -10,7 +10,7 @@
 /// - Count: number of elements (array of structures)
 /// - Layout computed automatically (std140 for UBO, std430 for SSBO)
 
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
@@ -100,7 +100,7 @@ pub struct Buffer {
     graphics_device_buffer: Arc<dyn GraphicsDeviceBuffer>,
     kind: BufferKind,
     fields: Vec<FieldDesc>,
-    field_names: HashMap<String, usize>,
+    field_names: FxHashMap<String, usize>,
     field_offsets: Vec<u64>,
     stride: u64,
     count: u32,
@@ -117,7 +117,7 @@ impl Buffer {
             engine_bail!("galaxy3d::Buffer", "Buffer must have at least one element");
         }
 
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = FxHashSet::default();
         for field in &desc.fields {
             if !seen.insert(&field.name) {
                 engine_bail!("galaxy3d::Buffer",
@@ -127,7 +127,7 @@ impl Buffer {
 
         // ========== COMPUTE LAYOUT ==========
         let mut field_offsets = Vec::with_capacity(desc.fields.len());
-        let mut field_names = HashMap::new();
+        let mut field_names = FxHashMap::default();
         let mut current_offset: u64 = 0;
 
         for (index, field) in desc.fields.iter().enumerate() {

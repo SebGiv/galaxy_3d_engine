@@ -171,6 +171,17 @@ fn setup_resources() -> (
     (graphics_device, buffers, geometry, pipeline, material, mesh)
 }
 
+/// Helper: mark for deferred removal + commit immediately.
+/// For tests that don't care about deferred behavior.
+fn remove_and_commit(scene: &mut Scene, key: RenderInstanceKey) -> bool {
+    let marked = scene.remove_render_instance(key);
+    if marked {
+        let removed = scene.take_removed_instances();
+        scene.commit_removals(&removed);
+    }
+    marked
+}
+
 // ============================================================================
 // Tests: Scene Creation
 // ============================================================================
@@ -245,11 +256,11 @@ fn test_create_render_instance_returns_unique_keys() {
 }
 
 // ============================================================================
-// Tests: Remove RenderInstance
+// Tests: Remove RenderInstance (Deferred)
 // ============================================================================
 
 #[test]
-fn test_remove_render_instance() {
+fn test_remove_render_instance_deferred() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
     let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
 
@@ -259,9 +270,19 @@ fn test_remove_render_instance() {
 
     assert_eq!(scene.render_instance_count(), 1);
 
-    let removed = scene.remove_render_instance(key);
-    assert!(removed.is_some());
+    // Mark for deferred removal
+    assert!(scene.remove_render_instance(key));
+
+    // Instance still in scene (deferred)
+    assert_eq!(scene.render_instance_count(), 1);
+    assert!(scene.render_instance(key).is_some());
+
+    // Commit the removal
+    let removed = scene.take_removed_instances();
+    scene.commit_removals(&removed);
+
     assert_eq!(scene.render_instance_count(), 0);
+    assert!(scene.render_instance(key).is_none());
 }
 
 #[test]
@@ -273,7 +294,7 @@ fn test_remove_render_instance_key_becomes_invalid() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    scene.remove_render_instance(key);
+    remove_and_commit(&mut scene, key);
 
     // Key is now invalid
     assert!(scene.render_instance(key).is_none());
@@ -281,7 +302,7 @@ fn test_remove_render_instance_key_becomes_invalid() {
 }
 
 #[test]
-fn test_remove_nonexistent_key_returns_none() {
+fn test_remove_nonexistent_key_returns_false() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
     let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
 
@@ -290,11 +311,10 @@ fn test_remove_nonexistent_key_returns_none() {
     ).unwrap();
 
     // Remove once → succeeds
-    scene.remove_render_instance(key);
+    remove_and_commit(&mut scene, key);
 
-    // Remove again → returns None
-    let result = scene.remove_render_instance(key);
-    assert!(result.is_none());
+    // Remove again → returns false
+    assert!(!scene.remove_render_instance(key));
 }
 
 #[test]
@@ -313,7 +333,7 @@ fn test_remove_does_not_invalidate_other_keys() {
     ).unwrap();
 
     // Remove middle instance
-    scene.remove_render_instance(key2);
+    remove_and_commit(&mut scene, key2);
 
     // Other keys remain valid
     assert!(scene.render_instance(key1).is_some());
@@ -331,8 +351,8 @@ fn test_slot_reuse_after_remove() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Remove it
-    scene.remove_render_instance(key1);
+    // Remove and commit (frees the slot)
+    remove_and_commit(&mut scene, key1);
 
     // Create new → may reuse the slot
     let key2 = scene.create_render_instance(
@@ -475,8 +495,8 @@ fn test_iteration_after_removal() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Remove middle one
-    scene.remove_render_instance(key2);
+    // Remove middle one and commit
+    remove_and_commit(&mut scene, key2);
 
     // Iteration should yield exactly 2 items
     let count = scene.render_instances().count();
@@ -560,10 +580,12 @@ fn test_many_instances() {
 
     assert_eq!(scene.render_instance_count(), 100);
 
-    // Remove every other one
+    // Mark every other one for removal and commit
     for i in (0..100).step_by(2) {
         scene.remove_render_instance(keys[i]);
     }
+    let removed = scene.take_removed_instances();
+    scene.commit_removals(&removed);
 
     assert_eq!(scene.render_instance_count(), 50);
 
@@ -610,7 +632,7 @@ fn test_draw_empty_view() {
 
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
-    let view = culler.cull(&scene, &camera);
+    let view = culler.cull(&scene, &camera, None);
 
     let mut cmd = MockCommandList::new();
     drawer.draw(&scene, &view, &mut cmd).unwrap();
@@ -631,7 +653,7 @@ fn test_draw_single_instance() {
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
-    let view = culler.cull(&scene, &camera);
+    let view = culler.cull(&scene, &camera, None);
 
     let mut cmd = MockCommandList::new();
     drawer.draw(&scene, &view, &mut cmd).unwrap();
@@ -649,7 +671,7 @@ fn test_draw_single_instance() {
 }
 
 #[test]
-fn test_draw_skips_removed_instance() {
+fn test_draw_skips_committed_removal() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
     let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
 
@@ -661,16 +683,15 @@ fn test_draw_skips_removed_instance() {
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
 
-    // Cull while instance exists
-    let view = culler.cull(&scene, &camera);
+    // Remove and commit before culling (normal frame flow)
+    remove_and_commit(&mut scene, key);
 
-    // Remove instance after culling
-    scene.remove_render_instance(key);
+    let view = culler.cull(&scene, &camera, None);
 
     let mut cmd = MockCommandList::new();
     drawer.draw(&scene, &view, &mut cmd).unwrap();
 
-    // Instance was skipped — only viewport + scissor
+    // Instance was removed — only viewport + scissor
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
 }
 
@@ -689,7 +710,7 @@ fn test_draw_multiple_instances() {
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
-    let view = culler.cull(&scene, &camera);
+    let view = culler.cull(&scene, &camera, None);
 
     let mut cmd = MockCommandList::new();
     drawer.draw(&scene, &view, &mut cmd).unwrap();
@@ -746,7 +767,7 @@ fn test_draw_slot_count_after_remove() {
 
     assert_eq!(scene.draw_slot_count(), 2);
 
-    scene.remove_render_instance(key1);
+    remove_and_commit(&mut scene, key1);
     assert_eq!(scene.draw_slot_count(), 1);
     // High water mark stays at 2
     assert_eq!(scene.draw_slot_high_water_mark(), 2);
@@ -765,7 +786,7 @@ fn test_draw_slot_recycling_after_remove() {
     ).unwrap();
 
     // Remove first instance (frees slot 0)
-    scene.remove_render_instance(key1);
+    remove_and_commit(&mut scene, key1);
     assert_eq!(scene.draw_slot_high_water_mark(), 2);
 
     // New instance should recycle the freed slot
@@ -897,7 +918,7 @@ fn test_set_world_matrix_on_invalid_key_returns_false() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    scene.remove_render_instance(key);
+    remove_and_commit(&mut scene, key);
 
     assert!(!scene.set_world_matrix(key, Mat4::IDENTITY));
 }
@@ -988,6 +1009,72 @@ fn test_create_then_set_matrix_in_both_sets() {
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
     assert!(scene.new_instances().contains(&key));
     assert!(scene.dirty_transforms().contains(&key));
+}
+
+// ============================================================================
+// Tests: Deferred Removal Tracking
+// ============================================================================
+
+#[test]
+fn test_remove_marks_removed_instance() {
+    let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+
+    let key = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    scene.remove_render_instance(key);
+    let removed = scene.take_removed_instances();
+    assert!(removed.contains(&key));
+}
+
+#[test]
+fn test_take_removed_instances_clears_set() {
+    let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+
+    let key = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    scene.remove_render_instance(key);
+    let _ = scene.take_removed_instances();
+
+    // Second take returns empty
+    assert!(scene.take_removed_instances().is_empty());
+}
+
+#[test]
+fn test_remove_deduplication() {
+    let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+
+    let key = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    // Mark same key twice → 1 entry in removed set
+    scene.remove_render_instance(key);
+    scene.remove_render_instance(key);
+
+    let removed = scene.take_removed_instances();
+    assert_eq!(removed.len(), 1);
+}
+
+#[test]
+fn test_clear_cleans_removed_instances() {
+    let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+
+    let key = scene.create_render_instance(
+        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+    ).unwrap();
+
+    scene.remove_render_instance(key);
+    scene.clear();
+
+    assert!(scene.take_removed_instances().is_empty());
 }
 
 // ============================================================================

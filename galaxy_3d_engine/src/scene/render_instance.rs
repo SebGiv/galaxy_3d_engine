@@ -43,6 +43,48 @@ pub struct AABB {
     pub max: Vec3,
 }
 
+impl AABB {
+    /// Transform this local-space AABB by a matrix, returning a new AABB.
+    ///
+    /// Uses the Arvo method: projects each matrix axis onto the AABB extents
+    /// for an exact (tight) result without transforming all 8 corners.
+    pub fn transformed(&self, matrix: &Mat4) -> AABB {
+        let translation = matrix.col(3).truncate();
+        let mut new_min = translation;
+        let mut new_max = translation;
+
+        for i in 0..3 {
+            let axis = matrix.col(i).truncate();
+            let a = axis * self.min[i];
+            let b = axis * self.max[i];
+            new_min += a.min(b);
+            new_max += a.max(b);
+        }
+
+        AABB { min: new_min, max: new_max }
+    }
+
+    /// Test if this AABB fully contains another AABB.
+    ///
+    /// Returns `true` if `other` is entirely within `self`.
+    /// Used by OctreeSceneIndex (Approach 1) to decide if an object
+    /// fits entirely within a child node.
+    pub fn contains(&self, other: &AABB) -> bool {
+        self.min.x <= other.min.x && self.max.x >= other.max.x
+        && self.min.y <= other.min.y && self.max.y >= other.max.y
+        && self.min.z <= other.min.z && self.max.z >= other.max.z
+    }
+
+    /// Test if this AABB intersects (overlaps) another AABB.
+    ///
+    /// Returns `true` if the two AABBs overlap or touch.
+    pub fn intersects(&self, other: &AABB) -> bool {
+        self.min.x <= other.max.x && self.max.x >= other.min.x
+        && self.min.y <= other.max.y && self.max.y >= other.min.y
+        && self.min.z <= other.max.z && self.max.z >= other.min.z
+    }
+}
+
 // ===== FLAGS =====
 
 /// Render instance flags (bitfield)

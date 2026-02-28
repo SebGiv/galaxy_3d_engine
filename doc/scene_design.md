@@ -22,8 +22,9 @@
 9. [Transmission des paramètres au shader](#9-transmission-des-paramètres-au-shader)
 10. [Construction : from_mesh()](#10-construction--from_mesh)
 11. [Stratégies de rendu — CameraCuller, Drawer, Updater](#11-stratégies-de-rendu--cameraculler-drawer-updater)
-12. [Boucle de rendu](#12-boucle-de-rendu)
-13. [Itérations futures](#13-itérations-futures)
+12. [SceneIndex — Structure d'accélération spatiale](#12-sceneindex--structure-daccélération-spatiale)
+13. [Boucle de rendu](#13-boucle-de-rendu)
+14. [Itérations futures](#14-itérations-futures)
 
 ---
 
@@ -416,16 +417,16 @@ RenderInstance::builder(&mesh)
 
 La Scene est un conteneur passif. Trois responsabilités sont extraites en **traits indépendants** (Strategy pattern) :
 
-| Trait | Responsabilité | Mutabilité | Implémentation V1 |
-|-------|---------------|------------|-------------------|
-| `CameraCuller` | Déterminer les instances visibles | `&mut self` | `BruteForceCuller` (retourne tout) |
+| Trait | Responsabilité | Mutabilité | Implémentation |
+|-------|---------------|------------|----------------|
+| `CameraCuller` | Déterminer les instances visibles | `&mut self` | `FrustumCuller` (test AABB vs frustum) |
 | `Drawer` | Dessiner les instances visibles | `&self` | `ForwardDrawer` (draw séquentiel) |
-| `Updater` | Synchroniser les données vers le GPU | `&mut self` | `NoOpUpdater` (ne fait rien) |
+| `Updater` | Synchroniser les données vers le GPU | `&mut self` | `DefaultUpdater` (dirty tracking + GPU sync) |
 
 ### Principes de conception
 
 - **Objets indépendants** — gérés directement par l'utilisateur (pas par le SceneManager)
-- **Pas de référence stockée** vers la Scene — `&Scene` passé en paramètre à chaque appel (évite les deadlocks, permet la réutilisation sur plusieurs scènes)
+- **Pas de référence stockée** vers la Scene — `&Scene` / `&mut Scene` passé en paramètre à chaque appel (évite les deadlocks, permet la réutilisation sur plusieurs scènes)
 - **Typés statiquement** — pas de string magique, pas de registre nommé
 - **Composables** — l'utilisateur choisit librement ses stratégies dans sa game loop
 
@@ -433,16 +434,20 @@ La Scene est un conteneur passif. Trois responsabilités sont extraites en **tra
 
 ```rust
 pub trait CameraCuller: Send + Sync {
-    fn cull(&mut self, scene: &Scene, camera: &Camera) -> RenderView;
+    fn cull(&mut self, scene: &Scene, camera: &Camera,
+            scene_index: Option<&dyn SceneIndex>) -> RenderView;
 }
 ```
 
-`&mut self` permet aux implémentations stateful (Octree, BVH) de mettre à jour leur structure spatiale interne quand la scène change.
+`&mut self` permet aux implémentations stateful de maintenir des caches internes.
+
+Le paramètre `scene_index` est optionnel — le `FrustumCuller` fonctionne dans les deux modes :
+- **Avec SceneIndex** → query spatiale O(log n) via `query_frustum()`
+- **Sans SceneIndex** → brute force O(n) avec test AABB vs frustum sur chaque instance
 
 **Implémentations :**
-- `BruteForceCuller` — retourne toutes les instances (V1, O(n))
-- *Futur : `FrustumCuller` — test AABB vs frustum planes*
-- *Futur : `OctreeCuller` — culling hiérarchique via octree*
+- `FrustumCuller` — test AABB vs frustum planes, avec ou sans SceneIndex
+- *Futur : implémentation spécifique BVH si nécessaire*
 
 ### Drawer
 
@@ -452,10 +457,10 @@ pub trait Drawer: Send + Sync {
 }
 ```
 
-`&self` car le drawing est stateless. Un même Drawer peut être réutilisé sur plusieurs scènes et frames. Permet aussi de comparer deux stratégies de rendu en parallèle.
+`&self` car le drawing est stateless. Un même Drawer peut être réutilisé sur plusieurs scènes et frames.
 
 **Implémentations :**
-- `ForwardDrawer` — draw séquentiel, LOD 0, push constants MVP + Model (V1)
+- `ForwardDrawer` — draw séquentiel, LOD 0, bind pipeline + binding groups + push draw slot index
 - *Futur : `SortedDrawer` — tri par pipeline/material pour réduire les state changes*
 - *Futur : `InstancedDrawer` — regroupement des instances identiques en draw instancé*
 
@@ -463,26 +468,35 @@ pub trait Drawer: Send + Sync {
 
 ```rust
 pub trait Updater: Send + Sync {
-    fn update(&mut self, scene: &Scene) -> Result<()>;
+    fn update_frame(&mut self, scene: &Scene, camera: &Camera) -> Result<()>;
+    fn update_instances(&mut self, scene: &mut Scene,
+                        scene_index: Option<&mut dyn SceneIndex>) -> Result<()>;
 }
 ```
 
-`&mut self` pour gérer l'état interne (dirty flags, allocations de buffers GPU).
+`&mut self` pour gérer l'état interne.
+
+- `update_frame()` — écrit les matrices caméra (view, proj, viewProj) + time dans le frame UBO
+- `update_instances()` — synchronise les dirty transforms et nouvelles instances vers le GPU, et met à jour le SceneIndex si fourni. Trois phases :
+  1. **Phase 0 — Removals** : retire les instances marquées pour suppression du SceneIndex, puis les supprime réellement de la Scene (`commit_removals`)
+  2. **Phase 1 — New instances** : écrit toutes les données GPU (world matrix, normal matrix, material index) + insère dans le SceneIndex
+  3. **Phase 2 — Dirty transforms** : met à jour les matrices GPU + update dans le SceneIndex
 
 **Implémentations :**
-- `NoOpUpdater` — ne fait rien (V1)
-- *Futur : `SsboUpdater` — synchronise les world matrices vers un SSBO GPU*
+- `DefaultUpdater` — dirty tracking complet (new_instances, dirty_transforms, removed_instances)
 
 ### Usage dans la game loop
 
 ```rust
-let mut culler = BruteForceCuller::new();
+let mut culler = FrustumCuller::new();
 let drawer = ForwardDrawer::new();
-let mut updater = NoOpUpdater::new();
+let mut updater = DefaultUpdater::new();
+let mut scene_index: Option<Box<dyn SceneIndex>> = None; // ou Some(OctreeSceneIndex::new(...))
 
 // Game loop
-updater.update(&scene)?;
-let view = culler.cull(&scene, &camera);
+updater.update_frame(&scene, &camera)?;
+updater.update_instances(&mut scene, scene_index.as_deref_mut())?;
+let view = culler.cull(&scene, &camera, scene_index.as_deref());
 drawer.draw(&scene, &view, cmd)?;
 ```
 
@@ -492,15 +506,153 @@ Le `Drawer` est capturé dans la `CustomAction` du render graph via `Arc<Mutex<d
 
 ---
 
-## 12. Boucle de rendu
+## 12. SceneIndex — Structure d'accélération spatiale
 
-### Workflow actuel (V1)
+### Concept
+
+Le `SceneIndex` est une structure d'accélération spatiale (octree, BVH, grille) qui permet des requêtes spatiales rapides (frustum culling O(log n) au lieu de O(n) brute force).
+
+**Principe fondamental** : le SceneIndex est **indépendant de la Scene**. C'est l'utilisateur qui le crée, le possède, et le passe en paramètre à l'Updater et au CameraCuller. Le moteur 3D étant bas niveau, il ne force pas de structure spatiale — l'utilisateur choisit celle qui convient à son cas d'usage.
+
+### Trait SceneIndex
+
+```rust
+pub trait SceneIndex: Send + Sync {
+    fn insert(&mut self, key: RenderInstanceKey, world_aabb: &AABB);
+    fn remove(&mut self, key: RenderInstanceKey);
+    fn update(&mut self, key: RenderInstanceKey, world_aabb: &AABB);
+    fn query_frustum(&self, frustum: &Frustum, results: &mut Vec<RenderInstanceKey>);
+    fn clear(&mut self);
+}
+```
+
+Le SceneIndex est mis à jour par l'Updater (3 phases : remove → insert → update) et interrogé par le CameraCuller.
+
+### OctreeSceneIndex — Implémentation de référence
+
+#### Construction
+
+Octree **statique** : l'arbre complet est construit à l'initialisation jusqu'à `max_depth`. Pas d'allocation dynamique en cours de jeu.
+
+```rust
+OctreeSceneIndex::new(bounds: AABB, max_depth: u32)
+```
+
+- `bounds` — AABB racine couvrant l'espace de la scène
+- `max_depth` — profondeur maximale de subdivision (typiquement 4-6)
+
+Nombre total de nœuds = (8^(D+1) - 1) / 7 :
+
+| Profondeur | Nœuds  | Usage typique   |
+|------------|--------|-----------------|
+| 4          | ~4 700 | Petite scène    |
+| 5          | ~37 000| Scène moyenne   |
+| 6          | ~300 000| Grande scène   |
+
+#### Stockage — Vec plat
+
+L'arbre est stocké dans un **Vec** (tableau linéaire), similaire à un heap binaire. Le nœud `i` a ses 8 enfants aux indices `8*i + 1` à `8*i + 8`. Zéro pointeur, cache-friendly.
+
+```
+Index:  [0]  [1] [2] [3] [4] [5] [6] [7] [8]  [9] [10] ...
+         │    └─────────── enfants du nœud 0 ───────────┘
+         racine        └── enfants du nœud 1 ──────────────...
+```
+
+Chaque nœud contient :
+```rust
+struct OctreeNode {
+    aabb: AABB,                           // bounds de ce nœud
+    objects: Vec<RenderInstanceKey>,       // objets stockés dans ce nœud
+}
+```
+
+#### Placement des objets — approche multi-nœuds
+
+Un objet est inséré dans **tous les nœuds feuilles** dont l'AABB intersecte l'AABB world de l'objet. Un objet peut donc exister dans plusieurs nœuds.
+
+```
+┌───────────────────────┐
+│                       │
+│   ┌─────┬─────┐      │
+│   │  A  │  B  │      │
+│   │  ●● │ ●●  │      │  ← objet stocké dans A ET dans B
+│   └─────┴─────┘      │
+│                       │
+└───────────────────────┘
+```
+
+**Avantage** : les objets sont toujours au niveau le plus profond → meilleur culling spatial.
+**Coût** : duplication → déduplication nécessaire lors du `query_frustum`.
+
+#### Algorithme `query_frustum`
+
+Descente récursive avec 3 chemins selon le test nœud vs frustum :
+
+```
+query_frustum(frustum) :
+    result_set = HashSet::new()
+    collect_recursive(root, frustum, &mut result_set)
+    return result_set → Vec
+```
+
+```
+collect_recursive(node, frustum, result_set) :
+
+    match test(node.aabb, frustum) :
+
+        OUTSIDE →
+            return                         // skip tout le sous-arbre
+                                           // (gain majeur : des milliers d'objets ignorés)
+
+        INSIDE →
+            collect_all(node, result_set)   // tout le nœud est visible
+            return                          // PAS de test per-objet
+
+        PARTIAL →
+            for object in node.objects :
+                if object not in result_set :         // déjà traité → skip
+                    if frustum.intersects(object.aabb) :
+                        result_set.insert(object)     // test individuel
+            for child in node.children :
+                collect_recursive(child, frustum, result_set)
+```
+
+```
+collect_all(node, result_set) :
+    for object in node.objects :
+        result_set.insert(object)       // déduplique (multi-nœuds)
+    for child in node.children :
+        collect_all(child, result_set)
+```
+
+**Rôle du HashSet** : le `result_set` remplit deux fonctions :
+1. **Déduplication** — un objet présent dans plusieurs nœuds n'est retourné qu'une fois
+2. **Skip des objets déjà vus** — dans le chemin PARTIAL, si un objet est déjà dans le set (ajouté par un nœud INSIDE ou un autre nœud PARTIAL), on évite un test frustum inutile
+
+#### Performance
+
+Exemple : 10 000 objets, frustum couvrant 25% de la scène :
+
+| Approche | Tests frustum per-objet |
+|----------|------------------------|
+| Brute force (sans octree) | 10 000 |
+| Octree (profondeur 5) | ~20 tests de nœuds + ~200 tests per-objet |
+
+Le gros des objets sont soit dans un nœud entièrement **OUTSIDE** (skippé) soit entièrement **INSIDE** (ajoutés en bloc). Seuls les objets aux **bords** du frustum nécessitent un test individuel.
+
+---
+
+## 13. Boucle de rendu
+
+### Workflow actuel
 
 ```
 // Game loop
-updater.update(&scene)?;                   // NoOpUpdater: ne fait rien
-let view = culler.cull(&scene, &camera);   // BruteForceCuller: retourne tout
-drawer.draw(&scene, &view, cmd)?;          // ForwardDrawer: draw séquentiel
+updater.update_frame(&scene, &camera)?;            // Écrit camera matrices + time dans UBO
+updater.update_instances(&mut scene, scene_index)?; // Sync dirty data vers GPU + SceneIndex
+let view = culler.cull(&scene, &camera, scene_index)?; // FrustumCuller: AABB vs frustum
+drawer.draw(&scene, &view, cmd)?;                  // ForwardDrawer: draw séquentiel
 ```
 
 Le `ForwardDrawer` exécute :
@@ -513,9 +665,9 @@ pour chaque instance dans view.visible_instances:
     pour chaque submesh du LOD 0:
         pour chaque pass:
             bind pipeline
-            bind binding_groups
-            push_constants(MVP à offset 0, Model à offset 64)
-            push_constants(material params à leurs offsets réfléchis)
+            bind global_binding_group (Set 0: frame UBO + instance SSBO + material SSBO)
+            bind texture_binding_groups (Sets 1+)
+            push_constants(draw_slot_index)
             draw_indexed ou draw
 ```
 
@@ -525,23 +677,22 @@ Les stratégies sont interchangeables sans modifier la game loop :
 
 | Stratégie | Remplacement | Gain |
 |-----------|-------------|------|
-| `BruteForceCuller` → `FrustumCuller` | Test AABB vs frustum planes | Éviter de dessiner les objets hors champ |
 | `ForwardDrawer` → `SortedDrawer` | Tri par pipeline/material | Réduire les state changes GPU |
 | `SortedDrawer` → `InstancedDrawer` | Draw instancé + SSBO | Performance massive pour scènes répétitives |
-| `NoOpUpdater` → `SsboUpdater` | Sync world matrices vers SSBO | Nécessaire pour l'instancing |
+| Sans SceneIndex → `OctreeSceneIndex` | Requête spatiale O(log n) | Scènes larges : culling rapide |
 
 ---
 
-## 13. Itérations futures
+## 14. Itérations futures
 
 ### Priorité haute (nécessaire rapidement)
 
 | Item | Description | Impact |
 |------|-------------|--------|
 | **AABB auto-calculée** | Calculer l'AABB dans `Geometry::from_desc()` et la stocker dans `GeometryMesh` | Évite de passer l'AABB manuellement |
-| **FrustumCuller** | Implémentation de `CameraCuller` avec test AABB vs frustum planes | Performance : éviter de dessiner les objets hors champ |
+| **OctreeSceneIndex** | Implémentation de `SceneIndex` avec octree statique (voir [section 12](#12-sceneindex--structure-daccélération-spatiale)) | Frustum culling O(log n) pour scènes larges |
 | **Lights** | Structure Light (directional, point, spot) | Nécessaire pour un éclairage réaliste |
-| **SsboUpdater** | Implémentation de `Updater` synchronisant les world matrices vers un SSBO GPU | Prérequis pour l'instancing et les données partagées |
+| **Dynamic UBO offsets** | Support de `UNIFORM_BUFFER_DYNAMIC` pour multi-caméra dans un seul submit | Split-screen, shadow maps, reflets |
 
 ### Priorité moyenne (optimisation)
 
@@ -549,21 +700,19 @@ Les stratégies sont interchangeables sans modifier la game loop :
 |------|-------------|--------|
 | **SortedDrawer** | Implémentation de `Drawer` avec tri par pipeline/material | Réduire les state changes GPU |
 | **Sélection de variant par le Drawer** | Le Drawer choisit le variant selon le pass en cours | Shadow maps, multi-pass rendering |
-| **Push constants layout standardisé** | Mapping fixe des offsets | Éviter la sérialisation dynamique |
-| **Uniform buffers (UBO)** | Descriptor sets pour données partagées (camera, lights) | Nécessaire pour passer camera/lights au shader |
 
 ### Priorité basse (évolution)
 
 | Item | Description | Impact |
 |------|-------------|--------|
 | **InstancedDrawer** | Implémentation de `Drawer` avec draw instancé + SSBO | Performance massive pour scènes répétitives |
-| **OctreeCuller** | Implémentation de `CameraCuller` avec octree/BVH | Scènes très larges |
 | **Builder pattern** | Remplacer `from_mesh()` si trop de paramètres | API plus flexible |
 | **LOD auto-selection** | Sélection automatique du LOD selon distance caméra | Qualité vs performance |
-| **Virtualisation des submeshes** | Types spécialisés (indexed vs non-indexed) | Éliminer les branches dans la boucle de rendu |
-| ~~**Multi-scène**~~ | ~~Scènes multiples simultanées (jeu + UI + minimap)~~ | **Implémenté** — SceneManager avec scènes nommées `Arc<Mutex<Scene>>` |
-| ~~**Camera**~~ | ~~Structure Camera dans la Scene~~ | **Implémenté** — `camera::Camera` comme conteneur passif, fourni par l'appelant |
-| ~~**Frustum culling**~~ | ~~Test AABB vs frustum planes~~ | **Architecture en place** — `CameraCuller` trait + `BruteForceCuller` V1 |
+| ~~**Multi-scène**~~ | **Implémenté** — SceneManager avec scènes nommées `Arc<Mutex<Scene>>` |
+| ~~**Camera**~~ | **Implémenté** — `camera::Camera` comme conteneur passif, fourni par l'appelant |
+| ~~**FrustumCuller**~~ | **Implémenté** — `FrustumCuller` avec test AABB vs frustum, avec ou sans SceneIndex |
+| ~~**DefaultUpdater**~~ | **Implémenté** — dirty tracking (new_instances, dirty_transforms, removed_instances) + GPU sync |
+| ~~**SceneIndex trait**~~ | **Implémenté** — trait `SceneIndex` indépendant de la Scene, passé en paramètre |
 
 ---
 

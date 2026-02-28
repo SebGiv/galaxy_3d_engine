@@ -544,6 +544,10 @@ impl GraphicsDevice for MockGraphicsDevice {
         Ok(())
     }
 
+    fn wait_for_previous_submit(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn stats(&self) -> crate::graphics_device::GraphicsDeviceStats {
         crate::graphics_device::GraphicsDeviceStats::default()
     }

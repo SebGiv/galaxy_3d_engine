@@ -12,6 +12,23 @@
 use glam::{Mat4, Vec3, Vec4};
 use crate::scene::AABB;
 
+/// Result of a 3-way frustum/AABB classification.
+///
+/// Used by spatial acceleration structures (OctreeSceneIndex) for
+/// efficient hierarchical culling:
+/// - `Outside` → skip the entire subtree
+/// - `Inside` → collect all objects without further testing
+/// - `Partial` → test individual objects and recurse into children
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrustumTest {
+    /// AABB is entirely outside the frustum
+    Outside,
+    /// AABB is entirely inside the frustum
+    Inside,
+    /// AABB partially overlaps the frustum
+    Partial,
+}
+
 /// Frustum plane indices
 pub const PLANE_LEFT: usize = 0;
 pub const PLANE_RIGHT: usize = 1;
@@ -93,6 +110,49 @@ impl Frustum {
         }
 
         true
+    }
+
+    /// Classify an AABB against the frustum (3-way test).
+    ///
+    /// Tests both the positive vertex (p-vertex) and negative vertex (n-vertex)
+    /// against each plane:
+    /// - If the p-vertex is outside any plane → `Outside` (early out)
+    /// - If the n-vertex is outside any plane → at least `Partial`
+    /// - If all n-vertices are inside all planes → `Inside`
+    ///
+    /// Used by OctreeSceneIndex for hierarchical culling.
+    pub fn classify_aabb(&self, aabb: &AABB) -> FrustumTest {
+        let mut all_inside = true;
+
+        for plane in &self.planes {
+            let normal = Vec3::new(plane.x, plane.y, plane.z);
+
+            // Positive vertex: corner most in the direction of the normal
+            let p_vertex = Vec3::new(
+                if normal.x >= 0.0 { aabb.max.x } else { aabb.min.x },
+                if normal.y >= 0.0 { aabb.max.y } else { aabb.min.y },
+                if normal.z >= 0.0 { aabb.max.z } else { aabb.min.z },
+            );
+
+            // If the p-vertex is outside → entire AABB is outside
+            if normal.dot(p_vertex) + plane.w < 0.0 {
+                return FrustumTest::Outside;
+            }
+
+            // Negative vertex: corner least in the direction of the normal
+            let n_vertex = Vec3::new(
+                if normal.x >= 0.0 { aabb.min.x } else { aabb.max.x },
+                if normal.y >= 0.0 { aabb.min.y } else { aabb.max.y },
+                if normal.z >= 0.0 { aabb.min.z } else { aabb.max.z },
+            );
+
+            // If the n-vertex is outside → AABB straddles this plane
+            if normal.dot(n_vertex) + plane.w < 0.0 {
+                all_inside = false;
+            }
+        }
+
+        if all_inside { FrustumTest::Inside } else { FrustumTest::Partial }
     }
 }
 

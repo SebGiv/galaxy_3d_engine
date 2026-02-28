@@ -3,7 +3,7 @@
 /// Manages named render graphs. Each render graph describes
 /// a complete rendering pipeline as a DAG of passes and targets.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use crate::error::Result;
 use crate::engine_bail;
 use super::render_graph::RenderGraph;
@@ -13,14 +13,14 @@ use super::render_graph::RenderGraph;
 /// Stores named render graphs. Multiple render graphs can exist
 /// simultaneously (e.g. different rendering configurations).
 pub struct RenderGraphManager {
-    render_graphs: HashMap<String, RenderGraph>,
+    render_graphs: FxHashMap<String, RenderGraph>,
 }
 
 impl RenderGraphManager {
     /// Create a new empty render graph manager
     pub fn new() -> Self {
         Self {
-            render_graphs: HashMap::new(),
+            render_graphs: FxHashMap::default(),
         }
     }
 

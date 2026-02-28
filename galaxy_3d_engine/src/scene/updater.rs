@@ -6,6 +6,7 @@
 use crate::error::Result;
 use crate::camera::Camera;
 use super::scene::Scene;
+use super::scene_index::SceneIndex;
 
 /// Strategy for synchronizing scene data to GPU buffers.
 ///
@@ -21,10 +22,15 @@ pub trait Updater: Send + Sync {
 
     /// Update the per-instance storage buffer from dirty instances.
     ///
-    /// Takes the dirty transform set from the Scene, then writes
-    /// world matrices, material slot IDs, and flags into the
-    /// Scene's instance buffer for each modified RenderInstance.
-    fn update_instances(&mut self, scene: &mut Scene) -> Result<()>;
+    /// Processes removed, new, and dirty instances:
+    /// - Removed: cleans up SceneIndex + commits removal from Scene
+    /// - New: writes all GPU fields + inserts into SceneIndex
+    /// - Dirty: writes transform fields + updates SceneIndex
+    fn update_instances(
+        &mut self,
+        scene: &mut Scene,
+        scene_index: Option<&mut dyn SceneIndex>,
+    ) -> Result<()>;
 }
 
 /// No-op updater — does nothing.
@@ -43,7 +49,11 @@ impl Updater for NoOpUpdater {
         Ok(())
     }
 
-    fn update_instances(&mut self, _scene: &mut Scene) -> Result<()> {
+    fn update_instances(
+        &mut self,
+        _scene: &mut Scene,
+        _scene_index: Option<&mut dyn SceneIndex>,
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -95,8 +105,21 @@ impl Updater for DefaultUpdater {
         Ok(())
     }
 
-    fn update_instances(&mut self, scene: &mut Scene) -> Result<()> {
-        // Phase 1: new instances — write ALL fields
+    fn update_instances(
+        &mut self,
+        scene: &mut Scene,
+        mut scene_index: Option<&mut dyn SceneIndex>,
+    ) -> Result<()> {
+        // Phase 0: removals — clean SceneIndex then commit removal from Scene
+        let removed_keys = scene.take_removed_instances();
+        if let Some(ref mut idx) = scene_index {
+            for key in &removed_keys {
+                idx.remove(*key);
+            }
+        }
+        scene.commit_removals(&removed_keys);
+
+        // Phase 1: new instances — write ALL GPU fields + insert into SceneIndex
         let new_keys = scene.take_new_instances();
         for key in &new_keys {
             let instance = match scene.render_instance(*key) {
@@ -130,28 +153,27 @@ impl Updater for DefaultUpdater {
                 buf.update_field(slot, Self::INSTANCE_FIELD_FLAGS,
                     bytemuck::bytes_of(&flags))?;
             }
+
+            if let Some(ref mut idx) = scene_index {
+                let world_aabb = instance.bounding_box().transformed(&world);
+                idx.insert(*key, &world_aabb);
+            }
         }
 
-        // Phase 2: dirty transforms — write matrices only (skip already handled)
+        // Phase 2: dirty transforms — write matrices + update SceneIndex
         let dirty_keys = scene.take_dirty_transforms();
         for key in &dirty_keys {
-            if new_keys.contains(key) {
-                continue;
-            }
-
             let instance = match scene.render_instance(*key) {
                 Some(inst) => inst,
                 None => continue,
             };
 
-            let world = *instance.world_matrix();
-            let inverse_world = world.inverse();
-
             let lod = match instance.lod(0) {
                 Some(lod) => lod,
                 None => continue,
             };
-
+            let world = *instance.world_matrix();
+            let inverse_world = world.inverse();
             for sm_idx in 0..lod.sub_mesh_count() {
                 let sub_mesh = lod.sub_mesh(sm_idx).unwrap();
                 let slot = sub_mesh.draw_slot();
@@ -163,6 +185,11 @@ impl Updater for DefaultUpdater {
                     bytemuck::bytes_of(&world))?;
                 buf.update_field(slot, Self::INSTANCE_FIELD_INVERSE_WORLD,
                     bytemuck::bytes_of(&inverse_world))?;
+            }
+
+            if let Some(ref mut idx) = scene_index {
+                let world_aabb = instance.bounding_box().transformed(&world);
+                idx.update(*key, &world_aabb);
             }
         }
 
