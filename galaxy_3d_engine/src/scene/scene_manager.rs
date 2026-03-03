@@ -38,6 +38,7 @@ impl SceneManager {
     /// * `frame_buffer` - Per-frame uniform buffer (camera, lighting, time)
     /// * `instance_buffer` - Per-instance storage buffer (world matrices, flags)
     /// * `material_buffer` - Material storage buffer (shared material parameters)
+    /// * `light_buffer` - Light storage buffer (shared light parameters)
     ///
     /// # Errors
     ///
@@ -49,6 +50,7 @@ impl SceneManager {
         frame_buffer: Arc<Buffer>,
         instance_buffer: Arc<Buffer>,
         material_buffer: Arc<Buffer>,
+        light_buffer: Arc<Buffer>,
     ) -> Result<Arc<Mutex<Scene>>> {
         if self.scenes.contains_key(name) {
             engine_bail!("galaxy3d::SceneManager",
@@ -56,7 +58,7 @@ impl SceneManager {
         }
 
         let scene = Arc::new(Mutex::new(Scene::new(
-            graphics_device, frame_buffer, instance_buffer, material_buffer,
+            graphics_device, frame_buffer, instance_buffer, material_buffer, light_buffer,
         )));
         self.scenes.insert(name.to_string(), Arc::clone(&scene));
         Ok(scene)

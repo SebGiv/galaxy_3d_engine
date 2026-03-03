@@ -23,7 +23,7 @@ pub trait Updater: Send + Sync {
     /// Update the per-instance storage buffer from dirty instances.
     ///
     /// Processes removed, new, and dirty instances:
-    /// - Removed: cleans up SceneIndex + commits removal from Scene
+    /// - Removed: drains + deletes from Scene, then cleans up SceneIndex
     /// - New: writes all GPU fields + inserts into SceneIndex
     /// - Dirty: writes transform fields + updates SceneIndex
     fn update_instances(
@@ -70,7 +70,7 @@ impl Updater for NoOpUpdater {
 /// Assumes the Scene's instance buffer was created with
 /// `ResourceManager::create_default_instance_buffer()` whose layout is:
 ///   0: world (Mat4), 1: previousWorld (Mat4), 2: inverseWorld (Mat4),
-///   3: materialSlotId (UInt), 4: flags (UInt), ...
+///   3: materialSlotId (UInt), 4: flags (UInt), 5: lightCount (UInt), ...
 pub struct DefaultUpdater;
 
 impl DefaultUpdater {
@@ -85,6 +85,7 @@ impl DefaultUpdater {
     const INSTANCE_FIELD_INVERSE_WORLD: usize    = 2;
     const INSTANCE_FIELD_MATERIAL_SLOT_ID: usize = 3;
     const INSTANCE_FIELD_FLAGS: usize            = 4;
+    const INSTANCE_FIELD_LIGHT_COUNT: usize      = 5;
 
     pub fn new() -> Self {
         Self
@@ -110,18 +111,20 @@ impl Updater for DefaultUpdater {
         scene: &mut Scene,
         mut scene_index: Option<&mut dyn SceneIndex>,
     ) -> Result<()> {
-        // Phase 0: removals — clean SceneIndex then commit removal from Scene
-        let removed_keys = scene.take_removed_instances();
-        if let Some(ref mut idx) = scene_index {
-            for key in &removed_keys {
-                idx.remove(*key);
+        // Phase 0: removals — removed_instances() flips the SwapSet, frees draw
+        // slots and removes from SlotMap, then we clean up the SceneIndex.
+        {
+            let removed_keys = scene.removed_instances();
+            if let Some(ref mut idx) = scene_index {
+                for key in removed_keys {
+                    idx.remove(*key);
+                }
             }
         }
-        scene.commit_removals(&removed_keys);
 
         // Phase 1: new instances — write ALL GPU fields + insert into SceneIndex
-        let new_keys = scene.take_new_instances();
-        for key in &new_keys {
+        let new_keys = scene.new_instances();
+        for key in new_keys {
             let instance = match scene.render_instance(*key) {
                 Some(inst) => inst,
                 None => continue,
@@ -160,9 +163,9 @@ impl Updater for DefaultUpdater {
             }
         }
 
-        // Phase 2: dirty transforms — write matrices + update SceneIndex
-        let dirty_keys = scene.take_dirty_transforms();
-        for key in &dirty_keys {
+        // Phase 2: dirty instance transforms — write matrices + update SceneIndex
+        let dirty_keys = scene.dirty_instance_transforms();
+        for key in dirty_keys {
             let instance = match scene.render_instance(*key) {
                 Some(inst) => inst,
                 None => continue,

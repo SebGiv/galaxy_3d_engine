@@ -51,7 +51,7 @@ fn setup() {
 
 fn create_test_buffers(
     graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>,
-) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
+) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
     let frame_buffer = Arc::new(Buffer::from_desc(BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Uniform,
@@ -65,12 +65,18 @@ fn create_test_buffers(
         count: 1,
     }).unwrap());
     let material_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        graphics_device: graphics_device.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let light_buffer = Arc::new(Buffer::from_desc(BufferDesc {
         graphics_device,
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap());
-    (frame_buffer, instance_buffer, material_buffer)
+    (frame_buffer, instance_buffer, material_buffer, light_buffer)
 }
 
 // ============================================================================
@@ -775,8 +781,8 @@ fn test_scene_manager_returned_is_usable() {
 
     // Lock and use the scene manager
     let mut guard = sm.lock().unwrap();
-    let (fb, ib, mb) = create_test_buffers(graphics_device.clone());
-    let scene = guard.create_scene("test_scene", graphics_device, fb, ib, mb);
+    let (fb, ib, mb, lb) = create_test_buffers(graphics_device.clone());
+    let scene = guard.create_scene("test_scene", graphics_device, fb, ib, mb, lb);
     assert!(scene.is_ok());
 }
 
@@ -868,10 +874,10 @@ fn test_full_engine_lifecycle_with_scene_manager() {
         let graphics_device = Engine::graphics_device("test_full_sm").unwrap();
         let sm = Engine::scene_manager().unwrap();
         let mut guard = sm.lock().unwrap();
-        let (fb, ib, mb) = create_test_buffers(graphics_device.clone());
-        guard.create_scene("main", graphics_device.clone(), fb.clone(), ib.clone(), mb.clone()).unwrap();
-        let (fb2, ib2, mb2) = create_test_buffers(graphics_device.clone());
-        guard.create_scene("ui", graphics_device.clone(), fb2, ib2, mb2).unwrap();
+        let (fb, ib, mb, lb) = create_test_buffers(graphics_device.clone());
+        guard.create_scene("main", graphics_device.clone(), fb.clone(), ib.clone(), mb.clone(), lb.clone()).unwrap();
+        let (fb2, ib2, mb2, lb2) = create_test_buffers(graphics_device.clone());
+        guard.create_scene("ui", graphics_device.clone(), fb2, ib2, mb2, lb2).unwrap();
         assert_eq!(guard.scene_count(), 2);
     }
 

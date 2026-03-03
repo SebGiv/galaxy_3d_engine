@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 fn create_test_buffers_via_rm(
     graphics_device: Arc<Mutex<dyn galaxy_3d_engine::galaxy3d::render::GraphicsDevice>>,
     prefix: &str,
-) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
+) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
     let rm_arc = Engine::resource_manager().unwrap();
     let mut rm = rm_arc.lock().unwrap();
 
@@ -39,12 +39,18 @@ fn create_test_buffers_via_rm(
         count: 1,
     }).unwrap();
     let material_buffer = rm.create_buffer(format!("{}_material", prefix), BufferDesc {
+        graphics_device: graphics_device.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap();
+    let light_buffer = rm.create_buffer(format!("{}_light", prefix), BufferDesc {
         graphics_device,
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap();
-    (frame_buffer, instance_buffer, material_buffer)
+    (frame_buffer, instance_buffer, material_buffer, light_buffer)
 }
 
 // ============================================================================
@@ -77,10 +83,10 @@ fn test_integration_scene_manager_lifecycle() {
     {
         let graphics_device_arc = Engine::graphics_device("main").unwrap();
         let mut sm = sm_arc.lock().unwrap();
-        let (fb, ib, mb) = create_test_buffers_via_rm(graphics_device_arc.clone(), "game");
-        sm.create_scene("game", graphics_device_arc.clone(), fb, ib, mb).unwrap();
-        let (fb2, ib2, mb2) = create_test_buffers_via_rm(graphics_device_arc.clone(), "ui");
-        sm.create_scene("ui", graphics_device_arc.clone(), fb2, ib2, mb2).unwrap();
+        let (fb, ib, mb, lb) = create_test_buffers_via_rm(graphics_device_arc.clone(), "game");
+        sm.create_scene("game", graphics_device_arc.clone(), fb, ib, mb, lb).unwrap();
+        let (fb2, ib2, mb2, lb2) = create_test_buffers_via_rm(graphics_device_arc.clone(), "ui");
+        sm.create_scene("ui", graphics_device_arc.clone(), fb2, ib2, mb2, lb2).unwrap();
         assert_eq!(sm.scene_count(), 2);
 
         // Get a scene

@@ -38,6 +38,7 @@ pub enum FieldType {
     Mat4,
     Int,
     UInt,
+    UVec4,
 }
 
 impl FieldType {
@@ -52,6 +53,7 @@ impl FieldType {
             FieldType::Mat4  => 64,
             FieldType::Int   => 4,
             FieldType::UInt  => 4,
+            FieldType::UVec4 => 16,
         }
     }
 
@@ -66,6 +68,7 @@ impl FieldType {
             FieldType::Mat4  => 16,
             FieldType::Int   => 4,
             FieldType::UInt  => 4,
+            FieldType::UVec4 => 16,
         }
     }
 }

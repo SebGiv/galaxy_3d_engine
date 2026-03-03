@@ -109,7 +109,7 @@ fn create_test_material(pipeline: &Arc<Pipeline>, value: f32) -> Arc<Material> {
 
 fn create_test_buffers(
     graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>,
-) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
+) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
     let frame_buffer = Arc::new(Buffer::from_desc(BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Uniform,
@@ -123,12 +123,18 @@ fn create_test_buffers(
         count: 1,
     }).unwrap());
     let material_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        graphics_device: graphics_device.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let light_buffer = Arc::new(Buffer::from_desc(BufferDesc {
         graphics_device,
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap());
-    (frame_buffer, instance_buffer, material_buffer)
+    (frame_buffer, instance_buffer, material_buffer, light_buffer)
 }
 
 fn create_test_aabb() -> AABB {
@@ -156,7 +162,7 @@ fn create_test_mesh(geometry: &Arc<Geometry>, material: &Arc<Material>) -> Mesh 
 /// Helper: create all resources and return (graphics_device, buffers, geometry, pipeline, material, mesh)
 fn setup_resources() -> (
     Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>,
-    (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>),
+    (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>),
     Arc<Geometry>,
     Arc<Pipeline>,
     Arc<Material>,
@@ -171,13 +177,12 @@ fn setup_resources() -> (
     (graphics_device, buffers, geometry, pipeline, material, mesh)
 }
 
-/// Helper: mark for deferred removal + commit immediately.
+/// Helper: mark for deferred removal + drain immediately.
 /// For tests that don't care about deferred behavior.
 fn remove_and_commit(scene: &mut Scene, key: RenderInstanceKey) -> bool {
     let marked = scene.remove_render_instance(key);
     if marked {
-        let removed = scene.take_removed_instances();
-        scene.commit_removals(&removed);
+        scene.removed_instances();
     }
     marked
 }
@@ -190,7 +195,7 @@ fn remove_and_commit(scene: &mut Scene, key: RenderInstanceKey) -> bool {
 fn test_scene_new_is_empty() {
     let graphics_device = create_mock_graphics_device();
     let buffers = create_test_buffers(graphics_device.clone());
-    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2);
+    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2, buffers.3);
     assert_eq!(scene.render_instance_count(), 0);
 }
 
@@ -201,7 +206,7 @@ fn test_scene_new_is_empty() {
 #[test]
 fn test_create_render_instance() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -214,7 +219,7 @@ fn test_create_render_instance() {
 #[test]
 fn test_create_multiple_render_instances() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::X), create_test_aabb(), 0,
@@ -243,7 +248,7 @@ fn test_create_multiple_render_instances() {
 #[test]
 fn test_create_render_instance_returns_unique_keys() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -262,7 +267,7 @@ fn test_create_render_instance_returns_unique_keys() {
 #[test]
 fn test_remove_render_instance_deferred() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -277,9 +282,8 @@ fn test_remove_render_instance_deferred() {
     assert_eq!(scene.render_instance_count(), 1);
     assert!(scene.render_instance(key).is_some());
 
-    // Commit the removal
-    let removed = scene.take_removed_instances();
-    scene.commit_removals(&removed);
+    // Flip the removal set (also deletes from SlotMap)
+    scene.removed_instances();
 
     assert_eq!(scene.render_instance_count(), 0);
     assert!(scene.render_instance(key).is_none());
@@ -288,7 +292,7 @@ fn test_remove_render_instance_deferred() {
 #[test]
 fn test_remove_render_instance_key_becomes_invalid() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -304,7 +308,7 @@ fn test_remove_render_instance_key_becomes_invalid() {
 #[test]
 fn test_remove_nonexistent_key_returns_false() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -320,7 +324,7 @@ fn test_remove_nonexistent_key_returns_false() {
 #[test]
 fn test_remove_does_not_invalidate_other_keys() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::X), create_test_aabb(), 0,
@@ -345,7 +349,7 @@ fn test_remove_does_not_invalidate_other_keys() {
 #[test]
 fn test_slot_reuse_after_remove() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -372,7 +376,7 @@ fn test_slot_reuse_after_remove() {
 #[test]
 fn test_render_instance_access() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)),
@@ -387,7 +391,7 @@ fn test_render_instance_access() {
 #[test]
 fn test_set_world_matrix() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -410,14 +414,14 @@ fn test_set_world_matrix() {
 fn test_render_instance_keys_empty() {
     let graphics_device = create_mock_graphics_device();
     let buffers = create_test_buffers(graphics_device.clone());
-    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2);
+    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2, buffers.3);
     assert_eq!(scene.render_instance_keys().count(), 0);
 }
 
 #[test]
 fn test_render_instance_keys_returns_all() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -439,7 +443,7 @@ fn test_render_instance_keys_returns_all() {
 #[test]
 fn test_render_instances_iteration() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::X), create_test_aabb(), 0,
@@ -460,7 +464,7 @@ fn test_render_instances_iteration() {
 #[test]
 fn test_set_world_matrix_all_instances() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -483,7 +487,7 @@ fn test_set_world_matrix_all_instances() {
 #[test]
 fn test_iteration_after_removal() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let _key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -507,7 +511,7 @@ fn test_iteration_after_removal() {
 fn test_iteration_empty_scene() {
     let graphics_device = create_mock_graphics_device();
     let buffers = create_test_buffers(graphics_device.clone());
-    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2);
+    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2, buffers.3);
     let count = scene.render_instances().count();
     assert_eq!(count, 0);
 }
@@ -519,7 +523,7 @@ fn test_iteration_empty_scene() {
 #[test]
 fn test_clear() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -540,7 +544,7 @@ fn test_clear() {
 #[test]
 fn test_clear_then_add() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -564,7 +568,7 @@ fn test_clear_then_add() {
 #[test]
 fn test_many_instances() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
     let mut keys = Vec::new();
 
     // Add 100 instances
@@ -584,8 +588,7 @@ fn test_many_instances() {
     for i in (0..100).step_by(2) {
         scene.remove_render_instance(keys[i]);
     }
-    let removed = scene.take_removed_instances();
-    scene.commit_removals(&removed);
+    scene.removed_instances();
 
     assert_eq!(scene.render_instance_count(), 50);
 
@@ -627,7 +630,7 @@ fn create_test_camera() -> Camera {
 fn test_draw_empty_view() {
     let graphics_device = create_mock_graphics_device();
     let buffers = create_test_buffers(graphics_device.clone());
-    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2);
+    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2, buffers.3);
     let camera = create_test_camera();
 
     let mut culler = BruteForceCuller::new();
@@ -644,7 +647,7 @@ fn test_draw_empty_view() {
 #[test]
 fn test_draw_single_instance() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -673,7 +676,7 @@ fn test_draw_single_instance() {
 #[test]
 fn test_draw_skips_committed_removal() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -698,7 +701,7 @@ fn test_draw_skips_committed_removal() {
 #[test]
 fn test_draw_multiple_instances() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     scene.create_render_instance(
         &mesh, Mat4::from_translation(Vec3::X), create_test_aabb(), 0,
@@ -729,7 +732,7 @@ fn test_draw_multiple_instances() {
 fn test_draw_slot_count_empty() {
     let graphics_device = create_mock_graphics_device();
     let buffers = create_test_buffers(graphics_device.clone());
-    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2);
+    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2, buffers.3);
     assert_eq!(scene.draw_slot_count(), 0);
     assert_eq!(scene.draw_slot_high_water_mark(), 0);
 }
@@ -737,7 +740,7 @@ fn test_draw_slot_count_empty() {
 #[test]
 fn test_draw_slot_count_tracks_instances() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     // Each test mesh has 1 LOD with 1 submesh = 1 draw slot per instance
     scene.create_render_instance(
@@ -756,7 +759,7 @@ fn test_draw_slot_count_tracks_instances() {
 #[test]
 fn test_draw_slot_count_after_remove() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -776,7 +779,7 @@ fn test_draw_slot_count_after_remove() {
 #[test]
 fn test_draw_slot_recycling_after_remove() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -802,7 +805,7 @@ fn test_draw_slot_recycling_after_remove() {
 #[test]
 fn test_draw_slot_count_after_clear() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -827,71 +830,70 @@ fn test_draw_slot_count_after_clear() {
 #[test]
 fn test_create_marks_new_instance() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    assert!(scene.new_instances().contains(&key));
-    assert!(!scene.dirty_transforms().contains(&key));
+    assert!(scene.has_new_instance(key));
+    assert!(!scene.has_dirty_instance_transform(key));
 }
 
 #[test]
 fn test_set_world_matrix_marks_dirty_transform() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Creation goes to new_instances, not dirty_transforms
-    assert!(scene.dirty_transforms().is_empty());
+    // Creation goes to new_instances, not dirty_instance_transforms
+    assert_eq!(scene.dirty_instance_transform_count(), 0);
 
     // set_world_matrix should mark dirty
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
-    assert!(scene.dirty_transforms().contains(&key));
+    assert!(scene.has_dirty_instance_transform(key));
 }
 
 #[test]
-fn test_take_dirty_transforms_clears_set() {
+fn test_dirty_instance_transforms_flip_clears_front() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // set_world_matrix to populate dirty_transforms
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
 
-    let taken = scene.take_dirty_transforms();
+    let taken = scene.dirty_instance_transforms();
     assert!(taken.contains(&key));
-    assert!(scene.dirty_transforms().is_empty());
+    // Front is now logically empty after flip
+    assert!(!scene.has_dirty_instance_transform(key));
 }
 
 #[test]
 fn test_remove_cleans_dirty_transform() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Populate dirty_transforms via set_world_matrix
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
-    assert!(scene.dirty_transforms().contains(&key));
+    assert!(scene.has_dirty_instance_transform(key));
 
     scene.remove_render_instance(key);
-    assert!(!scene.dirty_transforms().contains(&key));
+    assert!(!scene.has_dirty_instance_transform(key));
 }
 
 #[test]
 fn test_clear_cleans_dirty_transforms() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key1 = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -900,19 +902,18 @@ fn test_clear_cleans_dirty_transforms() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Populate dirty_transforms via set_world_matrix
     scene.set_world_matrix(key1, Mat4::from_translation(Vec3::X));
     scene.set_world_matrix(key2, Mat4::from_translation(Vec3::Y));
-    assert_eq!(scene.dirty_transforms().len(), 2);
+    assert_eq!(scene.dirty_instance_transform_count(), 2);
 
     scene.clear();
-    assert!(scene.dirty_transforms().is_empty());
+    assert_eq!(scene.dirty_instance_transform_count(), 0);
 }
 
 #[test]
 fn test_set_world_matrix_on_invalid_key_returns_false() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -926,7 +927,7 @@ fn test_set_world_matrix_on_invalid_key_returns_false() {
 #[test]
 fn test_dirty_transform_deduplication() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -937,8 +938,8 @@ fn test_dirty_transform_deduplication() {
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::Y));
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::Z));
 
-    assert_eq!(scene.dirty_transforms().len(), 1);
-    assert!(scene.dirty_transforms().contains(&key));
+    assert_eq!(scene.dirty_instance_transform_count(), 1);
+    assert!(scene.has_dirty_instance_transform(key));
 }
 
 // ============================================================================
@@ -946,38 +947,39 @@ fn test_dirty_transform_deduplication() {
 // ============================================================================
 
 #[test]
-fn test_take_new_instances_clears_set() {
+fn test_new_instances_flip_clears_front() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    let taken = scene.take_new_instances();
+    let taken = scene.new_instances();
     assert!(taken.contains(&key));
-    assert!(scene.new_instances().is_empty());
+    // Front is now logically empty after flip
+    assert!(!scene.has_new_instance(key));
 }
 
 #[test]
 fn test_remove_cleans_new_instance() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    assert!(scene.new_instances().contains(&key));
+    assert!(scene.has_new_instance(key));
 
     scene.remove_render_instance(key);
-    assert!(!scene.new_instances().contains(&key));
+    assert!(!scene.has_new_instance(key));
 }
 
 #[test]
 fn test_clear_cleans_new_instances() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -986,29 +988,29 @@ fn test_clear_cleans_new_instances() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    assert_eq!(scene.new_instances().len(), 2);
+    assert_eq!(scene.new_instance_count(), 2);
 
     scene.clear();
-    assert!(scene.new_instances().is_empty());
+    assert_eq!(scene.new_instance_count(), 0);
 }
 
 #[test]
 fn test_create_then_set_matrix_in_both_sets() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     // Create puts in new_instances only
-    assert!(scene.new_instances().contains(&key));
-    assert!(!scene.dirty_transforms().contains(&key));
+    assert!(scene.has_new_instance(key));
+    assert!(!scene.has_dirty_instance_transform(key));
 
-    // set_world_matrix adds to dirty_transforms too
+    // set_world_matrix adds to dirty_instance_transforms too
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
-    assert!(scene.new_instances().contains(&key));
-    assert!(scene.dirty_transforms().contains(&key));
+    assert!(scene.has_new_instance(key));
+    assert!(scene.has_dirty_instance_transform(key));
 }
 
 // ============================================================================
@@ -1018,37 +1020,37 @@ fn test_create_then_set_matrix_in_both_sets() {
 #[test]
 fn test_remove_marks_removed_instance() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     scene.remove_render_instance(key);
-    let removed = scene.take_removed_instances();
+    let removed = scene.removed_instances();
     assert!(removed.contains(&key));
 }
 
 #[test]
-fn test_take_removed_instances_clears_set() {
+fn test_removed_instances_flip_clears_front() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
     scene.remove_render_instance(key);
-    let _ = scene.take_removed_instances();
+    let _ = scene.removed_instances();
 
-    // Second take returns empty
-    assert!(scene.take_removed_instances().is_empty());
+    // Second flip returns empty
+    assert!(scene.removed_instances().is_empty());
 }
 
 #[test]
 fn test_remove_deduplication() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -1058,14 +1060,14 @@ fn test_remove_deduplication() {
     scene.remove_render_instance(key);
     scene.remove_render_instance(key);
 
-    let removed = scene.take_removed_instances();
+    let removed = scene.removed_instances();
     assert_eq!(removed.len(), 1);
 }
 
 #[test]
 fn test_clear_cleans_removed_instances() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     let key = scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -1074,7 +1076,7 @@ fn test_clear_cleans_removed_instances() {
     scene.remove_render_instance(key);
     scene.clear();
 
-    assert!(scene.take_removed_instances().is_empty());
+    assert!(scene.removed_instances().is_empty());
 }
 
 // ============================================================================
@@ -1085,7 +1087,7 @@ fn test_clear_cleans_removed_instances() {
 fn test_global_binding_group_none_before_first_instance() {
     let graphics_device = create_mock_graphics_device();
     let buffers = create_test_buffers(graphics_device.clone());
-    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2);
+    let scene = Scene::new(graphics_device, buffers.0, buffers.1, buffers.2, buffers.3);
 
     // No instance created yet → global binding group is None
     assert!(scene.global_binding_group().is_none());
@@ -1094,7 +1096,7 @@ fn test_global_binding_group_none_before_first_instance() {
 #[test]
 fn test_global_binding_group_created_on_first_instance() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
@@ -1109,7 +1111,7 @@ fn test_global_binding_group_created_on_first_instance() {
 #[test]
 fn test_global_binding_group_survives_clear() {
     let (graphics_device, buffers, _, _, _, mesh) = setup_resources();
-    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone());
+    let mut scene = Scene::new(graphics_device, buffers.0.clone(), buffers.1.clone(), buffers.2.clone(), buffers.3.clone());
 
     scene.create_render_instance(
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,

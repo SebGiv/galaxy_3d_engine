@@ -478,7 +478,7 @@ pub trait Updater: Send + Sync {
 
 - `update_frame()` — écrit les matrices caméra (view, proj, viewProj) + time dans le frame UBO
 - `update_instances()` — synchronise les dirty transforms et nouvelles instances vers le GPU, et met à jour le SceneIndex si fourni. Trois phases :
-  1. **Phase 0 — Removals** : retire les instances marquées pour suppression du SceneIndex, puis les supprime réellement de la Scene (`commit_removals`)
+  1. **Phase 0 — Removals** : `take_removed_instances()` draine le set et supprime les instances du SlotMap, puis nettoie le SceneIndex avec les clés retournées
   2. **Phase 1 — New instances** : écrit toutes les données GPU (world matrix, normal matrix, material index) + insère dans le SceneIndex
   3. **Phase 2 — Dirty transforms** : met à jour les matrices GPU + update dans le SceneIndex
 

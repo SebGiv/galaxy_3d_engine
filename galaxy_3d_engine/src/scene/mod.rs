@@ -4,6 +4,7 @@
 //! (culling, drawing, updating).
 
 mod render_instance;
+mod light;
 mod scene;
 mod scene_manager;
 mod scene_index;
@@ -17,6 +18,7 @@ pub use render_instance::{
     RenderPass,
     AABB, FLAG_VISIBLE, FLAG_CAST_SHADOW, FLAG_RECEIVE_SHADOW,
 };
+pub use light::{Light, LightKey, LightType, LightDesc};
 pub use scene::Scene;
 pub use scene_manager::SceneManager;
 pub use scene_index::SceneIndex;

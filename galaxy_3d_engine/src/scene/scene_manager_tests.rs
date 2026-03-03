@@ -18,7 +18,7 @@ fn create_mock_graphics_device() -> Arc<Mutex<dyn crate::graphics_device::Graphi
 
 fn create_test_buffers(
     graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>,
-) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
+) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
     let frame_buffer = Arc::new(Buffer::from_desc(BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Uniform,
@@ -32,12 +32,18 @@ fn create_test_buffers(
         count: 1,
     }).unwrap());
     let material_buffer = Arc::new(Buffer::from_desc(BufferDesc {
+        graphics_device: graphics_device.clone(),
+        kind: BufferKind::Storage,
+        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
+        count: 1,
+    }).unwrap());
+    let light_buffer = Arc::new(Buffer::from_desc(BufferDesc {
         graphics_device,
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap());
-    (frame_buffer, instance_buffer, material_buffer)
+    (frame_buffer, instance_buffer, material_buffer, light_buffer)
 }
 
 fn create_scene_with_mock(
@@ -45,8 +51,8 @@ fn create_scene_with_mock(
     name: &str,
 ) -> crate::error::Result<Arc<Mutex<Scene>>> {
     let graphics_device = create_mock_graphics_device();
-    let (fb, ib, mb) = create_test_buffers(graphics_device.clone());
-    sm.create_scene(name, graphics_device, fb, ib, mb)
+    let (fb, ib, mb, lb) = create_test_buffers(graphics_device.clone());
+    sm.create_scene(name, graphics_device, fb, ib, mb, lb)
 }
 
 // ============================================================================

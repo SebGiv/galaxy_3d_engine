@@ -761,20 +761,21 @@ impl ResourceManager {
 
     /// Create a default per-instance storage buffer (SSBO) with standard engine fields.
     ///
-    /// Layout (std430, 224 bytes per element):
+    /// Layout (std430, 256 bytes per element):
     /// - Transform: world, previousWorld, inverseWorld (Mat4)
     /// - References: materialSlotId, flags (UInt)
     /// - 8 bytes padding (Vec4 alignment)
     /// - Custom: customData (Vec4)
+    /// - Lighting: lightIndices0, lightIndices1 (UVec4) — 8 light indices, 0xFFFFFFFF = empty
     ///
-    /// No default values — instances are populated individually.
+    /// Light indices default to 0xFFFFFFFF (no light assigned).
     pub fn create_default_instance_buffer(
         &mut self,
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
     ) -> Result<Arc<Buffer>> {
-        self.create_buffer(name, BufferDesc {
+        let buffer = self.create_buffer(name, BufferDesc {
             graphics_device,
             kind: BufferKind::Storage,
             fields: vec![
@@ -783,10 +784,22 @@ impl ResourceManager {
                 FieldDesc { name: "inverseWorld".to_string(),   field_type: FieldType::Mat4 },
                 FieldDesc { name: "materialSlotId".to_string(), field_type: FieldType::UInt },
                 FieldDesc { name: "flags".to_string(),          field_type: FieldType::UInt },
+                FieldDesc { name: "lightCount".to_string(),     field_type: FieldType::UInt },
                 FieldDesc { name: "customData".to_string(),     field_type: FieldType::Vec4 },
+                FieldDesc { name: "lightIndices0".to_string(),  field_type: FieldType::UVec4 },
+                FieldDesc { name: "lightIndices1".to_string(),  field_type: FieldType::UVec4 },
             ],
             count,
-        })
+        })?;
+
+        // Safe defaults: lightCount = 0 (zero-initialized), no lights assigned (sentinel 0xFFFFFFFF)
+        let no_light = [0xFFFFFFFFu32; 4];
+        for i in 0..count {
+            buffer.update_field(i, 7, bytemuck::bytes_of(&no_light))?; // lightIndices0
+            buffer.update_field(i, 8, bytemuck::bytes_of(&no_light))?; // lightIndices1
+        }
+
+        Ok(buffer)
     }
 
     /// Create a default material storage buffer (SSBO) with standard PBR fields.
@@ -845,6 +858,47 @@ impl ResourceManager {
             buffer.update_field(i, f("metallicRoughnessTexture"), &no_texture)?;
             buffer.update_field(i, f("emissiveTexture"),          &no_texture)?;
             buffer.update_field(i, f("aoTexture"),                &no_texture)?;
+        }
+
+        Ok(buffer)
+    }
+
+    /// Create a default light storage buffer (SSBO) with standard light fields.
+    ///
+    /// Layout (std430, 80 bytes per element, no padding — all Vec4-aligned):
+    /// - positionType:   Vec4 (xyz=position, w=type: 0=dir, 1=point, 2=spot)
+    /// - directionRange: Vec4 (xyz=direction, w=range)
+    /// - colorIntensity: Vec4 (xyz=color, w=intensity)
+    /// - spotParams:     Vec4 (x=cos(inner), y=cos(outer), z=castShadows, w=enabled)
+    /// - attenuation:    Vec4 (x=constant, y=linear, z=quadratic, w=reserved)
+    ///
+    /// All lights default to disabled (spotParams.w = 0.0).
+    /// Attenuation defaults to inverse square law (0.0, 0.0, 1.0, 0.0).
+    pub fn create_default_light_buffer(
+        &mut self,
+        name: String,
+        graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
+        count: u32,
+    ) -> Result<Arc<Buffer>> {
+        let buffer = self.create_buffer(name, BufferDesc {
+            graphics_device,
+            kind: BufferKind::Storage,
+            fields: vec![
+                FieldDesc { name: "positionType".to_string(),   field_type: FieldType::Vec4 },
+                FieldDesc { name: "directionRange".to_string(), field_type: FieldType::Vec4 },
+                FieldDesc { name: "colorIntensity".to_string(), field_type: FieldType::Vec4 },
+                FieldDesc { name: "spotParams".to_string(),     field_type: FieldType::Vec4 },
+                FieldDesc { name: "attenuation".to_string(),    field_type: FieldType::Vec4 },
+            ],
+            count,
+        })?;
+
+        // Safe defaults: all lights disabled, inverse square attenuation
+        for i in 0..count {
+            buffer.update_field(i, 3, // spotParams: disabled
+                &[0.0f32, 0.0, 0.0, 0.0].map(|v| v.to_ne_bytes()).concat())?;
+            buffer.update_field(i, 4, // attenuation: constant=0, linear=0, quadratic=1
+                &[0.0f32, 0.0, 1.0, 0.0].map(|v| v.to_ne_bytes()).concat())?;
         }
 
         Ok(buffer)
