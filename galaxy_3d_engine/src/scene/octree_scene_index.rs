@@ -310,15 +310,6 @@ impl OctreeSceneIndex {
     }
 }
 
-// ===== AABB HELPER =====
-
-impl AABB {
-    /// Compute the center point of this AABB.
-    fn center(&self) -> Vec3 {
-        (self.min + self.max) * 0.5
-    }
-}
-
 // ===== SCENE INDEX TRAIT =====
 
 impl SceneIndex for OctreeSceneIndex {

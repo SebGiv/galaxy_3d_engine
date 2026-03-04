@@ -83,6 +83,18 @@ impl AABB {
         && self.min.y <= other.max.y && self.max.y >= other.min.y
         && self.min.z <= other.max.z && self.max.z >= other.min.z
     }
+
+    /// Closest point on this AABB to a given point.
+    ///
+    /// Returns the point itself if it lies inside the AABB.
+    pub fn closest_point(&self, point: Vec3) -> Vec3 {
+        point.clamp(self.min, self.max)
+    }
+
+    /// Center of this AABB.
+    pub fn center(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
+    }
 }
 
 // ===== FLAGS =====

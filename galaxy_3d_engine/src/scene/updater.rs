@@ -1,12 +1,16 @@
 /// Update strategies.
 ///
 /// An Updater synchronizes scene data to GPU buffers each frame.
-/// Two separate phases: per-frame camera data, then per-instance data.
+/// Four phases: per-frame camera data, per-instance data, per-light data,
+/// and per-instance light assignment (post-culling).
 
+use glam::Vec3;
 use crate::error::Result;
-use crate::camera::Camera;
+use crate::camera::{Camera, RenderView};
 use super::scene::Scene;
 use super::scene_index::SceneIndex;
+use super::render_instance::AABB;
+use super::light::LightType;
 
 /// Strategy for synchronizing scene data to GPU buffers.
 ///
@@ -31,6 +35,23 @@ pub trait Updater: Send + Sync {
         scene: &mut Scene,
         scene_index: Option<&mut dyn SceneIndex>,
     ) -> Result<()>;
+
+    /// Update the per-light storage buffer from dirty lights.
+    ///
+    /// Processes removed, new, and dirty lights:
+    /// - Removed: drains + frees light slots
+    /// - New: writes all GPU fields to light buffer
+    /// - Dirty transforms: writes position/type + direction/range
+    /// - Dirty data: writes color/intensity + spot params + attenuation
+    fn update_lights(&mut self, scene: &mut Scene) -> Result<()>;
+
+    /// Assign lights to visible instances (post-culling).
+    ///
+    /// For each visible instance in the RenderView, tests all enabled lights
+    /// against the instance's world AABB (sphere-AABB for range, cone-AABB
+    /// for spots), scores by intensity/distance², takes the top 8, and writes
+    /// lightCount + lightIndices0/1 to the instance buffer.
+    fn assign_lights(&mut self, scene: &Scene, render_view: &RenderView) -> Result<()>;
 }
 
 /// No-op updater — does nothing.
@@ -54,6 +75,14 @@ impl Updater for NoOpUpdater {
         _scene: &mut Scene,
         _scene_index: Option<&mut dyn SceneIndex>,
     ) -> Result<()> {
+        Ok(())
+    }
+
+    fn update_lights(&mut self, _scene: &mut Scene) -> Result<()> {
+        Ok(())
+    }
+
+    fn assign_lights(&mut self, _scene: &Scene, _render_view: &RenderView) -> Result<()> {
         Ok(())
     }
 }
@@ -86,6 +115,18 @@ impl DefaultUpdater {
     const INSTANCE_FIELD_MATERIAL_SLOT_ID: usize = 3;
     const INSTANCE_FIELD_FLAGS: usize            = 4;
     const INSTANCE_FIELD_LIGHT_COUNT: usize      = 5;
+    const INSTANCE_FIELD_LIGHT_INDICES_0: usize = 7;
+    const INSTANCE_FIELD_LIGHT_INDICES_1: usize = 8;
+
+    /// Maximum number of lights per instance (2 × UVec4 = 8 slots)
+    const MAX_LIGHTS_PER_INSTANCE: usize = 8;
+
+    /// Field indices matching `create_default_light_buffer()` layout
+    const LIGHT_FIELD_POSITION_TYPE: usize    = 0;
+    const LIGHT_FIELD_DIRECTION_RANGE: usize  = 1;
+    const LIGHT_FIELD_COLOR_INTENSITY: usize  = 2;
+    const LIGHT_FIELD_SPOT_PARAMS: usize      = 3;
+    const LIGHT_FIELD_ATTENUATION: usize      = 4;
 
     pub fn new() -> Self {
         Self
@@ -198,4 +239,242 @@ impl Updater for DefaultUpdater {
 
         Ok(())
     }
+
+    fn update_lights(&mut self, scene: &mut Scene) -> Result<()> {
+        // Phase 0: removals — free light slots + remove from SlotMap
+        let _ = scene.removed_lights();
+
+        // Phase 1: new lights — write ALL 5 fields to light buffer
+        let new_keys = scene.new_lights();
+        for key in new_keys {
+            let light = match scene.light(*key) {
+                Some(l) => l,
+                None => continue,
+            };
+            let slot = light.light_slot();
+            let type_id = match light.light_type() {
+                LightType::Point => 0.0f32,
+                LightType::Spot  => 1.0f32,
+            };
+
+            let buf = scene.light_buffer();
+            buf.update_field(slot, Self::LIGHT_FIELD_POSITION_TYPE,
+                bytemuck::bytes_of(&[light.position().x, light.position().y, light.position().z, type_id]))?;
+            buf.update_field(slot, Self::LIGHT_FIELD_DIRECTION_RANGE,
+                bytemuck::bytes_of(&[light.direction().x, light.direction().y, light.direction().z, light.range()]))?;
+            buf.update_field(slot, Self::LIGHT_FIELD_COLOR_INTENSITY,
+                bytemuck::bytes_of(&[light.color().x, light.color().y, light.color().z, light.intensity()]))?;
+            buf.update_field(slot, Self::LIGHT_FIELD_SPOT_PARAMS,
+                bytemuck::bytes_of(&[light.spot_inner_angle(), light.spot_outer_angle(), 0.0f32, 0.0f32]))?;
+            buf.update_field(slot, Self::LIGHT_FIELD_ATTENUATION,
+                bytemuck::bytes_of(&[light.attenuation_constant(), light.attenuation_linear(), light.attenuation_quadratic(), 0.0f32]))?;
+        }
+
+        // Phase 2: dirty transforms — write positionType + directionRange
+        let dirty_transforms = scene.dirty_light_transforms();
+        for key in dirty_transforms {
+            let light = match scene.light(*key) {
+                Some(l) => l,
+                None => continue,
+            };
+            let slot = light.light_slot();
+            let type_id = match light.light_type() {
+                LightType::Point => 0.0f32,
+                LightType::Spot  => 1.0f32,
+            };
+
+            let buf = scene.light_buffer();
+            buf.update_field(slot, Self::LIGHT_FIELD_POSITION_TYPE,
+                bytemuck::bytes_of(&[light.position().x, light.position().y, light.position().z, type_id]))?;
+            buf.update_field(slot, Self::LIGHT_FIELD_DIRECTION_RANGE,
+                bytemuck::bytes_of(&[light.direction().x, light.direction().y, light.direction().z, light.range()]))?;
+        }
+
+        // Phase 3: dirty data — write colorIntensity + spotParams + attenuation
+        let dirty_data = scene.dirty_light_data();
+        for key in dirty_data {
+            let light = match scene.light(*key) {
+                Some(l) => l,
+                None => continue,
+            };
+            let slot = light.light_slot();
+
+            let buf = scene.light_buffer();
+            buf.update_field(slot, Self::LIGHT_FIELD_COLOR_INTENSITY,
+                bytemuck::bytes_of(&[light.color().x, light.color().y, light.color().z, light.intensity()]))?;
+            buf.update_field(slot, Self::LIGHT_FIELD_SPOT_PARAMS,
+                bytemuck::bytes_of(&[light.spot_inner_angle(), light.spot_outer_angle(), 0.0f32, 0.0f32]))?;
+            buf.update_field(slot, Self::LIGHT_FIELD_ATTENUATION,
+                bytemuck::bytes_of(&[light.attenuation_constant(), light.attenuation_linear(), light.attenuation_quadratic(), 0.0f32]))?;
+        }
+
+        Ok(())
+    }
+
+    fn assign_lights(&mut self, scene: &Scene, render_view: &RenderView) -> Result<()> {
+        // Collect enabled lights into a flat Vec for fast iteration
+        let enabled_lights: Vec<_> = scene.lights()
+            .filter(|(_, light)| light.enabled())
+            .collect();
+
+        if enabled_lights.is_empty() {
+            // Write lightCount = 0 for all visible instances
+            let zero_count = 0u32;
+            let zero_indices = [0u32; 4];
+            for &inst_key in render_view.visible_instances() {
+                let instance = match scene.render_instance(inst_key) {
+                    Some(i) => i,
+                    None => continue,
+                };
+                let lod = match instance.lod(0) {
+                    Some(l) => l,
+                    None => continue,
+                };
+                let buf = scene.instance_buffer();
+                for sm_idx in 0..lod.sub_mesh_count() {
+                    let slot = lod.sub_mesh(sm_idx).unwrap().draw_slot();
+                    buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,
+                        bytemuck::bytes_of(&zero_count))?;
+                    buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_0,
+                        bytemuck::bytes_of(&zero_indices))?;
+                    buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_1,
+                        bytemuck::bytes_of(&zero_indices))?;
+                }
+            }
+            return Ok(());
+        }
+
+        // Reusable buffer for light candidates per instance
+        let mut candidates: Vec<(u32, f32)> = Vec::new();
+
+        for &inst_key in render_view.visible_instances() {
+            let instance = match scene.render_instance(inst_key) {
+                Some(i) => i,
+                None => continue,
+            };
+
+            let world = *instance.world_matrix();
+            let world_aabb = instance.bounding_box().transformed(&world);
+            let aabb_center = world_aabb.center();
+
+            candidates.clear();
+
+            for &(_, light) in &enabled_lights {
+                let light_pos = light.position();
+                let range = light.range();
+                let range_sq = range * range;
+
+                // Sphere-AABB range test (shared by Point and Spot)
+                let closest = world_aabb.closest_point(light_pos);
+                let dist_sq = (light_pos - closest).length_squared();
+                if dist_sq > range_sq {
+                    continue;
+                }
+
+                // Spot cone-AABB test
+                if light.light_type() == LightType::Spot {
+                    let tan_outer = light.spot_outer_angle().tan();
+                    if !cone_intersects_aabb(
+                        light_pos, light.direction(), range, tan_outer, &world_aabb,
+                    ) {
+                        continue;
+                    }
+                }
+
+                // Score: intensity / distance² (distance to AABB center)
+                let center_dist_sq = (light_pos - aabb_center).length_squared().max(0.01);
+                let score = light.intensity() / center_dist_sq;
+
+                candidates.push((light.light_slot(), score));
+            }
+
+            // Sort by score descending, take top MAX_LIGHTS_PER_INSTANCE
+            candidates.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            let count = candidates.len().min(Self::MAX_LIGHTS_PER_INSTANCE);
+
+            // Build GPU data
+            let light_count = count as u32;
+            let mut indices_0 = [0u32; 4];
+            let mut indices_1 = [0u32; 4];
+            for i in 0..count {
+                if i < 4 {
+                    indices_0[i] = candidates[i].0;
+                } else {
+                    indices_1[i - 4] = candidates[i].0;
+                }
+            }
+
+            // Write to all submesh draw slots
+            let lod = match instance.lod(0) {
+                Some(l) => l,
+                None => continue,
+            };
+            let buf = scene.instance_buffer();
+            for sm_idx in 0..lod.sub_mesh_count() {
+                let slot = lod.sub_mesh(sm_idx).unwrap().draw_slot();
+                buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,
+                    bytemuck::bytes_of(&light_count))?;
+                buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_0,
+                    bytemuck::bytes_of(&indices_0))?;
+                buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_1,
+                    bytemuck::bytes_of(&indices_1))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ===== CONE-AABB INTERSECTION =====
+
+/// Test if a cone (defined by apex, direction, range, and tan of outer angle)
+/// intersects an AABB.
+///
+/// Uses iterative closest-point refinement between the cone axis segment
+/// and the AABB. The cone axis segment is [apex, apex + dir * range].
+/// At parameter t ∈ [0,1], the cone radius is t * range * tan_outer.
+///
+/// The iteration alternates between finding the closest point on the segment
+/// to the AABB and vice versa, converging to the true closest pair.
+fn cone_intersects_aabb(
+    apex: Vec3,
+    dir: Vec3,
+    range: f32,
+    tan_outer: f32,
+    aabb: &AABB,
+) -> bool {
+    let end = apex + dir * range;
+
+    // Start from AABB center
+    let mut aabb_point = aabb.center();
+
+    // Iterative closest-point refinement (converges in 2-3 iterations)
+    for _ in 0..3 {
+        // Closest point on segment to current AABB point
+        let (seg_point, t) = closest_point_on_segment(apex, end, aabb_point);
+        // Closest point on AABB to that segment point
+        aabb_point = aabb.closest_point(seg_point);
+
+        // Check if the AABB point is within the cone radius at parameter t
+        let radius = t * range * tan_outer;
+        let dist_sq = (seg_point - aabb_point).length_squared();
+        if dist_sq <= radius * radius {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Closest point on segment [a, b] to point p.
+///
+/// Returns (closest_point, parameter_t) where t ∈ [0, 1].
+fn closest_point_on_segment(a: Vec3, b: Vec3, p: Vec3) -> (Vec3, f32) {
+    let ab = b - a;
+    let len_sq = ab.length_squared();
+    if len_sq < 1e-12 {
+        return (a, 0.0);
+    }
+    let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
+    (a + ab * t, t)
 }

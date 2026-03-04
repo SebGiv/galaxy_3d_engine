@@ -18,11 +18,12 @@ new_key_type! {
 
 // ===== LIGHT TYPE =====
 
-/// Type of light source.
+/// Type of light source (Point/Spot only).
+///
+/// Directional lights (sun) are handled separately in the frame buffer.
+/// The light SSBO only contains Point and Spot lights.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LightType {
-    /// Infinite directional light (sun). Only direction matters.
-    Directional,
     /// Omnidirectional point light. Position + range + attenuation.
     Point,
     /// Cone-shaped spotlight. Position + direction + range + cone angles.
@@ -31,16 +32,18 @@ pub enum LightType {
 
 // ===== LIGHT =====
 
-/// CPU-side light representation.
+/// CPU-side light representation (Point/Spot only).
 ///
 /// Stored in a SlotMap in the Scene. Individual fields can be updated
 /// via Scene setters that automatically track dirty state in two sets:
 /// - **Spatial** (dirty_light_transforms): position, direction, range, type
 /// - **Data** (dirty_light_data): color, intensity, attenuation, spot angles, enabled
 pub struct Light {
-    /// World-space position (ignored for Directional)
+    /// Index in the GPU light buffer (SSBO)
+    pub(crate) light_slot: u32,
+    /// World-space position
     position: Vec3,
-    /// Light direction (normalized). For Directional/Spot.
+    /// Light direction (normalized). For Spot lights.
     direction: Vec3,
     /// Light color (linear RGB, typically 0..1)
     color: Vec3,
@@ -66,14 +69,10 @@ pub struct Light {
 
 // ===== LIGHT DESC =====
 
-/// Descriptor for creating a Light. Variants enforce correct fields per type.
+/// Descriptor for creating a Light (Point/Spot only).
+///
+/// Directional lights (sun) are handled separately in the frame buffer.
 pub enum LightDesc {
-    /// Directional light (sun). Only direction + color + intensity.
-    Directional {
-        direction: Vec3,
-        color: Vec3,
-        intensity: f32,
-    },
     /// Point light. Position + range + attenuation + color + intensity.
     Point {
         position: Vec3,
@@ -105,24 +104,11 @@ impl Light {
     /// Create a Light from a descriptor.
     pub(crate) fn from_desc(desc: LightDesc) -> Self {
         match desc {
-            LightDesc::Directional { direction, color, intensity } => Self {
-                position: Vec3::ZERO,
-                direction: direction.normalize_or_zero(),
-                color,
-                intensity,
-                range: f32::MAX,
-                attenuation_constant: 0.0,
-                attenuation_linear: 0.0,
-                attenuation_quadratic: 0.0,
-                spot_inner_angle: 0.0,
-                spot_outer_angle: 0.0,
-                light_type: LightType::Directional,
-                enabled: true,
-            },
             LightDesc::Point {
                 position, color, intensity, range,
                 attenuation_constant, attenuation_linear, attenuation_quadratic,
             } => Self {
+                light_slot: 0,
                 position,
                 direction: Vec3::NEG_Y,
                 color,
@@ -141,6 +127,7 @@ impl Light {
                 attenuation_constant, attenuation_linear, attenuation_quadratic,
                 spot_inner_angle, spot_outer_angle,
             } => Self {
+                light_slot: 0,
                 position,
                 direction: direction.normalize_or_zero(),
                 color,
@@ -159,7 +146,10 @@ impl Light {
 
     // ===== ACCESSORS =====
 
-    /// Get the world-space position (ignored for Directional)
+    /// Get the GPU light buffer slot index
+    pub fn light_slot(&self) -> u32 { self.light_slot }
+
+    /// Get the world-space position
     pub fn position(&self) -> Vec3 { self.position }
 
     /// Get the light direction (normalized)

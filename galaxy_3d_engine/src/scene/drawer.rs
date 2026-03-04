@@ -77,7 +77,7 @@ impl Drawer for ForwardDrawer {
                     // Push draw slot index (shader reads instance data from SSBO)
                     let draw_slot = sub_mesh.draw_slot();
                     cmd.push_constants(
-                        &[ShaderStage::Vertex], 0, bytemuck::bytes_of(&draw_slot),
+                        &[ShaderStage::Vertex, ShaderStage::Fragment], 0, bytemuck::bytes_of(&draw_slot),
                     )?;
 
                     // Issue draw call

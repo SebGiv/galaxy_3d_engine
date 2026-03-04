@@ -44,6 +44,8 @@ pub struct Scene {
 
     /// Lights stored in a slot map for O(1) insert/remove
     lights: SlotMap<LightKey, Light>,
+    /// Allocator for unique light slot indices (one per light in the GPU light SSBO)
+    light_slot_allocator: SlotAllocator,
     /// Newly created lights pending full GPU buffer initialization
     new_lights: SwapSet<LightKey>,
     /// Lights whose spatial data changed (position, direction, range, type)
@@ -92,6 +94,7 @@ impl Scene {
             new_instances: SwapSet::new(),
             removed_instances: SwapSet::new(),
             lights: SlotMap::with_key(),
+            light_slot_allocator: SlotAllocator::new(),
             new_lights: SwapSet::new(),
             dirty_light_transforms: SwapSet::new(),
             dirty_light_data: SwapSet::new(),
@@ -303,7 +306,8 @@ impl Scene {
     ///
     /// Returns a stable key that remains valid until the light is removed.
     pub fn create_light(&mut self, desc: LightDesc) -> LightKey {
-        let light = Light::from_desc(desc);
+        let mut light = Light::from_desc(desc);
+        light.light_slot = self.light_slot_allocator.alloc();
         let key = self.lights.insert(light);
         self.new_lights.insert(key);
         key
@@ -332,10 +336,13 @@ impl Scene {
 
     /// Replace a Light entirely. Marks both dirty sets (spatial + data).
     ///
+    /// Preserves the existing GPU light_slot assignment.
     /// Returns false if the key is invalid.
     pub fn set_light(&mut self, key: LightKey, desc: LightDesc) -> bool {
         if let Some(light) = self.lights.get_mut(key) {
+            let slot = light.light_slot;
             *light = Light::from_desc(desc);
+            light.light_slot = slot;
             self.dirty_light_transforms.insert(key);
             self.dirty_light_data.insert(key);
             true
@@ -473,6 +480,9 @@ impl Scene {
     pub fn removed_lights(&mut self) -> &FxHashSet<LightKey> {
         let keys = self.removed_lights.flip();
         for &key in keys.iter() {
+            if let Some(light) = self.lights.get(key) {
+                self.light_slot_allocator.free(light.light_slot());
+            }
             self.lights.remove(key);
         }
         keys
@@ -508,6 +518,7 @@ impl Scene {
         self.new_instances.clear();
         self.removed_instances.clear();
         self.lights.clear();
+        self.light_slot_allocator = SlotAllocator::new();
         self.new_lights.clear();
         self.dirty_light_transforms.clear();
         self.dirty_light_data.clear();
