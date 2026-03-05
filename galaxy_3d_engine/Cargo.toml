@@ -11,6 +11,7 @@ slotmap = "1"
 colored = "2"
 chrono = "0.4"
 rustc-hash = "2"
+bitflags = "2"
 
 [dev-dependencies]
 galaxy_3d_engine_renderer_vulkan = { path = "../galaxy_3d_engine_renderer_vulkan" }

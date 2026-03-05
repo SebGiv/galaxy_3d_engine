@@ -16,7 +16,7 @@ use crate::graphics_device::{
     BindingResource,
     RenderPassDesc, FramebufferDesc, Viewport, Rect2D,
     ClearValue, IndexType, TextureInfo, TextureUsage,
-    PipelineReflection,
+    PipelineReflection, ImageMemoryBarrier,
 };
 #[cfg(test)]
 use crate::error::Result;
@@ -226,6 +226,11 @@ impl CommandList for MockCommandList {
 
     fn push_constants(&mut self, _stages: &[ShaderStage], _offset: u32, _data: &[u8]) -> Result<()> {
         self.commands.push("push_constants".to_string());
+        Ok(())
+    }
+
+    fn pipeline_barrier(&mut self, barriers: &[ImageMemoryBarrier]) -> Result<()> {
+        self.commands.push(format!("pipeline_barrier({})", barriers.len()));
         Ok(())
     }
 }

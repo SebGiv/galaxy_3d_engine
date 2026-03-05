@@ -7,6 +7,10 @@
 /// Passes and targets are stored in contiguous `Vec`s for cache-friendly
 /// iteration, with `FxHashMap<String, usize>` for name-based lookup.
 ///
+/// Each pass declares how it accesses each resource via `AccessType`.
+/// The compiler automatically generates pipeline barriers (layout transitions
+/// + memory synchronization) between passes when access types change.
+///
 /// Render graphs can only be created via `RenderGraphManager::create_render_graph()`.
 
 use std::collections::VecDeque;
@@ -16,6 +20,7 @@ use crate::error::Result;
 use crate::engine_bail;
 use crate::graphics_device;
 use crate::resource;
+use super::access_type::{AccessType, ResourceAccess};
 use super::pass_action::PassAction;
 use super::render_pass::RenderPass;
 use super::render_target::{RenderTarget, TargetOps};
@@ -103,19 +108,25 @@ impl RenderGraph {
         Ok(id)
     }
 
-    // ===== CONNECT =====
+    // ===== ACCESS =====
 
-    /// Set a pass as writing to a target (output)
+    /// Declare how a pass accesses a target.
     ///
-    /// A target can only be written by one pass (single writer constraint).
+    /// Replaces the old `set_output()` / `set_input()` API.
+    /// The compiler uses these declarations to:
+    /// - Determine execution order (topological sort)
+    /// - Generate pipeline barriers (layout transitions + memory sync)
+    /// - Infer final_layout for render pass creation
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The pass name is not found
-    /// - The target name is not found
-    /// - The target is already written by another pass
-    pub fn set_output(&mut self, pass_name: &str, target_name: &str) -> Result<()> {
+    /// Returns an error if the pass or target name is not found.
+    pub fn add_access(
+        &mut self,
+        pass_name: &str,
+        target_name: &str,
+        access_type: AccessType,
+    ) -> Result<()> {
         let pass_id = self.pass_names.get(pass_name)
             .copied()
             .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
@@ -126,41 +137,11 @@ impl RenderGraph {
             .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
                 "RenderTarget '{}' not found", target_name))?;
 
-        // Check single writer constraint
-        if let Some(existing_writer) = self.targets[target_id].written_by() {
-            if existing_writer != pass_id {
-                engine_bail!("galaxy3d::RenderGraph",
-                    "RenderTarget '{}' is already written by another pass (index {})",
-                    target_name, existing_writer);
-            }
-            // Same pass already set as writer — no-op
-            return Ok(());
-        }
+        self.passes[pass_id].add_access(ResourceAccess {
+            target_id,
+            access_type,
+        });
 
-        self.targets[target_id].set_written_by(pass_id);
-        self.passes[pass_id].add_output(target_id);
-        Ok(())
-    }
-
-    /// Set a pass as reading from a target (input)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The pass name is not found
-    /// - The target name is not found
-    pub fn set_input(&mut self, pass_name: &str, target_name: &str) -> Result<()> {
-        let pass_id = self.pass_names.get(pass_name)
-            .copied()
-            .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
-                "RenderPass '{}' not found", pass_name))?;
-
-        let target_id = self.target_names.get(target_name)
-            .copied()
-            .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
-                "RenderTarget '{}' not found", target_name))?;
-
-        self.passes[pass_id].add_input(target_id);
         Ok(())
     }
 
@@ -220,11 +201,6 @@ impl RenderGraph {
     // ===== TARGET OPS (PER-TARGET CLEAR/LOAD/STORE) =====
 
     /// Set the clear color for a color target (RGBA)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a color target.
     pub fn set_clear_color(&mut self, target_id: usize, color: [f32; 4]) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -240,11 +216,6 @@ impl RenderGraph {
     }
 
     /// Set the load operation for a color target
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a color target.
     pub fn set_color_load_op(&mut self, target_id: usize, op: graphics_device::LoadOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -260,11 +231,6 @@ impl RenderGraph {
     }
 
     /// Set the store operation for a color target
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a color target.
     pub fn set_color_store_op(&mut self, target_id: usize, op: graphics_device::StoreOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -280,11 +246,6 @@ impl RenderGraph {
     }
 
     /// Set the depth clear value for a depth/stencil target
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a depth/stencil target.
     pub fn set_depth_clear(&mut self, target_id: usize, depth: f32) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -300,11 +261,6 @@ impl RenderGraph {
     }
 
     /// Set the stencil clear value for a depth/stencil target
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a depth/stencil target.
     pub fn set_stencil_clear(&mut self, target_id: usize, stencil: u32) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -320,11 +276,6 @@ impl RenderGraph {
     }
 
     /// Set the depth load operation for a depth/stencil target
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a depth/stencil target.
     pub fn set_depth_load_op(&mut self, target_id: usize, op: graphics_device::LoadOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -340,11 +291,6 @@ impl RenderGraph {
     }
 
     /// Set the depth store operation for a depth/stencil target
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a depth/stencil target.
     pub fn set_depth_store_op(&mut self, target_id: usize, op: graphics_device::StoreOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -360,11 +306,6 @@ impl RenderGraph {
     }
 
     /// Set the stencil load operation for a depth/stencil target
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a depth/stencil target.
     pub fn set_stencil_load_op(&mut self, target_id: usize, op: graphics_device::LoadOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -380,11 +321,6 @@ impl RenderGraph {
     }
 
     /// Set the stencil store operation for a depth/stencil target
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target index is out of bounds or if the
-    /// target is not a depth/stencil target.
     pub fn set_stencil_store_op(&mut self, target_id: usize, op: graphics_device::StoreOp) -> Result<()> {
         let target = self.target_mut(target_id)?;
         match target.ops_mut() {
@@ -409,21 +345,17 @@ impl RenderGraph {
 
     // ===== COMPILE =====
 
-    /// Resolve the graph: topological sort, GPU render passes, framebuffers,
-    /// and command lists.
+    /// Resolve the graph: topological sort, barrier generation, GPU render passes,
+    /// framebuffers, and command lists.
     ///
     /// This method:
     /// 1. Computes the execution order via topological sort (Kahn's algorithm)
-    /// 2. For each pass with outputs, creates a `graphics_device::RenderPass`
-    ///    and a `graphics_device::Framebuffer` from its output targets
-    /// 3. Creates `frames_in_flight` command lists for double/triple buffering
+    /// 2. Generates pipeline barriers between passes based on access type changes
+    /// 3. For each pass with attachment outputs, creates a `graphics_device::RenderPass`
+    ///    and a `graphics_device::Framebuffer` from its attachment targets
+    /// 4. Creates `frames_in_flight` command lists for double/triple buffering
     ///
     /// Call once after building the graph. Call `execute()` each frame.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a cycle is detected, if GPU object creation fails,
-    /// or if `frames_in_flight` is 0.
     pub fn compile(
         &mut self,
         graphics_device: &dyn graphics_device::GraphicsDevice,
@@ -437,11 +369,24 @@ impl RenderGraph {
         // Topological sort
         self.execution_order = self.topological_sort()?;
 
+        // Clear old barriers
+        for pass in &mut self.passes {
+            pass.clear_barriers();
+        }
+
+        // Generate barriers between passes
+        self.generate_barriers();
+
         // Create GPU render passes and framebuffers
         for pass_idx in 0..self.passes.len() {
-            let outputs: Vec<usize> = self.passes[pass_idx].outputs().to_vec();
+            let attachments: Vec<(usize, AccessType)> = self.passes[pass_idx]
+                .accesses()
+                .iter()
+                .filter(|a| a.access_type.is_attachment())
+                .map(|a| (a.target_id, a.access_type))
+                .collect();
 
-            if outputs.is_empty() {
+            if attachments.is_empty() {
                 continue;
             }
 
@@ -452,15 +397,17 @@ impl RenderGraph {
             let mut fb_width = 0u32;
             let mut fb_height = 0u32;
 
-            for &target_id in &outputs {
+            for &(target_id, access_type) in &attachments {
                 let target = &self.targets[target_id];
                 let rt = target.graphics_device_render_target().clone();
 
-                // Use dimensions from the first output target
                 if fb_width == 0 {
                     fb_width = rt.width();
                     fb_height = rt.height();
                 }
+
+                // Determine final_layout from the LAST access of this target in the timeline
+                let final_layout = self.last_access_layout(target_id, pass_idx);
 
                 match target.ops() {
                     TargetOps::Color { load_op, store_op, .. } => {
@@ -472,7 +419,7 @@ impl RenderGraph {
                             stencil_load_op: graphics_device::LoadOp::DontCare,
                             stencil_store_op: graphics_device::StoreOp::DontCare,
                             initial_layout: graphics_device::ImageLayout::Undefined,
-                            final_layout: graphics_device::ImageLayout::ColorAttachment,
+                            final_layout,
                         });
                         color_targets.push(rt);
                     }
@@ -480,6 +427,10 @@ impl RenderGraph {
                         depth_load_op, depth_store_op,
                         stencil_load_op, stencil_store_op, ..
                     } => {
+                        let depth_final = match access_type {
+                            AccessType::DepthStencilReadOnly => graphics_device::ImageLayout::DepthStencilReadOnly,
+                            _ => final_layout,
+                        };
                         depth_attachment_desc = Some(graphics_device::AttachmentDesc {
                             format: rt.format(),
                             samples: 1,
@@ -488,7 +439,7 @@ impl RenderGraph {
                             stencil_load_op: *stencil_load_op,
                             stencil_store_op: *stencil_store_op,
                             initial_layout: graphics_device::ImageLayout::Undefined,
-                            final_layout: graphics_device::ImageLayout::DepthStencilAttachment,
+                            final_layout: depth_final,
                         });
                         depth_target = Some(rt);
                     }
@@ -521,26 +472,120 @@ impl RenderGraph {
         for _ in 0..frames_in_flight {
             self.command_lists.push(graphics_device.create_command_list()?);
         }
-        // Initialize so that first execute() advances to index 0
         self.current_frame = frames_in_flight - 1;
 
         Ok(())
     }
 
+    /// Determine the final layout for a target based on its last access in the timeline.
+    ///
+    /// If this pass is the last one to use this target, the final_layout is the
+    /// layout of the current access. If another pass uses it later, the final_layout
+    /// is the layout of that later access (the render pass will transition to it).
+    fn last_access_layout(&self, target_id: usize, current_pass_idx: usize) -> graphics_device::ImageLayout {
+        let mut last_layout = None;
+
+        // Walk execution order and find the last pass that accesses this target
+        for &pass_idx in &self.execution_order {
+            for access in self.passes[pass_idx].accesses() {
+                if access.target_id == target_id {
+                    last_layout = Some(access.access_type.info().layout);
+                }
+            }
+        }
+
+        // If we found a last access, use its layout; otherwise default to the current access
+        last_layout.unwrap_or_else(|| {
+            // Fallback: use the current pass's access type layout
+            for access in self.passes[current_pass_idx].accesses() {
+                if access.target_id == target_id {
+                    return access.access_type.info().layout;
+                }
+            }
+            graphics_device::ImageLayout::ColorAttachment
+        })
+    }
+
+    /// Generate pipeline barriers between passes based on access type changes.
+    ///
+    /// For each target, walks the execution timeline and inserts a barrier
+    /// whenever the access type changes between consecutive passes.
+    fn generate_barriers(&mut self) {
+        let target_count = self.targets.len();
+
+        for target_id in 0..target_count {
+            // Collect (pass_idx, access_type) in execution order
+            let mut timeline: Vec<(usize, AccessType)> = Vec::new();
+
+            for &pass_idx in &self.execution_order {
+                for access in self.passes[pass_idx].accesses() {
+                    if access.target_id == target_id {
+                        timeline.push((pass_idx, access.access_type));
+                    }
+                }
+            }
+
+            // Generate barriers between consecutive accesses with different layouts
+            for i in 1..timeline.len() {
+                let (_, prev_access) = timeline[i - 1];
+                let (curr_pass, curr_access) = timeline[i];
+
+                let prev_info = prev_access.info();
+                let curr_info = curr_access.info();
+
+                // Only generate barrier if layout or access changes
+                if prev_info.layout != curr_info.layout
+                    || prev_info.access != curr_info.access
+                {
+                    let target = &self.targets[target_id];
+                    let barrier = graphics_device::ImageMemoryBarrier {
+                        src_stage: prev_info.stage,
+                        dst_stage: curr_info.stage,
+                        src_access: prev_info.access,
+                        dst_access: curr_info.access,
+                        old_layout: prev_info.layout,
+                        new_layout: curr_info.layout,
+                        texture: target.texture().graphics_device_texture().clone(),
+                        base_layer: target.layer(),
+                        layer_count: 1,
+                        base_mip_level: target.mip_level(),
+                        mip_count: 1,
+                    };
+                    self.passes[curr_pass].add_barrier(barrier);
+                }
+            }
+        }
+    }
+
     /// Topological sort using Kahn's algorithm
     ///
-    /// Returns the pass indices in dependency order.
+    /// Build dependencies from access declarations: if pass A writes a target
+    /// that pass B reads (non-attachment), then A must execute before B.
     fn topological_sort(&self) -> Result<Vec<usize>> {
         let pass_count = self.passes.len();
         let mut in_degree = vec![0u32; pass_count];
         let mut successors = vec![Vec::new(); pass_count];
 
-        // Build dependency graph: for each pass input, find the writer pass
-        for pass_idx in 0..pass_count {
-            for &input_target_id in self.passes[pass_idx].inputs() {
-                if let Some(writer) = self.targets[input_target_id].written_by() {
-                    in_degree[pass_idx] += 1;
-                    successors[writer].push(pass_idx);
+        // Build a map: target_id → writer pass index
+        let mut target_writers: FxHashMap<usize, usize> = FxHashMap::default();
+        for (pass_idx, pass) in self.passes.iter().enumerate() {
+            for access in pass.accesses() {
+                if access.access_type.is_write() {
+                    target_writers.insert(access.target_id, pass_idx);
+                }
+            }
+        }
+
+        // For each pass that reads a target, add dependency on the writer
+        for (pass_idx, pass) in self.passes.iter().enumerate() {
+            for access in pass.accesses() {
+                if !access.access_type.is_write() {
+                    if let Some(&writer) = target_writers.get(&access.target_id) {
+                        if writer != pass_idx {
+                            in_degree[pass_idx] += 1;
+                            successors[writer].push(pass_idx);
+                        }
+                    }
                 }
             }
         }
@@ -573,23 +618,19 @@ impl RenderGraph {
 
     // ===== EXECUTE =====
 
-    /// Execute the compiled graph: begin, all passes, post-passes callback, end.
+    /// Execute the compiled graph: begin, barriers + passes, post-passes callback, end.
     ///
     /// Records a complete frame into the current command list:
     /// 1. Advances to the next command list (double buffering)
     /// 2. Calls `cmd.begin()`
-    /// 3. For each pass (topological order): begin_render_pass → action → end_render_pass
+    /// 3. For each pass (topological order):
+    ///    a. Emit pipeline barriers (if any)
+    ///    b. begin_render_pass → action → end_render_pass
     /// 4. Calls `post_passes(cmd)` for extra commands (e.g. swapchain blit)
     /// 5. Calls `cmd.end()`
     ///
     /// After execute(), call `command_list()` to get the recorded command list
     /// for submission.
-    ///
-    /// Must be called after `compile()`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if compile() was not called, or if any recording fails.
     pub fn execute<F>(&mut self, post_passes: F) -> Result<()>
     where
         F: FnOnce(&mut dyn graphics_device::CommandList) -> Result<()>,
@@ -613,14 +654,21 @@ impl RenderGraph {
         let order = self.execution_order.clone();
 
         for &pass_idx in &order {
-            let rp = self.passes[pass_idx].graphics_device_render_pass()
-                .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
-                    "Pass {} has no graphics_device render pass (not compiled?)", pass_idx))?
-                .clone();
-            let fb = self.passes[pass_idx].graphics_device_framebuffer()
-                .ok_or_else(|| crate::engine_err!("galaxy3d::RenderGraph",
-                    "Pass {} has no graphics_device framebuffer (not compiled?)", pass_idx))?
-                .clone();
+            // Emit barriers before this pass
+            let barriers = &self.passes[pass_idx].barriers();
+            if !barriers.is_empty() {
+                self.command_lists[frame].pipeline_barrier(barriers)?;
+            }
+
+            // Skip passes with no attachments (pure compute passes would go here later)
+            let rp = match self.passes[pass_idx].graphics_device_render_pass() {
+                Some(rp) => rp.clone(),
+                None => continue,
+            };
+            let fb = match self.passes[pass_idx].graphics_device_framebuffer() {
+                Some(fb) => fb.clone(),
+                None => continue,
+            };
 
             // Build clear values from per-target ops
             let clear_values = self.build_clear_values(pass_idx);
@@ -642,12 +690,6 @@ impl RenderGraph {
     }
 
     /// Get the current command list (the one recorded by the last execute() call)
-    ///
-    /// Use this after `execute()` to submit the recorded commands.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if compile() was not called.
     pub fn command_list(&self) -> Result<&dyn graphics_device::CommandList> {
         if self.command_lists.is_empty() {
             engine_bail!("galaxy3d::RenderGraph",
@@ -656,7 +698,7 @@ impl RenderGraph {
         Ok(&*self.command_lists[self.current_frame])
     }
 
-    /// Build clear values for a pass based on its output targets' ops.
+    /// Build clear values for a pass based on its attachment targets' ops.
     ///
     /// Color attachments first (matching compile() order), then depth/stencil.
     fn build_clear_values(&self, pass_idx: usize) -> Vec<graphics_device::ClearValue> {
@@ -664,19 +706,23 @@ impl RenderGraph {
         let mut clear_values = Vec::new();
 
         // Color attachments first
-        for &target_id in pass.outputs() {
-            if let TargetOps::Color { clear_color, .. } = self.targets[target_id].ops() {
-                clear_values.push(graphics_device::ClearValue::Color(*clear_color));
+        for access in pass.accesses() {
+            if access.access_type.is_attachment() {
+                if let TargetOps::Color { clear_color, .. } = self.targets[access.target_id].ops() {
+                    clear_values.push(graphics_device::ClearValue::Color(*clear_color));
+                }
             }
         }
 
         // Depth/stencil attachment last
-        for &target_id in pass.outputs() {
-            if let TargetOps::DepthStencil { depth_clear, stencil_clear, .. } = self.targets[target_id].ops() {
-                clear_values.push(graphics_device::ClearValue::DepthStencil {
-                    depth: *depth_clear,
-                    stencil: *stencil_clear,
-                });
+        for access in pass.accesses() {
+            if access.access_type.is_attachment() {
+                if let TargetOps::DepthStencil { depth_clear, stencil_clear, .. } = self.targets[access.target_id].ops() {
+                    clear_values.push(graphics_device::ClearValue::DepthStencil {
+                        depth: *depth_clear,
+                        stencil: *stencil_clear,
+                    });
+                }
             }
         }
 

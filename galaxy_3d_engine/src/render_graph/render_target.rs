@@ -4,8 +4,8 @@
 /// passes in the DAG. References a specific view (layer + mip)
 /// of a resource::Texture, and holds the resolved GPU render target.
 ///
-/// A render target can be written by at most one pass (single writer)
-/// and read by multiple passes (multiple readers).
+/// Resource access patterns (who reads/writes this target) are tracked
+/// by `ResourceAccess` entries on each `RenderPass`, not on the target itself.
 ///
 /// Each target carries its own load/store/clear configuration via `TargetOps`,
 /// auto-detected from the texture usage (color vs depth/stencil).
@@ -80,8 +80,6 @@ pub struct RenderTarget {
     mip_level: u32,
     /// Resolved GPU render target (image view targeting this layer/mip)
     graphics_device_render_target: Arc<dyn graphics_device::RenderTarget>,
-    /// Pass index that writes to this target (at most one)
-    written_by: Option<usize>,
     /// Per-target load/store/clear configuration
     ops: TargetOps,
 }
@@ -111,7 +109,6 @@ impl RenderTarget {
             layer,
             mip_level,
             graphics_device_render_target,
-            written_by: None,
             ops,
         })
     }
@@ -136,11 +133,6 @@ impl RenderTarget {
         &self.graphics_device_render_target
     }
 
-    /// Get the pass index that writes to this target
-    pub fn written_by(&self) -> Option<usize> {
-        self.written_by
-    }
-
     /// Get the per-target ops configuration
     pub fn ops(&self) -> &TargetOps {
         &self.ops
@@ -151,8 +143,4 @@ impl RenderTarget {
         &mut self.ops
     }
 
-    /// Set the writer pass index
-    pub(crate) fn set_written_by(&mut self, pass_id: usize) {
-        self.written_by = Some(pass_id);
-    }
 }

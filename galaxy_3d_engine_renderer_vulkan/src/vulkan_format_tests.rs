@@ -168,6 +168,10 @@ fn test_texture_format_to_vk_color_formats() {
         texture_format_mapping(TextureFormat::B8G8R8A8_UNORM),
         vk::Format::B8G8R8A8_UNORM
     );
+    assert_eq!(
+        texture_format_mapping(TextureFormat::R16G16B16A16_SFLOAT),
+        vk::Format::R16G16B16A16_SFLOAT
+    );
 }
 
 #[test]
@@ -241,6 +245,7 @@ fn texture_format_mapping(format: TextureFormat) -> vk::Format {
         TextureFormat::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_UNORM,
         TextureFormat::B8G8R8A8_SRGB => vk::Format::B8G8R8A8_SRGB,
         TextureFormat::B8G8R8A8_UNORM => vk::Format::B8G8R8A8_UNORM,
+        TextureFormat::R16G16B16A16_SFLOAT => vk::Format::R16G16B16A16_SFLOAT,
         TextureFormat::D16_UNORM => vk::Format::D16_UNORM,
         TextureFormat::D32_FLOAT => vk::Format::D32_SFLOAT,
         TextureFormat::D24_UNORM_S8_UINT => vk::Format::D24_UNORM_S8_UINT,

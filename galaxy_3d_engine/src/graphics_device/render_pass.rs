@@ -60,14 +60,18 @@ pub enum StoreOp {
 }
 
 /// Image layout
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageLayout {
     /// Undefined layout (initial state)
     Undefined,
+    /// General layout (supports all operations, but not optimal for any)
+    General,
     /// Layout for color attachment
     ColorAttachment,
-    /// Layout for depth/stencil attachment
+    /// Layout for depth/stencil attachment (read + write)
     DepthStencilAttachment,
+    /// Layout for depth/stencil read-only access (depth test without write)
+    DepthStencilReadOnly,
     /// Layout for shader read-only access
     ShaderReadOnly,
     /// Layout for transfer source

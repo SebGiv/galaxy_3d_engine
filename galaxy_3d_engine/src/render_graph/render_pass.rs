@@ -5,22 +5,24 @@
 /// be confused with `graphics_device::RenderPass` which is the low-level
 /// GPU render pass configuration.
 ///
-/// Each pass declares which targets it reads from (inputs) and
-/// writes to (outputs), using target indices within the parent
-/// `RenderGraph`.
+/// Each pass declares which resources it accesses and how, via
+/// `ResourceAccess` entries. The render graph compiler uses these
+/// to generate barriers and determine execution order.
 ///
-/// After `RenderGraph::compile()`, each pass with outputs holds
-/// a resolved `graphics_device::RenderPass` and `graphics_device::Framebuffer`.
+/// After `RenderGraph::compile()`, each pass with attachment outputs
+/// holds a resolved `graphics_device::RenderPass` and `graphics_device::Framebuffer`,
+/// plus any barriers that must be emitted before it executes.
 
 use std::sync::Arc;
 use crate::graphics_device;
+use super::access_type::ResourceAccess;
 use super::pass_action::PassAction;
 
 pub struct RenderPass {
-    /// Target indices this pass reads from
-    inputs: Vec<usize>,
-    /// Target indices this pass writes to
-    outputs: Vec<usize>,
+    /// Resource accesses declared for this pass
+    accesses: Vec<ResourceAccess>,
+    /// Barriers to emit before this pass (filled by compile())
+    barriers: Vec<graphics_device::ImageMemoryBarrier>,
     /// Resolved GPU render pass (created by compile())
     graphics_device_render_pass: Option<Arc<dyn graphics_device::RenderPass>>,
     /// Resolved GPU framebuffer (created by compile())
@@ -32,22 +34,55 @@ pub struct RenderPass {
 impl RenderPass {
     pub(crate) fn new() -> Self {
         Self {
-            inputs: Vec::new(),
-            outputs: Vec::new(),
+            accesses: Vec::new(),
+            barriers: Vec::new(),
             graphics_device_render_pass: None,
             graphics_device_framebuffer: None,
             action: None,
         }
     }
 
-    /// Get the target indices this pass reads from
-    pub fn inputs(&self) -> &[usize] {
-        &self.inputs
+    /// Get all resource accesses declared for this pass
+    pub fn accesses(&self) -> &[ResourceAccess] {
+        &self.accesses
     }
 
-    /// Get the target indices this pass writes to
-    pub fn outputs(&self) -> &[usize] {
-        &self.outputs
+    /// Get the target indices this pass writes to (attachment outputs).
+    ///
+    /// Derived from accesses — returns targets with write-type access.
+    pub fn output_targets(&self) -> Vec<usize> {
+        self.accesses
+            .iter()
+            .filter(|a| a.access_type.is_write() && a.access_type.is_attachment())
+            .map(|a| a.target_id)
+            .collect()
+    }
+
+    /// Get all target indices this pass uses as attachments (color + depth, read or write).
+    ///
+    /// Used by compile() to create the framebuffer.
+    pub fn attachment_targets(&self) -> Vec<usize> {
+        self.accesses
+            .iter()
+            .filter(|a| a.access_type.is_attachment())
+            .map(|a| a.target_id)
+            .collect()
+    }
+
+    /// Get target indices this pass reads from (non-attachment reads).
+    ///
+    /// These are shader reads, compute reads, etc. — not render pass attachments.
+    pub fn input_targets(&self) -> Vec<usize> {
+        self.accesses
+            .iter()
+            .filter(|a| !a.access_type.is_attachment() && !a.access_type.is_write())
+            .map(|a| a.target_id)
+            .collect()
+    }
+
+    /// Get the barriers to emit before this pass (available after compile)
+    pub fn barriers(&self) -> &[graphics_device::ImageMemoryBarrier] {
+        &self.barriers
     }
 
     /// Get the resolved GPU render pass (available after compile)
@@ -60,14 +95,19 @@ impl RenderPass {
         self.graphics_device_framebuffer.as_ref()
     }
 
-    /// Add an input target index
-    pub(crate) fn add_input(&mut self, target_id: usize) {
-        self.inputs.push(target_id);
+    /// Add a resource access declaration
+    pub(crate) fn add_access(&mut self, access: ResourceAccess) {
+        self.accesses.push(access);
     }
 
-    /// Add an output target index
-    pub(crate) fn add_output(&mut self, target_id: usize) {
-        self.outputs.push(target_id);
+    /// Add a barrier to emit before this pass (called by compile())
+    pub(crate) fn add_barrier(&mut self, barrier: graphics_device::ImageMemoryBarrier) {
+        self.barriers.push(barrier);
+    }
+
+    /// Clear all barriers (called before recompile)
+    pub(crate) fn clear_barriers(&mut self) {
+        self.barriers.clear();
     }
 
     /// Set the resolved GPU render pass

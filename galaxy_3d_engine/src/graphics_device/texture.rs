@@ -10,11 +10,14 @@ use crate::engine_err;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
 pub enum TextureFormat {
-    // Color texture formats
+    // Color texture formats (8-bit)
     R8G8B8A8_SRGB,
     R8G8B8A8_UNORM,
     B8G8R8A8_SRGB,
     B8G8R8A8_UNORM,
+
+    // Color texture formats (HDR)
+    R16G16B16A16_SFLOAT,
 
     // Depth/stencil formats
     D16_UNORM,
@@ -30,6 +33,9 @@ impl TextureFormat {
             // Color formats (4 bytes per pixel)
             TextureFormat::R8G8B8A8_SRGB | TextureFormat::R8G8B8A8_UNORM |
             TextureFormat::B8G8R8A8_SRGB | TextureFormat::B8G8R8A8_UNORM => 4,
+
+            // HDR color formats (8 bytes per pixel)
+            TextureFormat::R16G16B16A16_SFLOAT => 8,
 
             // Depth/stencil formats
             TextureFormat::D16_UNORM => 2,

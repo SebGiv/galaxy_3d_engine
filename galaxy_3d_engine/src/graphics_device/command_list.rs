@@ -5,6 +5,7 @@ use crate::error::Result;
 use crate::graphics_device::{
     RenderPass, Framebuffer, Pipeline, Buffer,
     BindingGroup, IndexType, ShaderStage,
+    ImageMemoryBarrier,
 };
 
 /// Command list for recording rendering commands
@@ -114,6 +115,15 @@ pub trait CommandList: Send + Sync {
     /// * `first_index` - Index of first index
     /// * `vertex_offset` - Value added to vertex index before indexing into the vertex buffer
     fn draw_indexed(&mut self, index_count: u32, first_index: u32, vertex_offset: i32) -> Result<()>;
+
+    /// Insert a pipeline barrier for image layout transitions and memory synchronization.
+    ///
+    /// Must be called outside of a render pass (between end_render_pass and begin_render_pass).
+    ///
+    /// # Arguments
+    ///
+    /// * `barriers` - Image memory barriers to insert
+    fn pipeline_barrier(&mut self, barriers: &[ImageMemoryBarrier]) -> Result<()>;
 }
 
 /// Viewport dimensions and depth range

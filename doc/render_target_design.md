@@ -3,6 +3,7 @@
 > **Projet** : Galaxy3D Engine
 > **Date** : 2026-02-11 (mis à jour 2026-02-13)
 > **Statut** : Implémenté — DAG structure, RenderTargetKind (Swapchain + Texture), API spécialisées
+> **Refactoring planifié** : AccessType — barrières automatiques (voir §11)
 > **Prérequis** : SceneManager (implémenté), render::RenderTarget (trait existant), render::Swapchain (trait existant)
 > **Voir aussi** : [scene_design.md](scene_design.md), [pipeline_data_binding.md](pipeline_data_binding.md)
 > **Note** : Le module a été renommé de `target` à `render_graph`. Le concept de "render graph" (DAG de passes de rendu) remplace la notion initiale de "target manager". Les render targets deviennent des arêtes du graphe.
@@ -21,6 +22,7 @@
 8. [Exemple d'utilisation](#8-exemple-dutilisation)
 9. [Design du render_graph::RenderTarget](#9-design-du-render_graphrendertarget-implémenté--2026-02-13) **(implémenté)**
 10. [Itérations futures](#10-itérations-futures)
+11. [Refactoring AccessType — Barrières automatiques](#11-refactoring-accesstype--barrières-automatiques-planifié)
 
 ---
 
@@ -586,11 +588,299 @@ graph.set_output("geometry", "screen")?;
 | **Viewport configurable** | Viewport sur la Camera (pas sur le render_graph::RenderPass). Split-screen = plusieurs cameras avec viewports différents dans un seul pass GPU | Voir [camera_design.md](camera_design.md) |
 | **Resource pooling** | Pool de textures/framebuffers réutilisables au resize | Évite de recréer tout le render graph au resize — approche standard des moteurs modernes (Unreal RDG, Frostbite Frame Graph). Actuellement le graph est entièrement recréé, ce qui est acceptable tant que le nombre de passes/targets reste faible |
 
+### Priorité haute (nouveau)
+
+| Item | Description | Impact |
+|------|-------------|--------|
+| **Render Graph — AccessType & barrières** | Système d'access types remplaçant `set_input`/`set_output`, génération automatique de barrières et transitions de layout | **Bloquant** pour le multi-pass (HDR + tonemap, shadow maps, post-processing). Voir **§11** pour le design complet |
+
 ### Priorité basse
 
 | Item | Description | Impact |
 |------|-------------|--------|
-| **Render-to-texture puis sampling** | Utiliser un target texture comme source dans un material | Post-processing, reflections, shadow maps |
+| **Render-to-texture puis sampling** | Utiliser un target texture comme source dans un material | Dépend du refactoring AccessType (§11) |
 | **MSAA targets** | Targets avec multisampling | Anti-aliasing |
 | **MRT (Multiple Render Targets)** | Écrire dans plusieurs textures en un seul pass | Deferred rendering (G-buffer) |
-| **Render Graph** | Graphe de dépendances entre passes de rendu (base implémentée) | Optimisation automatique de l'ordre et des barrières |
+
+---
+
+## 11. Refactoring AccessType — Barrières automatiques (planifié)
+
+> **Date** : 2026-03-05
+> **Statut** : Approuvé — en attente d'implémentation
+> **Motivation** : Le multi-pass rendering (ex: HDR scene → tonemap) nécessite des transitions
+> de layout et des barrières mémoire entre passes. L'API actuelle (`set_input`/`set_output`)
+> ne porte pas assez d'information pour les générer.
+> **Références** : Frostbite Frame Graph (GDC 2017), Unreal Engine 5 RDG (`ERHIAccess`), Granite (Maister)
+
+### 11.1 Problème actuel
+
+Le `compile()` hardcode `final_layout: ColorAttachment` pour tous les color targets et `DepthStencilAttachment` pour les depth targets. Il n'y a **aucune barrière** entre les passes (pas de `pipeline_barrier` dans le trait `CommandList`).
+
+Quand un target est **écrit** par un pass (color attachment) puis **lu** par un autre (texture sampling), le GPU a besoin de :
+
+1. **Transition de layout** : `ColorAttachment` → `ShaderReadOnly`
+2. **Barrière mémoire** : flush le cache couleur, invalider le cache texture
+3. **Synchronisation** : attendre que le pass writer finisse avant que le reader commence
+
+Sans ces barrières, le second pass lit des données invalides ou dans le mauvais layout. Avec un seul pass, ce n'est pas visible car tout est écrit/lu dans le même layout.
+
+### 11.2 Solution : système d'AccessType
+
+Chaque pass déclare **comment** il utilise chaque resource via un `AccessType`. Le compilateur déduit automatiquement les layouts, stages, access masks et génère les barrières nécessaires.
+
+#### AccessType (render_graph)
+
+```rust
+/// How a pass accesses a resource.
+/// Determines layout, pipeline stage, and access mask automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessType {
+    /// Color attachment write (render pass output)
+    ColorAttachmentWrite,
+    /// Color attachment read (e.g. blending with existing content)
+    ColorAttachmentRead,
+    /// Depth/stencil write
+    DepthStencilWrite,
+    /// Depth/stencil read-only (e.g. depth testing without writing)
+    DepthStencilReadOnly,
+    /// Fragment shader sampling (texture read)
+    FragmentShaderRead,
+    /// Vertex shader sampling (e.g. displacement maps)
+    VertexShaderRead,
+    /// Compute shader read (storage buffer / image)
+    ComputeRead,
+    /// Compute shader write (storage buffer / image)
+    ComputeWrite,
+    /// Transfer source (copy, blit)
+    TransferRead,
+    /// Transfer destination (copy, blit)
+    TransferWrite,
+    /// Ray tracing acceleration structure read
+    RayTracingRead,
+}
+```
+
+#### Table de mapping AccessType → (PipelineStage, AccessMask, ImageLayout)
+
+| AccessType | PipelineStage | AccessMask | ImageLayout |
+|------------|--------------|------------|-------------|
+| ColorAttachmentWrite | ColorAttachmentOutput | ColorAttachmentWrite | ColorAttachment |
+| ColorAttachmentRead | ColorAttachmentOutput | ColorAttachmentRead | ColorAttachment |
+| DepthStencilWrite | EarlyFragmentTests \| LateFragmentTests | DepthStencilWrite | DepthStencilAttachment |
+| DepthStencilReadOnly | EarlyFragmentTests \| LateFragmentTests | DepthStencilRead | DepthStencilReadOnly |
+| FragmentShaderRead | FragmentShader | ShaderRead | ShaderReadOnly |
+| VertexShaderRead | VertexShader | ShaderRead | ShaderReadOnly |
+| ComputeRead | ComputeShader | ShaderRead | ShaderReadOnly |
+| ComputeWrite | ComputeShader | ShaderWrite | General |
+| TransferRead | Transfer | TransferRead | TransferSrc |
+| TransferWrite | Transfer | TransferWrite | TransferDst |
+| RayTracingRead | RayTracingShader | ShaderRead | ShaderReadOnly |
+
+Cette table est **statique** — chaque `AccessType` se résout en exactement un triplet (stage, access, layout). Le compilateur l'utilise pour générer les barrières.
+
+### 11.3 Nouvelle API du RenderGraph
+
+#### `add_access()` remplace `set_input()` / `set_output()`
+
+```rust
+/// Per-resource access declaration for a pass.
+pub struct ResourceAccess {
+    pub target_id: usize,
+    pub access_type: AccessType,
+}
+
+impl RenderGraph {
+    /// Declare how a pass accesses a target.
+    /// Replaces set_input() / set_output().
+    pub fn add_access(
+        &mut self,
+        pass: &str,
+        target: &str,
+        access: AccessType,
+    ) -> Result<()>;
+}
+```
+
+#### RenderPass modifié
+
+```rust
+pub struct RenderPass {
+    // ...
+    accesses: Vec<ResourceAccess>,  // remplace inputs: Vec<usize> + outputs: Vec<usize>
+    barriers: Vec<ImageMemoryBarrier>,  // rempli par compile()
+    // ...
+}
+```
+
+#### Exemple d'utilisation — single pass (migration directe)
+
+```rust
+// AVANT
+graph.set_output("scene", "color")?;
+graph.set_output("scene", "depth")?;
+
+// APRÈS
+graph.add_access("scene", "color", AccessType::ColorAttachmentWrite)?;
+graph.add_access("scene", "depth", AccessType::DepthStencilWrite)?;
+```
+
+#### Exemple d'utilisation — multi-pass (HDR + tonemap)
+
+```rust
+// Scene pass: writes HDR color + depth
+graph.add_access("scene",   "hdr_color", AccessType::ColorAttachmentWrite)?;
+graph.add_access("scene",   "depth",     AccessType::DepthStencilWrite)?;
+
+// Tonemap pass: reads HDR color as texture, writes LDR to screen
+graph.add_access("tonemap", "hdr_color", AccessType::FragmentShaderRead)?;
+graph.add_access("tonemap", "screen",    AccessType::ColorAttachmentWrite)?;
+```
+
+Le compilateur voit que `hdr_color` passe de `ColorAttachmentWrite` (scene) à `FragmentShaderRead` (tonemap) et génère automatiquement la barrière :
+- Layout transition : `ColorAttachment` → `ShaderReadOnly`
+- Src stage : `ColorAttachmentOutput`, src access : `ColorAttachmentWrite`
+- Dst stage : `FragmentShader`, dst access : `ShaderRead`
+
+### 11.4 Algorithme de compile() — génération de barrières
+
+```
+Pour chaque target T :
+  accesses = [(pass_i, access_type_i)] trié par ordre topologique
+  Pour chaque paire consécutive (prev, curr) :
+    Si prev.access_type nécessite une transition vers curr.access_type :
+      → Générer un ImageMemoryBarrier {
+          src_stage:  map(prev.access_type).stage,
+          dst_stage:  map(curr.access_type).stage,
+          src_access: map(prev.access_type).access_mask,
+          dst_access: map(curr.access_type).access_mask,
+          old_layout: map(prev.access_type).layout,
+          new_layout: map(curr.access_type).layout,
+          texture:    T.texture,
+          layer, mip_level, layer_count, mip_count
+        }
+      → Attacher cette barrière au début de curr.pass
+
+Le final_layout de chaque target dans le render pass est déterminé
+par le DERNIER access de ce target dans la timeline.
+```
+
+### 11.5 Algorithme de execute() — émission des barrières
+
+```
+Pour chaque pass dans l'ordre topologique :
+  Si pass.barriers n'est pas vide :
+    cmd.pipeline_barrier(&pass.barriers)
+  cmd.begin_render_pass(...)
+  pass.action.execute(cmd)
+  cmd.end_render_pass()
+```
+
+### 11.6 Types à ajouter côté graphics_device
+
+#### PipelineStageFlags
+
+```rust
+bitflags! {
+    pub struct PipelineStageFlags: u32 {
+        const TOP_OF_PIPE             = 0x0001;
+        const VERTEX_SHADER           = 0x0008;
+        const FRAGMENT_SHADER         = 0x0080;
+        const EARLY_FRAGMENT_TESTS    = 0x0100;
+        const LATE_FRAGMENT_TESTS     = 0x0200;
+        const COLOR_ATTACHMENT_OUTPUT = 0x0400;
+        const COMPUTE_SHADER          = 0x0800;
+        const TRANSFER                = 0x1000;
+        const BOTTOM_OF_PIPE          = 0x2000;
+        const RAY_TRACING_SHADER      = 0x00200000;
+    }
+}
+```
+
+#### AccessFlags
+
+```rust
+bitflags! {
+    pub struct AccessFlags: u32 {
+        const SHADER_READ            = 0x0020;
+        const SHADER_WRITE           = 0x0040;
+        const COLOR_ATTACHMENT_READ  = 0x0080;
+        const COLOR_ATTACHMENT_WRITE = 0x0100;
+        const DEPTH_STENCIL_READ     = 0x0200;
+        const DEPTH_STENCIL_WRITE    = 0x0400;
+        const TRANSFER_READ          = 0x0800;
+        const TRANSFER_WRITE         = 0x1000;
+    }
+}
+```
+
+#### ImageMemoryBarrier
+
+```rust
+/// Describes a pipeline barrier for image layout transition and memory synchronization.
+pub struct ImageMemoryBarrier {
+    pub src_stage: PipelineStageFlags,
+    pub dst_stage: PipelineStageFlags,
+    pub src_access: AccessFlags,
+    pub dst_access: AccessFlags,
+    pub old_layout: ImageLayout,
+    pub new_layout: ImageLayout,
+    pub texture: Arc<dyn Texture>,
+    pub layer: u32,
+    pub mip_level: u32,
+    pub layer_count: u32,
+    pub mip_count: u32,
+}
+```
+
+#### CommandList — nouvelle méthode
+
+```rust
+trait CommandList {
+    /// Insert a pipeline barrier (layout transitions + memory synchronization).
+    fn pipeline_barrier(&mut self, barriers: &[ImageMemoryBarrier]) -> Result<()>;
+    // ... existing methods ...
+}
+```
+
+#### ImageLayout — nouveaux variants
+
+```rust
+pub enum ImageLayout {
+    Undefined,
+    General,                // ← nouveau (compute storage images)
+    ColorAttachment,
+    DepthStencilAttachment,
+    DepthStencilReadOnly,   // ← nouveau (depth read-only optimization)
+    ShaderReadOnly,
+    TransferSrc,
+    TransferDst,
+    PresentSrc,
+}
+```
+
+### 11.7 Fichiers impactés (moteur)
+
+| Fichier | Modification |
+|---------|-------------|
+| `graphics_device/render_pass.rs` | `ImageLayout` : +`General`, +`DepthStencilReadOnly` |
+| `graphics_device/mod.rs` | Nouveaux types : `PipelineStageFlags`, `AccessFlags`, `ImageMemoryBarrier` |
+| `graphics_device/command_list.rs` | Trait `CommandList` : +`pipeline_barrier()` |
+| `render_graph/mod.rs` | Nouveaux types : `AccessType`, `ResourceAccess` |
+| `render_graph/render_pass.rs` | `inputs`/`outputs` → `accesses: Vec<ResourceAccess>`, +`barriers: Vec<ImageMemoryBarrier>` |
+| `render_graph/render_target.rs` | Supprimer `written_by` (déduit des accesses) |
+| `render_graph/render_graph.rs` | `add_access()` remplace `set_input()`/`set_output()`, `compile()` génère les barrières, `execute()` les émet |
+| `vulkan.rs` (renderer) | Impl `pipeline_barrier()` via `vkCmdPipelineBarrier` |
+| `mock.rs` (renderer) | Impl `pipeline_barrier()` (no-op) |
+
+### 11.8 Migration des demos
+
+Toutes les demos existantes utilisent `set_output()` / `set_input()`. La migration est mécanique :
+
+| Avant | Après |
+|-------|-------|
+| `set_output("pass", "color")` | `add_access("pass", "color", AccessType::ColorAttachmentWrite)` |
+| `set_output("pass", "depth")` | `add_access("pass", "depth", AccessType::DepthStencilWrite)` |
+| `set_input("pass", "texture")` | `add_access("pass", "texture", AccessType::FragmentShaderRead)` |
+
+Impact estimé : ~2-3 lignes modifiées par demo, 6 demos au total.

@@ -476,6 +476,7 @@ dependencies = [
 name = "galaxy_3d_engine"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.10.0",
  "bytemuck",
  "chrono",
  "colored",

@@ -8,7 +8,9 @@ use galaxy_3d_engine::galaxy3d::render::{
     Pipeline as RendererPipeline,
     Buffer as RendererBuffer,
     BindingGroup as RendererBindingGroup,
+    Texture as RendererTexture,
     Viewport, Rect2D, ClearValue, IndexType, ShaderStage,
+    ImageMemoryBarrier, ImageLayout,
 };
 use galaxy_3d_engine::{engine_bail, engine_err};
 use ash::vk;
@@ -19,6 +21,7 @@ use crate::vulkan_frame_buffer::Framebuffer;
 use crate::vulkan_pipeline::Pipeline;
 use crate::vulkan_buffer::Buffer;
 use crate::vulkan_binding_group::BindingGroup;
+use crate::vulkan_texture::Texture;
 
 /// Vulkan command list implementation
 ///
@@ -468,6 +471,107 @@ impl RendererCommandList for CommandList {
 
             Ok(())
         }
+    }
+
+    fn pipeline_barrier(&mut self, barriers: &[ImageMemoryBarrier]) -> Result<()> {
+        if !self.is_recording {
+            engine_bail!("galaxy3d::vulkan", "pipeline_barrier: command list not recording");
+        }
+
+        if self.in_render_pass {
+            engine_bail!("galaxy3d::vulkan", "pipeline_barrier: must be called outside a render pass");
+        }
+
+        if barriers.is_empty() {
+            return Ok(());
+        }
+
+        // Collect all src/dst stages across barriers
+        let mut combined_src_stage = vk::PipelineStageFlags::empty();
+        let mut combined_dst_stage = vk::PipelineStageFlags::empty();
+
+        let vk_barriers: Vec<vk::ImageMemoryBarrier> = barriers
+            .iter()
+            .map(|b| {
+                let src_stage = vk::PipelineStageFlags::from_raw(b.src_stage.bits());
+                let dst_stage = vk::PipelineStageFlags::from_raw(b.dst_stage.bits());
+                combined_src_stage |= src_stage;
+                combined_dst_stage |= dst_stage;
+
+                // Determine aspect mask from layout
+                let aspect_mask = if b.old_layout == ImageLayout::DepthStencilAttachment
+                    || b.old_layout == ImageLayout::DepthStencilReadOnly
+                    || b.new_layout == ImageLayout::DepthStencilAttachment
+                    || b.new_layout == ImageLayout::DepthStencilReadOnly
+                {
+                    vk::ImageAspectFlags::DEPTH
+                } else {
+                    vk::ImageAspectFlags::COLOR
+                };
+
+                // Downcast texture to get vk::Image
+                let vk_texture = unsafe {
+                    let tex_ptr = b.texture.as_ref()
+                        as *const dyn RendererTexture
+                        as *const Texture;
+                    &*tex_ptr
+                };
+
+                let old_layout = match b.old_layout {
+                    ImageLayout::Undefined => vk::ImageLayout::UNDEFINED,
+                    ImageLayout::General => vk::ImageLayout::GENERAL,
+                    ImageLayout::ColorAttachment => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    ImageLayout::DepthStencilAttachment => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    ImageLayout::DepthStencilReadOnly => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                    ImageLayout::ShaderReadOnly => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    ImageLayout::TransferSrc => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    ImageLayout::TransferDst => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    ImageLayout::PresentSrc => vk::ImageLayout::PRESENT_SRC_KHR,
+                };
+
+                let new_layout = match b.new_layout {
+                    ImageLayout::Undefined => vk::ImageLayout::UNDEFINED,
+                    ImageLayout::General => vk::ImageLayout::GENERAL,
+                    ImageLayout::ColorAttachment => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    ImageLayout::DepthStencilAttachment => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    ImageLayout::DepthStencilReadOnly => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                    ImageLayout::ShaderReadOnly => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    ImageLayout::TransferSrc => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    ImageLayout::TransferDst => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    ImageLayout::PresentSrc => vk::ImageLayout::PRESENT_SRC_KHR,
+                };
+
+                vk::ImageMemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::from_raw(b.src_access.bits()))
+                    .dst_access_mask(vk::AccessFlags::from_raw(b.dst_access.bits()))
+                    .old_layout(old_layout)
+                    .new_layout(new_layout)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(vk_texture.image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask,
+                        base_mip_level: b.base_mip_level,
+                        level_count: b.mip_count,
+                        base_array_layer: b.base_layer,
+                        layer_count: b.layer_count,
+                    })
+            })
+            .collect();
+
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                self.command_buffer,
+                combined_src_stage,
+                combined_dst_stage,
+                vk::DependencyFlags::empty(),
+                &[],           // memory barriers
+                &[],           // buffer memory barriers
+                &vk_barriers,  // image memory barriers
+            );
+        }
+
+        Ok(())
     }
 }
 
