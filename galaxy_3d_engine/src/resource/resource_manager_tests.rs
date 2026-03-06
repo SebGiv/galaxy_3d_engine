@@ -160,6 +160,8 @@ fn create_test_pipeline_desc(
                     depth_stencil: Default::default(),
                     color_blend: Default::default(),
                     multisample: Default::default(),
+                    color_formats: vec![],
+                    depth_format: None,
                 },
             }],
         }],
@@ -1330,6 +1332,8 @@ fn test_add_pipeline_variant() {
                 depth_stencil: Default::default(),
                 color_blend: Default::default(),
                 multisample: Default::default(),
+                color_formats: vec![],
+                depth_format: None,
             },
         }],
     };
@@ -1363,6 +1367,8 @@ fn test_add_pipeline_variant_to_nonexistent_pipeline() {
                 depth_stencil: Default::default(),
                 color_blend: Default::default(),
                 multisample: Default::default(),
+                color_formats: vec![],
+                depth_format: None,
             },
         }],
     };

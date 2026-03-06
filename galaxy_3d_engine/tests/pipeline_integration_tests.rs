@@ -86,6 +86,8 @@ fn create_variant(
                     ..Default::default()
                 },
                 multisample: Default::default(),
+                color_formats: vec![],
+                depth_format: None,
             },
         }],
     }

@@ -115,7 +115,7 @@ fn test_mock_command_list_render_pass() {
     let framebuffer: Arc<dyn Framebuffer> = Arc::new(MockFramebuffer::new(800, 600));
     let clear_values = vec![ClearValue::Color([0.0, 0.0, 0.0, 1.0])];
 
-    cmd_list.begin_render_pass(&render_pass, &framebuffer, &clear_values).unwrap();
+    cmd_list.begin_render_pass(&render_pass, &framebuffer, &clear_values, &[]).unwrap();
     assert_eq!(cmd_list.commands.len(), 1);
     assert_eq!(cmd_list.commands[0], "begin_render_pass");
 
@@ -229,7 +229,7 @@ fn test_mock_command_list_complete_workflow() {
 
     // Complete render workflow
     cmd_list.begin().unwrap();
-    cmd_list.begin_render_pass(&render_pass, &framebuffer, &vec![]).unwrap();
+    cmd_list.begin_render_pass(&render_pass, &framebuffer, &vec![], &[]).unwrap();
     cmd_list.bind_pipeline(&pipeline).unwrap();
     cmd_list.bind_vertex_buffer(&buffer, 0).unwrap();
     cmd_list.draw(6, 0).unwrap();
@@ -454,6 +454,8 @@ fn test_mock_graphics_device_create_pipeline() {
         depth_stencil: Default::default(),
         color_blend: Default::default(),
         multisample: Default::default(),
+        color_formats: vec![],
+        depth_format: None,
     };
 
     let _pipeline = graphics_device.create_pipeline(desc).unwrap();
@@ -566,6 +568,7 @@ fn test_mock_begin_render_pass_with_framebuffer() {
         &render_pass,
         &framebuffer,
         &[ClearValue::Color([0.0, 0.0, 0.0, 1.0])],
+        &[],
     ).unwrap();
     cmd_list.end_render_pass().unwrap();
     cmd_list.end().unwrap();

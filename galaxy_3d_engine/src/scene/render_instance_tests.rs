@@ -146,6 +146,8 @@ fn create_render_pipeline_desc() -> crate::graphics_device::PipelineDesc {
         depth_stencil: Default::default(),
         color_blend: Default::default(),
         multisample: Default::default(),
+        color_formats: vec![],
+        depth_format: None,
     }
 }
 

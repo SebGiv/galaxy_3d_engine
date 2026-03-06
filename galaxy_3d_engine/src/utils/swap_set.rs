@@ -62,6 +62,7 @@ impl<K: Hash + Eq> SwapSet<K> {
     }
 
     /// Check if the front buffer is logically empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         if self.pending_clear.get() {
             return true;
@@ -101,6 +102,7 @@ impl<K: Hash + Eq> SwapSet<K> {
     }
 
     /// Get a reference to the back buffer without flipping.
+    #[allow(dead_code)]
     pub fn back(&self) -> &FxHashSet<K> {
         &self.buffers[(1 - self.active.get()) as usize]
     }

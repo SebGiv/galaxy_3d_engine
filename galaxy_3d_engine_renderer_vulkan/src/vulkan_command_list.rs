@@ -10,7 +10,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     BindingGroup as RendererBindingGroup,
     Texture as RendererTexture,
     Viewport, Rect2D, ClearValue, IndexType, ShaderStage,
-    ImageMemoryBarrier, ImageLayout,
+    ImageAccess, AccessType, TextureFormat,
 };
 use galaxy_3d_engine::{engine_bail, engine_err};
 use ash::vk;
@@ -21,7 +21,7 @@ use crate::vulkan_frame_buffer::Framebuffer;
 use crate::vulkan_pipeline::Pipeline;
 use crate::vulkan_buffer::Buffer;
 use crate::vulkan_binding_group::BindingGroup;
-use crate::vulkan_texture::Texture;
+use crate::vulkan_texture::Texture as VulkanTexture;
 
 /// Vulkan command list implementation
 ///
@@ -84,6 +84,87 @@ impl CommandList {
     /// Get the underlying Vulkan command buffer
     pub fn command_buffer(&self) -> vk::CommandBuffer {
         self.command_buffer
+    }
+
+    /// Map an AccessType to the corresponding Vulkan image layout.
+    fn access_type_to_layout(access: AccessType) -> vk::ImageLayout {
+        match access {
+            AccessType::ColorAttachmentWrite | AccessType::ColorAttachmentRead
+                => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            AccessType::DepthStencilWrite
+                => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            AccessType::DepthStencilReadOnly
+                => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            AccessType::FragmentShaderRead | AccessType::VertexShaderRead
+            | AccessType::ComputeRead | AccessType::RayTracingRead
+                => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            AccessType::ComputeWrite
+                => vk::ImageLayout::GENERAL,
+            AccessType::TransferRead
+                => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            AccessType::TransferWrite
+                => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        }
+    }
+
+    /// Map an AccessType to the Vulkan pipeline stage and access flags.
+    fn access_type_to_stage_access(access: AccessType) -> (vk::PipelineStageFlags, vk::AccessFlags) {
+        match access {
+            AccessType::ColorAttachmentWrite => (
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            ),
+            AccessType::ColorAttachmentRead => (
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::AccessFlags::COLOR_ATTACHMENT_READ,
+            ),
+            AccessType::DepthStencilWrite => (
+                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            ),
+            AccessType::DepthStencilReadOnly => (
+                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
+            ),
+            AccessType::FragmentShaderRead => (
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::AccessFlags::SHADER_READ,
+            ),
+            AccessType::VertexShaderRead => (
+                vk::PipelineStageFlags::VERTEX_SHADER,
+                vk::AccessFlags::SHADER_READ,
+            ),
+            AccessType::ComputeRead => (
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::AccessFlags::SHADER_READ,
+            ),
+            AccessType::ComputeWrite => (
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::AccessFlags::SHADER_WRITE,
+            ),
+            AccessType::TransferRead => (
+                vk::PipelineStageFlags::TRANSFER,
+                vk::AccessFlags::TRANSFER_READ,
+            ),
+            AccessType::TransferWrite => (
+                vk::PipelineStageFlags::TRANSFER,
+                vk::AccessFlags::TRANSFER_WRITE,
+            ),
+            AccessType::RayTracingRead => (
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::AccessFlags::SHADER_READ,
+            ),
+        }
+    }
+
+    /// Returns true if the texture format is a depth or depth/stencil format.
+    fn is_depth_format(format: TextureFormat) -> bool {
+        matches!(format,
+            TextureFormat::D16_UNORM
+            | TextureFormat::D32_FLOAT
+            | TextureFormat::D24_UNORM_S8_UINT
+            | TextureFormat::D32_FLOAT_S8_UINT
+        )
     }
 
     /// Bind a single descriptor set to the command buffer at a given set index
@@ -174,6 +255,7 @@ impl RendererCommandList for CommandList {
         render_pass: &Arc<dyn RendererRenderPass>,
         framebuffer: &Arc<dyn RendererFramebuffer>,
         clear_values: &[ClearValue],
+        accesses: &[ImageAccess],
     ) -> Result<()> {
         if !self.is_recording {
             engine_bail!("galaxy3d::vulkan", "begin_render_pass: command list not recording");
@@ -184,6 +266,61 @@ impl RendererCommandList for CommandList {
         }
 
         unsafe {
+            // Emit layout transition barriers for non-attachment accesses
+            for access in accesses {
+                if access.access_type.is_attachment() {
+                    continue;
+                }
+                let prev = match access.previous_access_type {
+                    Some(p) => p,
+                    None => continue,
+                };
+                let old_layout = Self::access_type_to_layout(prev);
+                let new_layout = Self::access_type_to_layout(access.access_type);
+                if old_layout == new_layout {
+                    continue;
+                }
+
+                let vk_texture = access.texture.as_ref()
+                    as *const dyn RendererTexture
+                    as *const VulkanTexture;
+                let vk_texture = &*vk_texture;
+
+                let aspect_mask = if Self::is_depth_format(vk_texture.info.format) {
+                    vk::ImageAspectFlags::DEPTH
+                } else {
+                    vk::ImageAspectFlags::COLOR
+                };
+
+                let (src_stage, src_access) = Self::access_type_to_stage_access(prev);
+                let (dst_stage, dst_access) = Self::access_type_to_stage_access(access.access_type);
+
+                let barrier = vk::ImageMemoryBarrier::default()
+                    .old_layout(old_layout)
+                    .new_layout(new_layout)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(vk_texture.image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask,
+                        base_mip_level: 0,
+                        level_count: vk::REMAINING_MIP_LEVELS,
+                        base_array_layer: 0,
+                        layer_count: vk::REMAINING_ARRAY_LAYERS,
+                    })
+                    .src_access_mask(src_access)
+                    .dst_access_mask(dst_access);
+
+                self.device.cmd_pipeline_barrier(
+                    self.command_buffer,
+                    src_stage,
+                    dst_stage,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier],
+                );
+            }
             // Downcast to Vulkan types
             let vk_render_pass = render_pass.as_ref()
                 as *const dyn RendererRenderPass
@@ -473,106 +610,6 @@ impl RendererCommandList for CommandList {
         }
     }
 
-    fn pipeline_barrier(&mut self, barriers: &[ImageMemoryBarrier]) -> Result<()> {
-        if !self.is_recording {
-            engine_bail!("galaxy3d::vulkan", "pipeline_barrier: command list not recording");
-        }
-
-        if self.in_render_pass {
-            engine_bail!("galaxy3d::vulkan", "pipeline_barrier: must be called outside a render pass");
-        }
-
-        if barriers.is_empty() {
-            return Ok(());
-        }
-
-        // Collect all src/dst stages across barriers
-        let mut combined_src_stage = vk::PipelineStageFlags::empty();
-        let mut combined_dst_stage = vk::PipelineStageFlags::empty();
-
-        let vk_barriers: Vec<vk::ImageMemoryBarrier> = barriers
-            .iter()
-            .map(|b| {
-                let src_stage = vk::PipelineStageFlags::from_raw(b.src_stage.bits());
-                let dst_stage = vk::PipelineStageFlags::from_raw(b.dst_stage.bits());
-                combined_src_stage |= src_stage;
-                combined_dst_stage |= dst_stage;
-
-                // Determine aspect mask from layout
-                let aspect_mask = if b.old_layout == ImageLayout::DepthStencilAttachment
-                    || b.old_layout == ImageLayout::DepthStencilReadOnly
-                    || b.new_layout == ImageLayout::DepthStencilAttachment
-                    || b.new_layout == ImageLayout::DepthStencilReadOnly
-                {
-                    vk::ImageAspectFlags::DEPTH
-                } else {
-                    vk::ImageAspectFlags::COLOR
-                };
-
-                // Downcast texture to get vk::Image
-                let vk_texture = unsafe {
-                    let tex_ptr = b.texture.as_ref()
-                        as *const dyn RendererTexture
-                        as *const Texture;
-                    &*tex_ptr
-                };
-
-                let old_layout = match b.old_layout {
-                    ImageLayout::Undefined => vk::ImageLayout::UNDEFINED,
-                    ImageLayout::General => vk::ImageLayout::GENERAL,
-                    ImageLayout::ColorAttachment => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    ImageLayout::DepthStencilAttachment => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                    ImageLayout::DepthStencilReadOnly => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-                    ImageLayout::ShaderReadOnly => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    ImageLayout::TransferSrc => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                    ImageLayout::TransferDst => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    ImageLayout::PresentSrc => vk::ImageLayout::PRESENT_SRC_KHR,
-                };
-
-                let new_layout = match b.new_layout {
-                    ImageLayout::Undefined => vk::ImageLayout::UNDEFINED,
-                    ImageLayout::General => vk::ImageLayout::GENERAL,
-                    ImageLayout::ColorAttachment => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    ImageLayout::DepthStencilAttachment => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                    ImageLayout::DepthStencilReadOnly => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-                    ImageLayout::ShaderReadOnly => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    ImageLayout::TransferSrc => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                    ImageLayout::TransferDst => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    ImageLayout::PresentSrc => vk::ImageLayout::PRESENT_SRC_KHR,
-                };
-
-                vk::ImageMemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::from_raw(b.src_access.bits()))
-                    .dst_access_mask(vk::AccessFlags::from_raw(b.dst_access.bits()))
-                    .old_layout(old_layout)
-                    .new_layout(new_layout)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(vk_texture.image)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask,
-                        base_mip_level: b.base_mip_level,
-                        level_count: b.mip_count,
-                        base_array_layer: b.base_layer,
-                        layer_count: b.layer_count,
-                    })
-            })
-            .collect();
-
-        unsafe {
-            self.device.cmd_pipeline_barrier(
-                self.command_buffer,
-                combined_src_stage,
-                combined_dst_stage,
-                vk::DependencyFlags::empty(),
-                &[],           // memory barriers
-                &[],           // buffer memory barriers
-                &vk_barriers,  // image memory barriers
-            );
-        }
-
-        Ok(())
-    }
 }
 
 impl Drop for CommandList {

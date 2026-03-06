@@ -91,6 +91,8 @@ fn create_test_pipeline(graphics_device: Arc<Mutex<dyn crate::graphics_device::G
                     depth_stencil: Default::default(),
                     color_blend: Default::default(),
                     multisample: Default::default(),
+                    color_formats: vec![],
+                    depth_format: None,
                 },
             }],
         }],

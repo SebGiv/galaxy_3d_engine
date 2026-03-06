@@ -23,6 +23,8 @@
 9. [Design du render_graph::RenderTarget](#9-design-du-render_graphrendertarget-implémenté--2026-02-13) **(implémenté)**
 10. [Itérations futures](#10-itérations-futures)
 11. [Refactoring AccessType — Barrières automatiques](#11-refactoring-accesstype--barrières-automatiques-planifié)
+12. [Redesign des barrières — Tracking dynamique des layouts](#12-redesign-des-barrières--tracking-dynamique-des-layouts-planifié)
+13. [Migration Vulkan 1.3 — Dynamic Rendering + Synchronization2](#13-migration-vulkan-13--dynamic-rendering--synchronization2-planifié)
 
 ---
 
@@ -607,7 +609,7 @@ graph.set_output("geometry", "screen")?;
 ## 11. Refactoring AccessType — Barrières automatiques (planifié)
 
 > **Date** : 2026-03-05
-> **Statut** : Approuvé — en attente d'implémentation
+> **Statut** : Implémenté (API + types) — **barrières statiques remplacées par §12** (tracking dynamique)
 > **Motivation** : Le multi-pass rendering (ex: HDR scene → tonemap) nécessite des transitions
 > de layout et des barrières mémoire entre passes. L'API actuelle (`set_input`/`set_output`)
 > ne porte pas assez d'information pour les générer.
@@ -884,3 +886,462 @@ Toutes les demos existantes utilisent `set_output()` / `set_input()`. La migrati
 | `set_input("pass", "texture")` | `add_access("pass", "texture", AccessType::FragmentShaderRead)` |
 
 Impact estimé : ~2-3 lignes modifiées par demo, 6 demos au total.
+
+---
+
+## 12. Redesign des barrières — Tracking dynamique des layouts (planifié)
+
+> **Date** : 2026-03-06
+> **Statut** : Design approuvé — en attente d'implémentation
+> **Motivation** : Le design §11 (barrières statiques à compile-time) a un bug fondamental :
+> le render pass `final_layout` et les barrières explicites tentent de transiter le même image layout,
+> causant des erreurs de validation Vulkan. Ce redesign résout le problème de manière générique et définitive.
+> **Références** : Granite engine (Themaister), Frostbite Frame Graph (GDC 2017), UE5 RDG
+
+### 12.1 Diagnostic du problème
+
+Le §11 génère deux types de transitions de layout qui entrent en conflit :
+
+1. **Transitions implicites** via le render pass : `compile()` calcule un `final_layout` via `last_access_layout()`,
+   qui regarde le **dernier** accès du target dans tout le graphe. Le render pass transite automatiquement
+   `initial_layout → final_layout`.
+
+2. **Transitions explicites** via `vkCmdPipelineBarrier` : `generate_barriers()` émet des barrières
+   entre chaque paire d'accès consécutifs.
+
+**Exemple concret** (HDR → tonemap) :
+
+```
+Pass "scene"   : ColorAttachmentWrite sur HDR → layout = ColorAttachment
+Pass "tonemap" : FragmentShaderRead sur HDR   → layout = ShaderReadOnly
+```
+
+- `last_access_layout()` retourne `ShaderReadOnly` (dernier accès = tonemap)
+- Le render pass "scene" est créé avec `final_layout = ShaderReadOnly`
+- → Le render pass transite HDR de `ColorAttachment` → `ShaderReadOnly`
+- Puis `generate_barriers()` émet une barrière `ColorAttachment` → `ShaderReadOnly` avant "tonemap"
+- → **Conflit** : l'image est déjà en `ShaderReadOnly`, la barrière attend `ColorAttachment`
+
+Ce n'est pas un bug isolé — c'est un **conflit architectural** entre deux mécanismes de transition.
+
+### 12.2 Solution : barrières dynamiques + render pass sans transition
+
+**Principe fondamental** (validé par Granite, Frostbite, UE5) :
+
+> Les render passes ne font **aucune** transition de layout.
+> `initialLayout = finalLayout = layout propre de l'attachment`.
+> Toutes les transitions sont faites par des `vkCmdPipelineBarrier` explicites,
+> générées **dynamiquement à l'exécution**.
+
+Ce principe élimine toute ambiguïté : un seul mécanisme gère les transitions (les barrières explicites),
+et le render pass se contente d'utiliser l'image dans le layout qu'elle a déjà.
+
+### 12.3 Tracking de l'état par target
+
+Chaque `RenderTarget` stocke l'état GPU courant de l'image :
+
+```rust
+pub struct RenderTarget {
+    pub name: String,
+    pub texture: Arc<resource::Texture>,
+    pub layer: u32,
+    pub mip: u32,
+    pub clear_color: Option<[f32; 4]>,
+    pub view: Arc<dyn render::TextureView>,
+
+    // Dynamic state — tracked per-frame at execution time
+    pub current_layout: ImageLayout,        // starts Undefined
+    pub current_stage: PipelineStageFlags,   // starts TOP_OF_PIPE
+    pub current_access: AccessFlags,         // starts NONE
+}
+```
+
+- **Frame 1** : `current_layout = Undefined` (image jamais utilisée)
+- **Frame 2+** : `current_layout` = layout du dernier accès de la frame précédente
+- Mis à jour **après** chaque barrière émise
+
+### 12.4 Émission des barrières à l'exécution
+
+Les barrières ne sont plus générées dans `compile()` (statique) mais dans `execute()` (dynamique),
+juste avant chaque pass :
+
+```rust
+fn emit_barrier(
+    cmd: &dyn CommandBuffer,
+    target: &mut RenderTarget,
+    access: &ResourceAccess,
+) -> Result<()> {
+    let required = access.access_type.info();
+    let old_layout = target.current_layout;
+    let new_layout = required.layout;
+
+    // Skip if layout already correct and access is read-only
+    if old_layout == new_layout && !access.access_type.is_write() {
+        return Ok(());
+    }
+
+    // Source stage/access: from tracked state
+    let (src_stage, src_access) = if old_layout == ImageLayout::Undefined {
+        // First frame: no previous access to wait on
+        (PipelineStageFlags::TOP_OF_PIPE, AccessFlags::NONE)
+    } else {
+        (target.current_stage, target.current_access)
+    };
+
+    cmd.pipeline_barrier(PipelineBarrierDesc {
+        src_stage,
+        dst_stage: required.stage,
+        src_access,
+        dst_access: required.access,
+        old_layout,
+        new_layout,
+        texture: target.texture.graphics_device_texture(),
+        layer: target.layer,
+        mip: target.mip,
+    })?;
+
+    // Update tracked state
+    target.current_layout = new_layout;
+    target.current_stage = required.stage;
+    target.current_access = required.access;
+
+    Ok(())
+}
+```
+
+#### Boucle d'exécution
+
+```rust
+pub fn execute(&mut self, cmd: &dyn CommandBuffer, frame_index: usize) -> Result<()> {
+    for pass in &self.compiled_passes {
+        // 1. Emit barriers for all resources accessed by this pass
+        for access in &pass.accesses {
+            let target = &mut self.targets[access.target_id];
+            Self::emit_barrier(cmd, target, access)?;
+        }
+
+        // 2. Begin render pass (initial_layout == final_layout — no transition)
+        cmd.begin_render_pass(&pass.render_pass_desc[frame_index])?;
+
+        // 3. Execute pass action
+        if let Some(action) = &pass.action {
+            action.execute(cmd)?;
+        }
+
+        // 4. End render pass
+        cmd.end_render_pass()?;
+    }
+    Ok(())
+}
+```
+
+### 12.5 Modifications de compile()
+
+`compile()` est **simplifié** :
+
+- **Supprimé** : `generate_barriers()` — les barrières sont maintenant dynamiques
+- **Supprimé** : `last_access_layout()` — n'a plus de raison d'être
+- **Modifié** : les render passes sont créés avec `initial_layout = final_layout = layout de l'attachment`
+
+```rust
+// Pour chaque attachment d'un pass :
+let access_info = access.access_type.info();
+let attachment_layout = access_info.layout;
+
+RenderPassAttachment {
+    format: ...,
+    load_op: if target.clear_color.is_some() { LoadOp::Clear } else { LoadOp::Load },
+    store_op: StoreOp::Store,
+    initial_layout: attachment_layout,   // NO transition
+    final_layout: attachment_layout,     // NO transition
+}
+```
+
+Le render pass ne fait plus aucune transition — il utilise l'image dans le layout
+où la barrière l'a placée.
+
+### 12.6 Cas couverts
+
+| Cas | Comportement |
+|-----|-------------|
+| **Frame 1** (layout UNDEFINED) | Barrière `UNDEFINED → X`, `TOP_OF_PIPE → stage requis` |
+| **Frame 2+** (layout connu) | Barrière `previous_layout → X` avec les bons stages |
+| **LoadOp::Clear** | OK : `initial_layout = attachment_layout`, la barrière a déjà transité |
+| **LoadOp::Load** | OK : la barrière préserve le contenu (`old_layout` correct) |
+| **Même target lu par 2 passes** | Skip si layout identique + read-only |
+| **Write → Read** | Barrière correcte : `ColorAttachment → ShaderReadOnly` |
+| **Read → Write** | Barrière correcte : `ShaderReadOnly → ColorAttachment` |
+| **Compute passes** | Même logique : `General` pour write, `ShaderReadOnly` pour read |
+| **Multi-frame buffering** | `current_layout` est par-target, chaque target a son propre état |
+| **Plusieurs graphs** | Chaque graph a ses propres targets avec leur propre état |
+
+### 12.7 Comparaison avec les moteurs de référence
+
+| Moteur | Approche | Similitude avec notre design |
+|--------|----------|------------------------------|
+| **Granite** (Themaister) | `current_layout` par image, barrières dynamiques, flush/invalidate model | Très proche — même tracking dynamique, même skip read→read |
+| **Frostbite** (Frame Graph) | Rebuilt chaque frame, barrières calculées à compile(), aliasing force UNDEFINED | Notre tracking survit entre frames (plus efficient pour graphes statiques) |
+| **UE5 RDG** | `ERHIAccess` enum, split barriers, async compute | Même concept d'access type, mais plus avancé (split barriers) |
+
+**Recommandation explicite de Themaister** (créateur de Granite) :
+
+> *"Do NOT use render pass initial/final layout for transitions.
+> Use `initialLayout = layout = finalLayout` and handle all transitions
+> with `vkCmdPipelineBarrier`."*
+
+C'est exactement ce que ce redesign implémente.
+
+### 12.8 Fichiers impactés
+
+| Fichier | Modification |
+|---------|-------------|
+| `render_graph/render_graph.rs` | `RenderTarget` +3 champs tracking, `compile()` simplifié (render pass sans transition), `execute()` émet les barrières dynamiquement, suppression de `generate_barriers()` et `last_access_layout()` |
+| `render_graph/access_type.rs` | Aucun changement (déjà correct) |
+| `graphics_device/graphics_device.rs` | Vérifier que `pipeline_barrier()` existe dans le trait `CommandBuffer` |
+| Backend Vulkan | Vérifier l'implémentation de `pipeline_barrier()` |
+
+### 12.9 Optimisations futures (non bloquantes)
+
+| Optimisation | Description | Priorité |
+|-------------|-------------|----------|
+| **Discard optimization** | Si `LoadOp::Clear` ou `DontCare`, utiliser `old_layout = UNDEFINED` (le driver peut skipper le copy-on-transition) | Moyenne |
+| **Batch barriers** | Regrouper toutes les barrières d'un pass en un seul `vkCmdPipelineBarrier` | Moyenne |
+| **Split barriers** | Émettre la partie "release" après le pass source et la partie "acquire" avant le pass destination (overlap GPU) | Basse |
+| **Async compute** | Barrières cross-queue avec semaphores | Basse |
+
+---
+
+## 13. Migration Vulkan 1.3 — Dynamic Rendering + Synchronization2 (planifié)
+
+> **Date** : 2026-03-06
+> **Statut** : Réflexion — en attente de décision
+> **Motivation** : Vulkan 1.3 promeut deux extensions majeures dans le core qui simplifient
+> considérablement le backend Vulkan et résolvent structurellement plusieurs problèmes
+> rencontrés avec le design actuel (render pass compatibility, layout transitions, barrières).
+> **Prérequis** : §12 (tracking dynamique des layouts) — le modèle de barrières §12 est la
+> marche intermédiaire naturelle vers cette migration.
+
+### 13.1 VK_KHR_dynamic_rendering
+
+#### Problème actuel
+
+En Vulkan 1.0-1.2, il faut créer deux objets statiques avant de pouvoir dessiner :
+
+- **VkRenderPass** — décrit les attachments, formats, load/store ops, transitions de layout, subpasses
+- **VkFramebuffer** — lie un VkRenderPass à des VkImageView concrètes
+
+Ces objets sont lourds à gérer : cache, compatibilité render pass/pipeline, recréation au resize,
+et surtout les transitions de layout implicites via `initialLayout`/`finalLayout` qui sont la cause
+directe du bug §12.
+
+#### Solution : dynamic rendering
+
+Avec `VK_KHR_dynamic_rendering` (Vulkan 1.3 core), les deux objets disparaissent.
+Tout est spécifié inline dans le command buffer :
+
+```c
+VkRenderingAttachmentInfo colorAttachment = {
+    .imageView   = myColorImageView,
+    .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue  = { .color = {0,0,0,1} },
+};
+
+VkRenderingInfo renderingInfo = {
+    .renderArea           = { {0,0}, {width, height} },
+    .layerCount           = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments    = &colorAttachment,
+    .pDepthAttachment     = &depthAttachment,
+};
+
+vkCmdBeginRendering(cmd, &renderingInfo);
+// ... draw calls ...
+vkCmdEndRendering(cmd);
+```
+
+**Aucune transition de layout** — toutes les transitions sont faites par `vkCmdPipelineBarrier`
+(ou `vkCmdPipelineBarrier2` avec synchronization2).
+
+#### Pipelines sans VkRenderPass
+
+Les pipelines déclarent leurs formats directement via `VkPipelineRenderingCreateInfo` :
+
+```c
+VkPipelineRenderingCreateInfo renderingCreateInfo = {
+    .colorAttachmentCount    = 1,
+    .pColorAttachmentFormats = &colorFormat,
+    .depthAttachmentFormat   = depthFormat,
+};
+pipelineCreateInfo.pNext = &renderingCreateInfo;
+pipelineCreateInfo.renderPass = VK_NULL_HANDLE;
+```
+
+Plus de "pipeline compatible avec un VkRenderPass" — le pipeline connaît ses formats, point.
+
+#### Subpasses
+
+Dynamic rendering **n'a pas de subpasses**. En pratique, quasiment aucun moteur moderne ne les
+utilise — les subpasses étaient conçues pour le tile-based rendering (mobile), mais les drivers
+desktop les ignorent. Pour le tile-based mobile, Vulkan 1.3 a `VK_KHR_dynamic_rendering_local_read`.
+
+#### Adoption par les moteurs
+
+- **Godot 4** — dynamic rendering par défaut
+- **Unreal Engine 5** — support depuis UE 5.1
+- **id Tech** (Doom Eternal) — early adopter
+- **Source 2** (Valve) — migré
+- **Granite** (Themaister) — supporte les deux, recommande dynamic rendering
+
+### 13.2 VK_KHR_synchronization2
+
+#### Problème avec la synchro Vulkan 1.0
+
+L'API de synchronisation originale est confuse et error-prone :
+
+- **32 bits** pour les bitmasks de stages/access → à court de bits (ray tracing, mesh shaders)
+- **Stages globaux** : `vkCmdPipelineBarrier` partage `srcStageMask`/`dstStageMask` entre toutes
+  les barrières d'un même appel → le driver doit prendre l'union, réduisant le parallélisme GPU
+- **`TOP_OF_PIPE`/`BOTTOM_OF_PIPE`** : sémantique piégeuse et mal comprise
+- **Access mask vague** : `VK_ACCESS_SHADER_READ_BIT` ne distingue pas sampled/storage/uniform
+- **Combinaisons invalides** acceptées silencieusement (ex: vertex shader + color attachment write)
+
+#### Solution : synchronization2
+
+`VK_KHR_synchronization2` (Vulkan 1.3 core) résout tous ces problèmes :
+
+| Aspect | Vulkan 1.0 | Vulkan 1.3 (Synchronization2) |
+|--------|-----------|-------------------------------|
+| **Bitmask** | 32 bits | 64 bits (`VkPipelineStageFlagBits2`) |
+| **Stages par barrière** | Globaux (partagés) | Par barrière (indépendants) |
+| **"Pas de dépendance"** | `TOP_OF_PIPE` (confus) | `NONE` (explicite) |
+| **Access shader** | `SHADER_READ` (vague) | `SHADER_SAMPLED_READ`, `SHADER_STORAGE_READ` (précis) |
+| **Layouts simplifiés** | 9+ layouts spécifiques | +`READ_ONLY_OPTIMAL`, +`ATTACHMENT_OPTIMAL` |
+| **Fonction** | `vkCmdPipelineBarrier` | `vkCmdPipelineBarrier2` |
+
+Chaque barrière porte ses propres stages, permettant au driver d'optimiser indépendamment :
+
+```c
+VkImageMemoryBarrier2 barriers[2] = {
+    {   // Barrière 1 : ses propres stages
+        .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+        .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+        // ...
+    },
+    {   // Barrière 2 : stages DIFFÉRENTS — le driver optimise séparément
+        .srcStageMask  = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+        // ...
+    },
+};
+VkDependencyInfo depInfo = {
+    .imageMemoryBarrierCount = 2,
+    .pImageMemoryBarriers    = barriers,
+};
+vkCmdPipelineBarrier2(cmd, &depInfo);
+```
+
+### 13.3 Impact sur l'architecture du moteur
+
+#### Abstractions moteur préservées
+
+Les abstractions `graphics_device::RenderPass` et `graphics_device::FrameBuffer` restent dans le moteur.
+Elles portent de l'information **sémantique universelle** (attachments, formats, load/store ops, dimensions)
+qui est nécessaire indépendamment de l'API GPU :
+
+| Couche | Rôle | Vulkan 1.0-1.2 | Vulkan 1.3 (dynamic rendering) |
+|--------|------|----------------|-------------------------------|
+| `graphics_device::RenderPass` | Descripteur sémantique | Backend crée un `VkRenderPass` | Backend stocke un descripteur léger (struct Rust) |
+| `graphics_device::FrameBuffer` | Binding des ImageView | Backend crée un `VkFramebuffer` | Backend stocke les ImageView (struct Rust) |
+| `cmd.begin_render_pass(rp, fb)` | Exécution | `vkCmdBeginRenderPass(...)` | `vkCmdBeginRendering(...)` — construit inline depuis les données du descripteur |
+
+Le trait `GraphicsDevice` et le trait `CommandBuffer` ne changent **pas**.
+Seule l'implémentation Vulkan change en interne.
+
+#### Barrières internalisées dans le backend
+
+Le concept de "barrière" est un détail d'implémentation GPU qui varie selon l'API :
+
+| API | Synchronisation |
+|-----|----------------|
+| **Vulkan** | `vkCmdPipelineBarrier2` — layout transitions + memory barriers explicites |
+| **D3D12** | `ResourceBarrier` — resource state transitions |
+| **Metal** | Rien — le driver gère automatiquement |
+
+Le moteur ne devrait pas exposer de notion de barrière. À la place :
+
+1. Le **render graph** déclare les accès via `AccessType` (information sémantique universelle)
+2. Le **render graph** passe ces infos au `begin_render_pass()` du `CommandBuffer`
+3. Le **backend** gère la synchronisation en interne :
+   - Track le layout/state courant de chaque image
+   - Émet les barrières/transitions nécessaires avant le render pass
+   - Met à jour son état interne
+
+```rust
+// Trait CommandBuffer — pas de pipeline_barrier()
+trait CommandBuffer {
+    /// Begin a render pass.
+    /// The backend handles all synchronization internally
+    /// based on the access declarations.
+    fn begin_render_pass(
+        &self,
+        desc: &RenderPassDesc,
+        accesses: &[ResourceAccess],
+    ) -> Result<()>;
+
+    fn end_render_pass(&self) -> Result<()>;
+}
+```
+
+Le tracking du layout sort du `RenderTarget` (render graph) et va dans le backend :
+
+```rust
+// Backend Vulkan — état interne, invisible du moteur
+struct VulkanCommandBuffer {
+    image_states: HashMap<VkImage, ImageState>,
+}
+
+struct ImageState {
+    layout: vk::ImageLayout,
+    stage: vk::PipelineStageFlags2,
+    access: vk::AccessFlags2,
+}
+```
+
+#### Bénéfices
+
+1. **Le moteur reste API-agnostic** — pas de concept Vulkan dans l'abstraction
+2. **Le render graph est simplifié** — il déclare les accès, le backend se débrouille
+3. **Le backend Vulkan est simplifié** — plus de cache VkRenderPass, plus de VkFramebuffer, plus de compatibilité render pass/pipeline
+4. **Portable** — un backend Metal n'a qu'à ignorer les barrières (le driver gère), un backend D3D12 émet ses propres `ResourceBarrier`
+5. **Le pipeline déclare ses formats via `PipelineDesc`** — cohérent avec `VkPipelineRenderingCreateInfo`
+
+### 13.4 Relation avec §12
+
+Le §12 (tracking dynamique des layouts) est la **marche intermédiaire** vers cette migration :
+
+1. **§12 maintenant** : on utilise encore VkRenderPass/VkFramebuffer, mais on force
+   `initial_layout = final_layout` (pas de transition via render pass) et on fait tout
+   avec `vkCmdPipelineBarrier`. Le tracking est dans le render graph.
+
+2. **§13 ensuite** : on remplace `vkCmdBeginRenderPass` par `vkCmdBeginRendering`,
+   on supprime la création de VkRenderPass/VkFramebuffer, on déplace le tracking dans
+   le backend, et on utilise `vkCmdPipelineBarrier2`. Le modèle de barrières reste identique.
+
+Implémenter §12 d'abord permet de valider le modèle de barrières dynamiques avant de
+migrer l'API Vulkan. La migration §13 sera quasi-triviale une fois §12 en place.
+
+### 13.5 Fichiers impactés (backend Vulkan uniquement)
+
+| Fichier | Modification |
+|---------|-------------|
+| `vulkan.rs` | `create_render_pass()` → no-op (stocke un descripteur), `create_frame_buffer()` → no-op (stocke les ImageView), `begin_render_pass()` → `vkCmdBeginRendering` + barrières internes via `vkCmdPipelineBarrier2`, `create_pipeline()` → `VkPipelineRenderingCreateInfo` au lieu de VkRenderPass |
+| `graphics_device.rs` (trait) | `begin_render_pass()` prend `&[ResourceAccess]` en paramètre additionnel, suppression de `pipeline_barrier()` si exposé |
+| `render_graph/render_graph.rs` | Suppression du tracking de layout (déplacé dans le backend), `execute()` passe les accesses à `begin_render_pass()` |
+
+**Le moteur (render graph, abstractions) ne change quasiment pas.** L'essentiel du travail est dans le backend Vulkan.

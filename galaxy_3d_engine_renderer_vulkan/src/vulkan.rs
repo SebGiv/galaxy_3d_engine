@@ -376,10 +376,14 @@ impl VulkanGraphicsDevice {
             let device_features = vk::PhysicalDeviceFeatures::default()
                 .sampler_anisotropy(true);
 
+            let mut vulkan_11_features = vk::PhysicalDeviceVulkan11Features::default()
+                .shader_draw_parameters(true);
+
             let device_create_info = vk::DeviceCreateInfo::default()
                 .queue_create_infos(&queue_create_infos)
                 .enabled_extension_names(&device_extension_names)
-                .enabled_features(&device_features);
+                .enabled_features(&device_features)
+                .push_next(&mut vulkan_11_features);
 
             let device = Arc::new(
                 instance
@@ -857,7 +861,8 @@ impl VulkanGraphicsDevice {
         }
     }
 
-    /// Convert ImageLayout to Vulkan
+    /// Convert ImageLayout to Vulkan (used by future dynamic barrier tracking)
+    #[allow(dead_code)]
     fn image_layout_to_vk(&self, layout: ImageLayout) -> vk::ImageLayout {
         match layout {
             ImageLayout::Undefined => vk::ImageLayout::UNDEFINED,
@@ -1104,8 +1109,8 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                     .store_op(self.store_op_to_vk(color_attachment.store_op))
                     .stencil_load_op(self.load_op_to_vk(color_attachment.stencil_load_op))
                     .stencil_store_op(self.store_op_to_vk(color_attachment.stencil_store_op))
-                    .initial_layout(self.image_layout_to_vk(color_attachment.initial_layout))
-                    .final_layout(self.image_layout_to_vk(color_attachment.final_layout)));
+                    .initial_layout(vk::ImageLayout::UNDEFINED)
+                    .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
 
                 color_attachment_refs.push(vk::AttachmentReference::default()
                     .attachment(i as u32)
@@ -1127,8 +1132,8 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                     .store_op(self.store_op_to_vk(depth_attachment.store_op))
                     .stencil_load_op(self.load_op_to_vk(depth_attachment.stencil_load_op))
                     .stencil_store_op(self.store_op_to_vk(depth_attachment.stencil_store_op))
-                    .initial_layout(self.image_layout_to_vk(depth_attachment.initial_layout))
-                    .final_layout(self.image_layout_to_vk(depth_attachment.final_layout)));
+                    .initial_layout(vk::ImageLayout::UNDEFINED)
+                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
 
                 depth_attachment_ref = Some(vk::AttachmentReference::default()
                     .attachment(depth_index)
@@ -2140,64 +2145,60 @@ impl GraphicsDevice for VulkanGraphicsDevice {
     }
 
     fn create_pipeline(&mut self, desc: PipelineDesc) -> Result<Arc<dyn RendererPipeline>> {
-        // NOTE: This implementation is temporary and creates a hardcoded render pass
-        // In the new architecture, pipelines should be created with a specific render pass
-        // For now, we create a simple render pass for compatibility
-
         unsafe {
-            // Create a temporary render pass for pipeline creation
-            // Must include depth attachment when depth/stencil testing is enabled
-            let color_attachment = vk::AttachmentDescription::default()
-                .format(vk::Format::B8G8R8A8_SRGB)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            // Build color attachments from PipelineDesc::color_formats
+            let mut attachments = Vec::new();
+            let mut color_attachment_refs = Vec::new();
 
-            let color_attachment_ref = vk::AttachmentReference::default()
-                .attachment(0)
-                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            for (i, &format) in desc.color_formats.iter().enumerate() {
+                attachments.push(vk::AttachmentDescription::default()
+                    .format(self.format_to_vk(format))
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED)
+                    .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
 
-            let needs_depth = desc.depth_stencil.depth_test_enable
-                || desc.depth_stencil.stencil_test_enable;
+                color_attachment_refs.push(vk::AttachmentReference::default()
+                    .attachment(i as u32)
+                    .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
+            }
 
-            let mut attachments = vec![color_attachment];
+            let has_depth = desc.depth_format.is_some();
 
             let depth_attachment_ref = vk::AttachmentReference::default()
-                .attachment(1)
+                .attachment(attachments.len() as u32)
                 .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-            if needs_depth {
-                let depth_attachment = vk::AttachmentDescription::default()
-                    .format(vk::Format::D32_SFLOAT)
+            if let Some(depth_format) = desc.depth_format {
+                attachments.push(vk::AttachmentDescription::default()
+                    .format(self.format_to_vk(depth_format))
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
                     .store_op(vk::AttachmentStoreOp::DONT_CARE)
                     .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                     .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                     .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-                attachments.push(depth_attachment);
+                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
             }
 
             let mut subpass = vk::SubpassDescription::default()
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                .color_attachments(std::slice::from_ref(&color_attachment_ref));
+                .color_attachments(&color_attachment_refs);
 
-            if needs_depth {
+            if has_depth {
                 subpass = subpass.depth_stencil_attachment(&depth_attachment_ref);
             }
 
-            let dst_stage = if needs_depth {
+            let dst_stage = if has_depth {
                 vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
                     | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
             } else {
                 vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
             };
-            let dst_access = if needs_depth {
+            let dst_access = if has_depth {
                 vk::AccessFlags::COLOR_ATTACHMENT_WRITE
                     | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
             } else {

@@ -33,10 +33,6 @@ pub struct AttachmentDesc {
     pub stencil_load_op: LoadOp,
     /// Stencil store operation (only for depth/stencil attachments)
     pub stencil_store_op: StoreOp,
-    /// Initial layout (how the attachment starts)
-    pub initial_layout: ImageLayout,
-    /// Final layout (how the attachment ends)
-    pub final_layout: ImageLayout,
 }
 
 /// Load operation for an attachment

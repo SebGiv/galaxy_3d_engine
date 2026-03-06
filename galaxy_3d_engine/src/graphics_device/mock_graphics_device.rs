@@ -15,8 +15,8 @@ use crate::graphics_device::{
     BufferDesc, TextureDesc, ShaderDesc, ShaderStage, PipelineDesc,
     BindingResource,
     RenderPassDesc, FramebufferDesc, Viewport, Rect2D,
-    ClearValue, IndexType, TextureInfo, TextureUsage,
-    PipelineReflection, ImageMemoryBarrier,
+    ClearValue, IndexType, TextureInfo, TextureUsage, ImageAccess,
+    PipelineReflection,
 };
 #[cfg(test)]
 use crate::error::Result;
@@ -169,6 +169,7 @@ impl CommandList for MockCommandList {
         _render_pass: &Arc<dyn RenderPass>,
         _framebuffer: &Arc<dyn Framebuffer>,
         _clear_values: &[ClearValue],
+        _accesses: &[ImageAccess],
     ) -> Result<()> {
         self.commands.push("begin_render_pass".to_string());
         Ok(())
@@ -229,10 +230,6 @@ impl CommandList for MockCommandList {
         Ok(())
     }
 
-    fn pipeline_barrier(&mut self, barriers: &[ImageMemoryBarrier]) -> Result<()> {
-        self.commands.push(format!("pipeline_barrier({})", barriers.len()));
-        Ok(())
-    }
 }
 
 // ============================================================================

@@ -7,11 +7,10 @@
 ///
 /// Each pass declares which resources it accesses and how, via
 /// `ResourceAccess` entries. The render graph compiler uses these
-/// to generate barriers and determine execution order.
+/// to determine execution order.
 ///
 /// After `RenderGraph::compile()`, each pass with attachment outputs
-/// holds a resolved `graphics_device::RenderPass` and `graphics_device::Framebuffer`,
-/// plus any barriers that must be emitted before it executes.
+/// holds a resolved `graphics_device::RenderPass` and `graphics_device::Framebuffer`.
 
 use std::sync::Arc;
 use crate::graphics_device;
@@ -21,8 +20,6 @@ use super::pass_action::PassAction;
 pub struct RenderPass {
     /// Resource accesses declared for this pass
     accesses: Vec<ResourceAccess>,
-    /// Barriers to emit before this pass (filled by compile())
-    barriers: Vec<graphics_device::ImageMemoryBarrier>,
     /// Resolved GPU render pass (created by compile())
     graphics_device_render_pass: Option<Arc<dyn graphics_device::RenderPass>>,
     /// Resolved GPU framebuffer (created by compile())
@@ -35,7 +32,6 @@ impl RenderPass {
     pub(crate) fn new() -> Self {
         Self {
             accesses: Vec::new(),
-            barriers: Vec::new(),
             graphics_device_render_pass: None,
             graphics_device_framebuffer: None,
             action: None,
@@ -80,11 +76,6 @@ impl RenderPass {
             .collect()
     }
 
-    /// Get the barriers to emit before this pass (available after compile)
-    pub fn barriers(&self) -> &[graphics_device::ImageMemoryBarrier] {
-        &self.barriers
-    }
-
     /// Get the resolved GPU render pass (available after compile)
     pub fn graphics_device_render_pass(&self) -> Option<&Arc<dyn graphics_device::RenderPass>> {
         self.graphics_device_render_pass.as_ref()
@@ -100,14 +91,9 @@ impl RenderPass {
         self.accesses.push(access);
     }
 
-    /// Add a barrier to emit before this pass (called by compile())
-    pub(crate) fn add_barrier(&mut self, barrier: graphics_device::ImageMemoryBarrier) {
-        self.barriers.push(barrier);
-    }
-
-    /// Clear all barriers (called before recompile)
-    pub(crate) fn clear_barriers(&mut self) {
-        self.barriers.clear();
+    /// Get mutable access to resource access declarations (for compile-time resolution)
+    pub(crate) fn accesses_mut(&mut self) -> &mut [ResourceAccess] {
+        &mut self.accesses
     }
 
     /// Set the resolved GPU render pass

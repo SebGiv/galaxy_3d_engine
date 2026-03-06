@@ -4,8 +4,7 @@ use std::sync::Arc;
 use crate::error::Result;
 use crate::graphics_device::{
     RenderPass, Framebuffer, Pipeline, Buffer,
-    BindingGroup, IndexType, ShaderStage,
-    ImageMemoryBarrier,
+    BindingGroup, IndexType, ShaderStage, ImageAccess,
 };
 
 /// Command list for recording rendering commands
@@ -20,16 +19,21 @@ pub trait CommandList: Send + Sync {
 
     /// Begin a render pass
     ///
+    /// The backend uses `accesses` to emit layout transitions and memory
+    /// barriers internally before starting rendering (dynamic rendering).
+    ///
     /// # Arguments
     ///
     /// * `render_pass` - The render pass to begin
     /// * `framebuffer` - The framebuffer containing color and depth/stencil attachments
     /// * `clear_values` - Clear values for attachments
+    /// * `accesses` - Per-image access declarations for automatic barrier emission
     fn begin_render_pass(
         &mut self,
         render_pass: &Arc<dyn RenderPass>,
         framebuffer: &Arc<dyn Framebuffer>,
-        clear_values: &[ClearValue]
+        clear_values: &[ClearValue],
+        accesses: &[ImageAccess],
     ) -> Result<()>;
 
     /// End the current render pass
@@ -116,14 +120,6 @@ pub trait CommandList: Send + Sync {
     /// * `vertex_offset` - Value added to vertex index before indexing into the vertex buffer
     fn draw_indexed(&mut self, index_count: u32, first_index: u32, vertex_offset: i32) -> Result<()>;
 
-    /// Insert a pipeline barrier for image layout transitions and memory synchronization.
-    ///
-    /// Must be called outside of a render pass (between end_render_pass and begin_render_pass).
-    ///
-    /// # Arguments
-    ///
-    /// * `barriers` - Image memory barriers to insert
-    fn pipeline_barrier(&mut self, barriers: &[ImageMemoryBarrier]) -> Result<()>;
 }
 
 /// Viewport dimensions and depth range

@@ -12,7 +12,7 @@ pub mod command_list;
 pub mod render_target;
 pub mod render_pass;
 pub mod swapchain;
-pub mod barrier;
+pub mod access_type;
 pub mod binding_group;
 pub mod frame_buffer;
 
@@ -26,7 +26,7 @@ pub use shader::*;
 pub use pipeline::*;
 
 // Re-export new architecture types
-pub use barrier::*;
+pub use access_type::*;
 pub use command_list::*;
 pub use render_target::*;
 pub use render_pass::*;

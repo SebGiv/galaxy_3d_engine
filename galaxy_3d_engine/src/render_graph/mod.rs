@@ -12,7 +12,7 @@ mod render_graph_manager;
 mod render_pass;
 mod render_target;
 
-pub use access_type::{AccessType, AccessInfo, ResourceAccess};
+pub use access_type::{AccessType, ResourceAccess};
 pub use pass_action::{PassAction, FullscreenAction, CustomAction};
 pub use render_graph::RenderGraph;
 pub use render_graph_manager::RenderGraphManager;

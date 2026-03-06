@@ -8,8 +8,8 @@
 /// iteration, with `FxHashMap<String, usize>` for name-based lookup.
 ///
 /// Each pass declares how it accesses each resource via `AccessType`.
-/// The compiler automatically generates pipeline barriers (layout transitions
-/// + memory synchronization) between passes when access types change.
+/// The backend handles synchronization and layout transitions internally
+/// via dynamic barrier tracking (Vulkan 1.3 synchronization2).
 ///
 /// Render graphs can only be created via `RenderGraphManager::create_render_graph()`.
 
@@ -140,6 +140,7 @@ impl RenderGraph {
         self.passes[pass_id].add_access(ResourceAccess {
             target_id,
             access_type,
+            previous_access_type: None,
         });
 
         Ok(())
@@ -345,15 +346,17 @@ impl RenderGraph {
 
     // ===== COMPILE =====
 
-    /// Resolve the graph: topological sort, barrier generation, GPU render passes,
+    /// Resolve the graph: topological sort, GPU render passes,
     /// framebuffers, and command lists.
     ///
     /// This method:
     /// 1. Computes the execution order via topological sort (Kahn's algorithm)
-    /// 2. Generates pipeline barriers between passes based on access type changes
-    /// 3. For each pass with attachment outputs, creates a `graphics_device::RenderPass`
+    /// 2. For each pass with attachment outputs, creates a `graphics_device::RenderPass`
     ///    and a `graphics_device::Framebuffer` from its attachment targets
-    /// 4. Creates `frames_in_flight` command lists for double/triple buffering
+    /// 3. Creates `frames_in_flight` command lists for double/triple buffering
+    ///
+    /// Synchronization barriers are handled internally by the backend via
+    /// `ImageAccess` declarations passed to `begin_render_pass()`.
     ///
     /// Call once after building the graph. Call `execute()` each frame.
     pub fn compile(
@@ -369,13 +372,8 @@ impl RenderGraph {
         // Topological sort
         self.execution_order = self.topological_sort()?;
 
-        // Clear old barriers
-        for pass in &mut self.passes {
-            pass.clear_barriers();
-        }
-
-        // Generate barriers between passes
-        self.generate_barriers();
+        // Resolve previous access types for barrier emission
+        self.resolve_previous_accesses();
 
         // Create GPU render passes and framebuffers
         for pass_idx in 0..self.passes.len() {
@@ -397,7 +395,7 @@ impl RenderGraph {
             let mut fb_width = 0u32;
             let mut fb_height = 0u32;
 
-            for &(target_id, access_type) in &attachments {
+            for &(target_id, _access_type) in &attachments {
                 let target = &self.targets[target_id];
                 let rt = target.graphics_device_render_target().clone();
 
@@ -405,9 +403,6 @@ impl RenderGraph {
                     fb_width = rt.width();
                     fb_height = rt.height();
                 }
-
-                // Determine final_layout from the LAST access of this target in the timeline
-                let final_layout = self.last_access_layout(target_id, pass_idx);
 
                 match target.ops() {
                     TargetOps::Color { load_op, store_op, .. } => {
@@ -418,8 +413,6 @@ impl RenderGraph {
                             store_op: *store_op,
                             stencil_load_op: graphics_device::LoadOp::DontCare,
                             stencil_store_op: graphics_device::StoreOp::DontCare,
-                            initial_layout: graphics_device::ImageLayout::Undefined,
-                            final_layout,
                         });
                         color_targets.push(rt);
                     }
@@ -427,10 +420,6 @@ impl RenderGraph {
                         depth_load_op, depth_store_op,
                         stencil_load_op, stencil_store_op, ..
                     } => {
-                        let depth_final = match access_type {
-                            AccessType::DepthStencilReadOnly => graphics_device::ImageLayout::DepthStencilReadOnly,
-                            _ => final_layout,
-                        };
                         depth_attachment_desc = Some(graphics_device::AttachmentDesc {
                             format: rt.format(),
                             samples: 1,
@@ -438,8 +427,6 @@ impl RenderGraph {
                             store_op: *depth_store_op,
                             stencil_load_op: *stencil_load_op,
                             stencil_store_op: *stencil_store_op,
-                            initial_layout: graphics_device::ImageLayout::Undefined,
-                            final_layout: depth_final,
                         });
                         depth_target = Some(rt);
                     }
@@ -475,86 +462,6 @@ impl RenderGraph {
         self.current_frame = frames_in_flight - 1;
 
         Ok(())
-    }
-
-    /// Determine the final layout for a target based on its last access in the timeline.
-    ///
-    /// If this pass is the last one to use this target, the final_layout is the
-    /// layout of the current access. If another pass uses it later, the final_layout
-    /// is the layout of that later access (the render pass will transition to it).
-    fn last_access_layout(&self, target_id: usize, current_pass_idx: usize) -> graphics_device::ImageLayout {
-        let mut last_layout = None;
-
-        // Walk execution order and find the last pass that accesses this target
-        for &pass_idx in &self.execution_order {
-            for access in self.passes[pass_idx].accesses() {
-                if access.target_id == target_id {
-                    last_layout = Some(access.access_type.info().layout);
-                }
-            }
-        }
-
-        // If we found a last access, use its layout; otherwise default to the current access
-        last_layout.unwrap_or_else(|| {
-            // Fallback: use the current pass's access type layout
-            for access in self.passes[current_pass_idx].accesses() {
-                if access.target_id == target_id {
-                    return access.access_type.info().layout;
-                }
-            }
-            graphics_device::ImageLayout::ColorAttachment
-        })
-    }
-
-    /// Generate pipeline barriers between passes based on access type changes.
-    ///
-    /// For each target, walks the execution timeline and inserts a barrier
-    /// whenever the access type changes between consecutive passes.
-    fn generate_barriers(&mut self) {
-        let target_count = self.targets.len();
-
-        for target_id in 0..target_count {
-            // Collect (pass_idx, access_type) in execution order
-            let mut timeline: Vec<(usize, AccessType)> = Vec::new();
-
-            for &pass_idx in &self.execution_order {
-                for access in self.passes[pass_idx].accesses() {
-                    if access.target_id == target_id {
-                        timeline.push((pass_idx, access.access_type));
-                    }
-                }
-            }
-
-            // Generate barriers between consecutive accesses with different layouts
-            for i in 1..timeline.len() {
-                let (_, prev_access) = timeline[i - 1];
-                let (curr_pass, curr_access) = timeline[i];
-
-                let prev_info = prev_access.info();
-                let curr_info = curr_access.info();
-
-                // Only generate barrier if layout or access changes
-                if prev_info.layout != curr_info.layout
-                    || prev_info.access != curr_info.access
-                {
-                    let target = &self.targets[target_id];
-                    let barrier = graphics_device::ImageMemoryBarrier {
-                        src_stage: prev_info.stage,
-                        dst_stage: curr_info.stage,
-                        src_access: prev_info.access,
-                        dst_access: curr_info.access,
-                        old_layout: prev_info.layout,
-                        new_layout: curr_info.layout,
-                        texture: target.texture().graphics_device_texture().clone(),
-                        base_layer: target.layer(),
-                        layer_count: 1,
-                        base_mip_level: target.mip_level(),
-                        mip_count: 1,
-                    };
-                    self.passes[curr_pass].add_barrier(barrier);
-                }
-            }
-        }
     }
 
     /// Topological sort using Kahn's algorithm
@@ -618,14 +525,13 @@ impl RenderGraph {
 
     // ===== EXECUTE =====
 
-    /// Execute the compiled graph: begin, barriers + passes, post-passes callback, end.
+    /// Execute the compiled graph: begin, passes, post-passes callback, end.
     ///
     /// Records a complete frame into the current command list:
     /// 1. Advances to the next command list (double buffering)
     /// 2. Calls `cmd.begin()`
     /// 3. For each pass (topological order):
-    ///    a. Emit pipeline barriers (if any)
-    ///    b. begin_render_pass → action → end_render_pass
+    ///    begin_render_pass (with accesses for backend barrier tracking) → action → end_render_pass
     /// 4. Calls `post_passes(cmd)` for extra commands (e.g. swapchain blit)
     /// 5. Calls `cmd.end()`
     ///
@@ -654,12 +560,6 @@ impl RenderGraph {
         let order = self.execution_order.clone();
 
         for &pass_idx in &order {
-            // Emit barriers before this pass
-            let barriers = &self.passes[pass_idx].barriers();
-            if !barriers.is_empty() {
-                self.command_lists[frame].pipeline_barrier(barriers)?;
-            }
-
             // Skip passes with no attachments (pure compute passes would go here later)
             let rp = match self.passes[pass_idx].graphics_device_render_pass() {
                 Some(rp) => rp.clone(),
@@ -673,7 +573,10 @@ impl RenderGraph {
             // Build clear values from per-target ops
             let clear_values = self.build_clear_values(pass_idx);
 
-            self.command_lists[frame].begin_render_pass(&rp, &fb, &clear_values)?;
+            // Build image accesses for backend barrier tracking
+            let accesses = self.build_image_accesses(pass_idx);
+
+            self.command_lists[frame].begin_render_pass(&rp, &fb, &clear_values, &accesses)?;
 
             if let Some(action) = self.passes[pass_idx].action_mut() {
                 action.execute(&mut *self.command_lists[frame])?;
@@ -727,6 +630,41 @@ impl RenderGraph {
         }
 
         clear_values
+    }
+
+    /// Resolve previous access types for each resource access.
+    ///
+    /// Walks the execution order and for each access, records the last
+    /// AccessType that touched the same target. This is precalculated
+    /// once during `compile()` so `execute()` has zero overhead.
+    fn resolve_previous_accesses(&mut self) {
+        let mut last_access: Vec<Option<AccessType>> = vec![None; self.targets.len()];
+        for &pass_idx in &self.execution_order {
+            for access in self.passes[pass_idx].accesses_mut() {
+                access.previous_access_type = last_access[access.target_id];
+                last_access[access.target_id] = Some(access.access_type);
+            }
+        }
+    }
+
+    /// Build image access declarations for a pass.
+    ///
+    /// Maps render graph ResourceAccess entries to graphics_device::ImageAccess
+    /// so the backend can emit layout transitions internally.
+    /// `previous_access_type` is already resolved by `compile()`.
+    fn build_image_accesses(&self, pass_idx: usize) -> Vec<graphics_device::ImageAccess> {
+        let pass = &self.passes[pass_idx];
+        pass.accesses()
+            .iter()
+            .map(|access| {
+                let target = &self.targets[access.target_id];
+                graphics_device::ImageAccess {
+                    texture: target.texture().graphics_device_texture().clone(),
+                    access_type: access.access_type,
+                    previous_access_type: access.previous_access_type,
+                }
+            })
+            .collect()
     }
 
     // ===== QUERY =====

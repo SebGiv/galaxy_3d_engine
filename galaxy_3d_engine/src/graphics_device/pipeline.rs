@@ -2,7 +2,7 @@
 
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-use crate::graphics_device::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc, BindingType, ShaderStageFlags};
+use crate::graphics_device::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc, BindingType, ShaderStageFlags, TextureFormat};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -432,6 +432,10 @@ pub struct PipelineDesc {
     pub color_blend: ColorBlendState,
     /// Multisampling state
     pub multisample: MultisampleState,
+    /// Color attachment formats (one per color attachment the pipeline writes to)
+    pub color_formats: Vec<TextureFormat>,
+    /// Depth/stencil attachment format (None if no depth/stencil)
+    pub depth_format: Option<TextureFormat>,
 }
 
 // ============================================================================
