@@ -104,9 +104,11 @@ pub struct DefaultUpdater;
 
 impl DefaultUpdater {
     /// Field indices matching `create_default_frame_uniform_buffer()` layout
-    const FRAME_FIELD_VIEW: usize            = 0;
-    const FRAME_FIELD_PROJECTION: usize      = 1;
-    const FRAME_FIELD_VIEW_PROJECTION: usize = 2;
+    const FRAME_FIELD_VIEW: usize              = 0;
+    const FRAME_FIELD_PROJECTION: usize        = 1;
+    const FRAME_FIELD_VIEW_PROJECTION: usize   = 2;
+    const FRAME_FIELD_CAMERA_POSITION: usize   = 3;
+    const FRAME_FIELD_CAMERA_DIRECTION: usize  = 4;
 
     /// Field indices matching `create_default_instance_buffer()` layout
     const INSTANCE_FIELD_WORLD: usize            = 0;
@@ -143,6 +145,16 @@ impl Updater for DefaultUpdater {
         buf.update_field(0, Self::FRAME_FIELD_VIEW,            bytemuck::bytes_of(view))?;
         buf.update_field(0, Self::FRAME_FIELD_PROJECTION,      bytemuck::bytes_of(proj))?;
         buf.update_field(0, Self::FRAME_FIELD_VIEW_PROJECTION, bytemuck::bytes_of(&view_proj))?;
+
+        // Extract camera position & forward direction from view matrix inverse
+        let inv_view = view.inverse();
+        let pos = inv_view.col(3).truncate();
+        let camera_pos: [f32; 4] = [pos.x, pos.y, pos.z, 1.0];
+        buf.update_field(0, Self::FRAME_FIELD_CAMERA_POSITION, bytemuck::bytes_of(&camera_pos))?;
+
+        let fwd = -inv_view.col(2).truncate();
+        let camera_dir: [f32; 4] = [fwd.x, fwd.y, fwd.z, 0.0];
+        buf.update_field(0, Self::FRAME_FIELD_CAMERA_DIRECTION, bytemuck::bytes_of(&camera_dir))?;
 
         Ok(())
     }

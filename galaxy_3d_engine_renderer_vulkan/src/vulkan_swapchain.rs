@@ -237,23 +237,44 @@ impl Swapchain {
 impl RendererSwapchain for Swapchain {
     fn acquire_next_image(&mut self) -> Result<u32> {
         unsafe {
-            let (image_index, _is_suboptimal) = self
-                .swapchain_loader
-                .acquire_next_image(
-                    self.swapchain,
-                    u64::MAX,
-                    self.image_available_semaphores[self.current_frame],
-                    vk::Fence::null(),
-                )
-                .map_err(|e| {
-                    if e == vk::Result::ERROR_OUT_OF_DATE_KHR {
-                        engine_err!("galaxy3d::vulkan", "Swapchain out of date during acquire")
-                    } else {
-                        engine_err!("galaxy3d::vulkan", "Failed to acquire next swapchain image: {:?}", e)
-                    }
-                })?;
+            let result = self.swapchain_loader.acquire_next_image(
+                self.swapchain,
+                u64::MAX,
+                self.image_available_semaphores[self.current_frame],
+                vk::Fence::null(),
+            );
 
-            Ok(image_index)
+            match result {
+                Ok((image_index, _)) => Ok(image_index),
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    // Swapchain invalidated (resize/minimize) — auto-recreate and retry
+                    self.recreate(0, 0)?;
+
+                    // If surface is 0×0, recreate was a no-op — cannot render
+                    if self.swapchain_extent.width == 0 || self.swapchain_extent.height == 0 {
+                        return Err(Error::BackendError("Surface minimized — skipping frame".into()));
+                    }
+
+                    // Retry acquire with the fresh swapchain
+                    let (image_index, _) = self.swapchain_loader
+                        .acquire_next_image(
+                            self.swapchain,
+                            u64::MAX,
+                            self.image_available_semaphores[self.current_frame],
+                            vk::Fence::null(),
+                        )
+                        .map_err(|e| engine_err!(
+                            "galaxy3d::vulkan",
+                            "Failed to acquire after swapchain recreate: {:?}", e
+                        ))?;
+
+                    Ok(image_index)
+                }
+                Err(e) => Err(engine_err!(
+                    "galaxy3d::vulkan",
+                    "Failed to acquire next swapchain image: {:?}", e
+                )),
+            }
         }
     }
 
@@ -419,8 +440,9 @@ impl RendererSwapchain for Swapchain {
                         Ok(())
                     }
                     Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                        // Normal during resize — not an error. Next acquire will auto-recreate.
                         self.current_frame = (self.current_frame + 1) % self.max_frames_in_flight;
-                        Err(engine_err!("galaxy3d::vulkan", "Swapchain out of date during present"))
+                        Ok(())
                     }
                     Err(e) => {
                         Err(engine_err!("galaxy3d::vulkan", "Failed to present swapchain image: {:?}", e))
@@ -435,13 +457,7 @@ impl RendererSwapchain for Swapchain {
             self.device.device_wait_idle()
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to wait idle before swapchain recreate: {:?}", e))?;
 
-            // Destroy old image views
-            for image_view in &self.swapchain_image_views {
-                self.device.destroy_image_view(*image_view, None);
-            }
-            self.swapchain_image_views.clear();
-
-            // Query surface capabilities with new window size
+            // Query surface capabilities to get the real extent
             let surface_capabilities = self.surface_loader
                 .get_physical_device_surface_capabilities(self.physical_device, self.surface)
                 .map_err(|e| {
@@ -449,7 +465,7 @@ impl RendererSwapchain for Swapchain {
                     Error::InitializationFailed(format!("Failed to get surface capabilities: {:?}", e))
                 })?;
 
-            // Choose extent
+            // Choose extent from surface (authoritative) or from caller (fallback)
             let extent = if surface_capabilities.current_extent.width != u32::MAX {
                 surface_capabilities.current_extent
             } else {
@@ -464,6 +480,17 @@ impl RendererSwapchain for Swapchain {
                     ),
                 }
             };
+
+            // 0×0 extent is invalid per Vulkan spec (window minimized) — skip silently
+            if extent.width == 0 || extent.height == 0 {
+                return Ok(());
+            }
+
+            // Destroy old image views
+            for image_view in &self.swapchain_image_views {
+                self.device.destroy_image_view(*image_view, None);
+            }
+            self.swapchain_image_views.clear();
 
             let image_count = surface_capabilities.min_image_count + 1;
             let image_count = if surface_capabilities.max_image_count > 0 {
