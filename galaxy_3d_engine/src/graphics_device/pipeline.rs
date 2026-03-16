@@ -238,26 +238,19 @@ pub struct DepthBias {
     pub clamp: f32,
 }
 
-/// Rasterization fixed-function state
+/// Rasterization fixed-function state (truly fixed fields only)
+///
+/// Fields that moved to DynamicRenderState: cull_mode, front_face, depth_bias
 #[derive(Debug, Clone, Copy)]
 pub struct RasterizationState {
-    /// Face culling mode
-    pub cull_mode: CullMode,
-    /// Front face winding order
-    pub front_face: FrontFace,
     /// Polygon rendering mode
     pub polygon_mode: PolygonMode,
-    /// Depth bias (None = disabled)
-    pub depth_bias: Option<DepthBias>,
 }
 
 impl Default for RasterizationState {
     fn default() -> Self {
         Self {
-            cull_mode: CullMode::Back,
-            front_face: FrontFace::CounterClockwise,
             polygon_mode: PolygonMode::Fill,
-            depth_bias: None,
         }
     }
 }
@@ -297,35 +290,7 @@ impl Default for StencilOpState {
     }
 }
 
-/// Depth and stencil testing state
-#[derive(Debug, Clone, Copy)]
-pub struct DepthStencilState {
-    /// Enable depth testing
-    pub depth_test_enable: bool,
-    /// Enable writing to depth buffer
-    pub depth_write_enable: bool,
-    /// Depth comparison operator
-    pub depth_compare_op: CompareOp,
-    /// Enable stencil testing
-    pub stencil_test_enable: bool,
-    /// Stencil operations for front faces
-    pub front: StencilOpState,
-    /// Stencil operations for back faces
-    pub back: StencilOpState,
-}
-
-impl Default for DepthStencilState {
-    fn default() -> Self {
-        Self {
-            depth_test_enable: true,
-            depth_write_enable: true,
-            depth_compare_op: CompareOp::Less,
-            stencil_test_enable: false,
-            front: StencilOpState::default(),
-            back: StencilOpState::default(),
-        }
-    }
-}
+// DepthStencilState removed — all depth/stencil fields moved to DynamicRenderState
 
 // ===== COLOR BLEND STATE =====
 
@@ -351,7 +316,11 @@ impl Default for ColorWriteMask {
     }
 }
 
-/// Color blending state
+/// Color blending state (fixed in pipeline)
+///
+/// Blend mode is baked into the pipeline because changing it dynamically
+/// causes shader recompilation on tile-based GPUs (ARM Mali, Adreno).
+/// color_write_mask moved to DynamicRenderState.
 #[derive(Debug, Clone, Copy)]
 pub struct ColorBlendState {
     /// Enable blending
@@ -368,8 +337,6 @@ pub struct ColorBlendState {
     pub dst_alpha_factor: BlendFactor,
     /// Alpha blend operation
     pub alpha_blend_op: BlendOp,
-    /// Color write mask
-    pub color_write_mask: ColorWriteMask,
 }
 
 impl Default for ColorBlendState {
@@ -382,7 +349,6 @@ impl Default for ColorBlendState {
             src_alpha_factor: BlendFactor::One,
             dst_alpha_factor: BlendFactor::Zero,
             alpha_blend_op: BlendOp::Add,
-            color_write_mask: ColorWriteMask::ALL,
         }
     }
 }
@@ -394,15 +360,105 @@ impl Default for ColorBlendState {
 pub struct MultisampleState {
     /// Number of samples per pixel
     pub sample_count: SampleCount,
-    /// Enable alpha-to-coverage
-    pub alpha_to_coverage: bool,
 }
 
 impl Default for MultisampleState {
     fn default() -> Self {
         Self {
             sample_count: SampleCount::S1,
-            alpha_to_coverage: false,
+        }
+    }
+}
+
+// ===== STENCIL FACE FLAGS =====
+
+/// Which stencil face(s) to target
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StencilFaceFlags {
+    /// Front faces only
+    Front,
+    /// Back faces only
+    Back,
+    /// Both front and back faces
+    FrontAndBack,
+}
+
+// ===== DYNAMIC RENDER STATE =====
+
+/// Dynamic render state — resolved per draw call, no Vulkan dependency.
+///
+/// Carries all pipeline states that are set dynamically via vkCmdSet*
+/// instead of being baked into the pipeline at creation time.
+/// Built by the Material (one per pass) and passed to the backend
+/// as a single unit via CommandList::set_dynamic_state().
+#[derive(Debug, Clone, Copy)]
+pub struct DynamicRenderState {
+    // Rasterization
+    /// Face culling mode
+    pub cull_mode: CullMode,
+    /// Front face winding order
+    pub front_face: FrontFace,
+    // Depth
+    /// Enable depth testing
+    pub depth_test_enable: bool,
+    /// Enable writing to depth buffer
+    pub depth_write_enable: bool,
+    /// Depth comparison operator
+    pub depth_compare_op: CompareOp,
+    /// Enable depth bias
+    pub depth_bias_enable: bool,
+    /// Depth bias parameters
+    pub depth_bias: DepthBias,
+    /// Enable depth bounds testing
+    pub depth_bounds_test_enable: bool,
+    /// Minimum depth bound
+    pub depth_bounds_min: f32,
+    /// Maximum depth bound
+    pub depth_bounds_max: f32,
+    /// Enable depth clamping (clamp instead of clip)
+    pub depth_clamp_enable: bool,
+    /// Enable depth clipping
+    pub depth_clip_enable: bool,
+    // Stencil
+    /// Enable stencil testing
+    pub stencil_test_enable: bool,
+    /// Stencil operations for front faces
+    pub stencil_front: StencilOpState,
+    /// Stencil operations for back faces
+    pub stencil_back: StencilOpState,
+    // Color output
+    /// Color write mask (which RGBA channels are written)
+    pub color_write_mask: ColorWriteMask,
+    /// Enable color writing
+    pub color_write_enable: bool,
+    /// Blend constants (used with ConstantColor/ConstantAlpha blend factors)
+    pub blend_constants: [f32; 4],
+    /// Enable alpha-to-coverage (MSAA transparency)
+    pub alpha_to_coverage_enable: bool,
+}
+
+impl Default for DynamicRenderState {
+    fn default() -> Self {
+        Self {
+            cull_mode: CullMode::Back,
+            front_face: FrontFace::CounterClockwise,
+            depth_test_enable: true,
+            depth_write_enable: true,
+            depth_compare_op: CompareOp::Less,
+            depth_bias_enable: false,
+            depth_bias: DepthBias { constant_factor: 0.0, slope_factor: 0.0, clamp: 0.0 },
+            depth_bounds_test_enable: false,
+            depth_bounds_min: 0.0,
+            depth_bounds_max: 1.0,
+            depth_clamp_enable: false,
+            depth_clip_enable: true,
+            stencil_test_enable: false,
+            stencil_front: StencilOpState::default(),
+            stencil_back: StencilOpState::default(),
+            color_write_mask: ColorWriteMask::ALL,
+            color_write_enable: true,
+            blend_constants: [0.0; 4],
+            alpha_to_coverage_enable: false,
         }
     }
 }
@@ -424,11 +480,9 @@ pub struct PipelineDesc {
     pub push_constant_ranges: Vec<PushConstantRange>,
     /// Binding group layouts (one per set index, describing what resources the pipeline expects)
     pub binding_group_layouts: Vec<BindingGroupLayoutDesc>,
-    /// Rasterization state
+    /// Rasterization state (polygon_mode only — other fields are dynamic)
     pub rasterization: RasterizationState,
-    /// Depth and stencil testing state
-    pub depth_stencil: DepthStencilState,
-    /// Color blending state
+    /// Color blending state (blend mode is fixed — color_write_mask is dynamic)
     pub color_blend: ColorBlendState,
     /// Multisampling state
     pub multisample: MultisampleState,

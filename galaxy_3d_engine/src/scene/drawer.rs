@@ -4,7 +4,7 @@
 /// Implementations range from simple forward rendering to sorted/instanced approaches.
 
 use crate::error::Result;
-use crate::graphics_device::{CommandList, ShaderStage};
+use crate::graphics_device::{CommandList, ShaderStage, DynamicRenderState};
 use crate::camera::RenderView;
 use super::scene::Scene;
 
@@ -58,20 +58,40 @@ impl Drawer for ForwardDrawer {
                 None => continue,
             };
 
+            let variant_index = instance.variant_index() as u32;
+
             for sm_idx in 0..lod.sub_mesh_count() {
                 let sub_mesh = lod.sub_mesh(sm_idx).unwrap();
+                let material = sub_mesh.material();
+                let pipeline_res = material.pipeline();
+                let variant = match pipeline_res.variant(variant_index) {
+                    Some(v) => v,
+                    None => continue,
+                };
 
-                for pass in sub_mesh.passes() {
-                    cmd.bind_pipeline(pass.pipeline())?;
+                for pass_idx in 0..variant.pass_count() {
+                    let pass = variant.pass(pass_idx as u32).unwrap();
+                    let gd_pipeline = pass.graphics_device_pipeline();
+
+                    // Bind pipeline
+                    cmd.bind_pipeline(gd_pipeline)?;
+
+                    // Set dynamic render state
+                    let default_state = DynamicRenderState::default();
+                    let render_state = material.render_state(variant_index, pass_idx as u32)
+                        .unwrap_or(&default_state);
+                    cmd.set_dynamic_state(render_state)?;
 
                     // Set 0: global buffers (from Scene, shared across all instances)
                     if let Some(global_bg) = scene.global_binding_group() {
-                        cmd.bind_binding_group(pass.pipeline(), global_bg.set_index(), global_bg)?;
+                        cmd.bind_binding_group(gd_pipeline, global_bg.set_index(), global_bg)?;
                     }
 
-                    // Sets 1+: texture bindings (shared from Material)
-                    for bg in pass.texture_binding_groups() {
-                        cmd.bind_binding_group(pass.pipeline(), bg.set_index(), bg)?;
+                    // Sets 1+: texture bindings (from Material)
+                    if let Some(bgs) = material.texture_binding_groups(variant_index, pass_idx as u32) {
+                        for bg in bgs {
+                            cmd.bind_binding_group(gd_pipeline, bg.set_index(), bg)?;
+                        }
                     }
 
                     // Push draw slot index (shader reads instance data from SSBO)

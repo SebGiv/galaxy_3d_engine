@@ -137,7 +137,7 @@ fn create_test_pipeline(graphics_device: Arc<Mutex<dyn graphics_device::Graphics
                     push_constant_ranges: vec![],
                     binding_group_layouts: vec![],
                     rasterization: Default::default(),
-                    depth_stencil: Default::default(),
+
                     color_blend: Default::default(),
                     multisample: Default::default(),
                     color_formats: vec![],
@@ -155,6 +155,7 @@ fn create_test_material(pipeline: &Arc<Pipeline>, value: f32) -> Arc<Material> {
         pipeline: pipeline.clone(),
         textures: vec![],
         params: vec![("value".to_string(), ParamValue::Float(value))],
+        pass_render_states: vec![],
     };
     Arc::new(Material::from_desc(0, desc).unwrap())
 }

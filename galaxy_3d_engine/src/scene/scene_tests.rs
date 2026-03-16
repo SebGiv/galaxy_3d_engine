@@ -88,7 +88,7 @@ fn create_test_pipeline(graphics_device: Arc<Mutex<dyn crate::graphics_device::G
                     push_constant_ranges: vec![],
                     binding_group_layouts: vec![],
                     rasterization: Default::default(),
-                    depth_stencil: Default::default(),
+
                     color_blend: Default::default(),
                     multisample: Default::default(),
                     color_formats: vec![],
@@ -105,6 +105,7 @@ fn create_test_material(pipeline: &Arc<Pipeline>, value: f32) -> Arc<Material> {
         pipeline: pipeline.clone(),
         textures: vec![],
         params: vec![("value".to_string(), ParamValue::Float(value))],
+        pass_render_states: vec![],
     };
     Arc::new(Material::from_desc(0, desc).unwrap())
 }
@@ -669,6 +670,7 @@ fn test_draw_single_instance() {
         "bind_vertex_buffer",
         "bind_index_buffer",
         "bind_pipeline",
+        "set_dynamic_state",
         "bind_binding_group",  // global set 0 (frame + instance + material buffers)
         "push_constants",  // draw slot index
         "draw_indexed",
@@ -720,8 +722,8 @@ fn test_draw_multiple_instances() {
     let mut cmd = MockCommandList::new();
     drawer.draw(&scene, &view, &mut cmd).unwrap();
 
-    // 2 instances: viewport + scissor + 2x (bind_vb, bind_ib, bind_pipeline, bind_bg, push, draw_indexed)
-    assert_eq!(cmd.commands.len(), 2 + 2 * 6);
+    // 2 instances: viewport + scissor + 2x (bind_vb, bind_ib, bind_pipeline, set_dynamic_state, bind_bg, push, draw_indexed)
+    assert_eq!(cmd.commands.len(), 2 + 2 * 7);
     assert_eq!(cmd.commands[0], "set_viewport");
     assert_eq!(cmd.commands[1], "set_scissor");
 }

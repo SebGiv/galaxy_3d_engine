@@ -18,8 +18,8 @@ use galaxy_3d_engine::galaxy3d::render::{
     GraphicsDeviceStats, VertexInputRate,
     Config, DebugSeverity, TextureUsage,
     MipmapMode, ManualMipmapData,
-    CullMode, FrontFace, PolygonMode, CompareOp, StencilOp, StencilOpState,
-    BlendFactor, BlendOp, ColorWriteMask, SampleCount,
+    PolygonMode,
+    BlendFactor, BlendOp, SampleCount,
 };
 use ash::vk;
 use std::sync::{Arc, Mutex};
@@ -41,6 +41,20 @@ use crate::vulkan_swapchain::Swapchain;
 use crate::vulkan_sampler::SamplerCache;
 use crate::vulkan_binding_group::BindingGroup;
 use crate::vulkan_context::GpuContext;
+
+/// Runtime capabilities for optional dynamic states (EXT_extended_dynamic_state3 / EXT_color_write_enable).
+///
+/// Each flag is queried once at device creation and never changes.
+/// The branch predictor learns these constant-runtime values in ~2 iterations,
+/// making the resulting if-checks effectively free (~0 cycles).
+#[derive(Debug, Clone, Copy)]
+pub struct DynamicStateCaps {
+    pub depth_clamp_enable: bool,
+    pub depth_clip_enable: bool,
+    pub color_write_mask: bool,
+    pub alpha_to_coverage_enable: bool,
+    pub color_write_enable: bool,
+}
 
 /// Vulkan device implementation
 ///
@@ -79,6 +93,13 @@ pub struct VulkanGraphicsDevice {
     /// Shared GPU context for all resources (textures, buffers)
     /// Owns device, instance, and debug messenger destruction
     gpu_context: Arc<GpuContext>,
+
+    /// Optional EXT_extended_dynamic_state3 device loader (None if extension unavailable)
+    ext_dynamic_state3: Option<ash::ext::extended_dynamic_state3::Device>,
+    /// Optional EXT_color_write_enable device loader (None if extension unavailable)
+    ext_color_write_enable: Option<ash::ext::color_write_enable::Device>,
+    /// Runtime capability flags for optional dynamic states
+    dynamic_state_caps: DynamicStateCaps,
 }
 
 impl VulkanGraphicsDevice {
@@ -371,19 +392,135 @@ impl VulkanGraphicsDevice {
                 ]
             };
 
-            let device_extension_names = vec![ash::khr::swapchain::NAME.as_ptr()];
+            // --- Enumerate available device extensions ---
+            let available_extensions = instance
+                .enumerate_device_extension_properties(physical_device)
+                .map_err(|e| {
+                    engine_error!("galaxy3d::vulkan", "Failed to enumerate device extensions: {:?}", e);
+                    Error::InitializationFailed(format!("Failed to enumerate device extensions: {:?}", e))
+                })?;
+
+            let has_ext = |name: &std::ffi::CStr| -> bool {
+                available_extensions.iter().any(|ext| {
+                    std::ffi::CStr::from_ptr(ext.extension_name.as_ptr()) == name
+                })
+            };
+
+            let has_state3 = has_ext(ash::ext::extended_dynamic_state3::NAME);
+            let has_color_write = has_ext(ash::ext::color_write_enable::NAME);
+            let has_depth_clip_ext = has_ext(vk::EXT_DEPTH_CLIP_ENABLE_NAME);
+
+            // --- Query per-feature bits for EXT_extended_dynamic_state3 ---
+            let mut dynamic_state_caps = DynamicStateCaps {
+                depth_clamp_enable: false,
+                depth_clip_enable: false,
+                color_write_mask: false,
+                alpha_to_coverage_enable: false,
+                color_write_enable: false,
+            };
+
+            let mut state3_features = vk::PhysicalDeviceExtendedDynamicState3FeaturesEXT::default();
+            let mut depth_clip_features = vk::PhysicalDeviceDepthClipEnableFeaturesEXT::default();
+            let mut color_write_features = vk::PhysicalDeviceColorWriteEnableFeaturesEXT::default();
+
+            if has_state3 || has_color_write || has_depth_clip_ext {
+                let mut features2 = vk::PhysicalDeviceFeatures2::default();
+                if has_state3 {
+                    features2 = features2.push_next(&mut state3_features);
+                }
+                if has_depth_clip_ext {
+                    features2 = features2.push_next(&mut depth_clip_features);
+                }
+                if has_color_write {
+                    features2 = features2.push_next(&mut color_write_features);
+                }
+                instance.get_physical_device_features2(physical_device, &mut features2);
+            }
+
+            if has_state3 {
+                dynamic_state_caps.depth_clamp_enable =
+                    state3_features.extended_dynamic_state3_depth_clamp_enable != 0;
+                dynamic_state_caps.color_write_mask =
+                    state3_features.extended_dynamic_state3_color_write_mask != 0;
+                dynamic_state_caps.alpha_to_coverage_enable =
+                    state3_features.extended_dynamic_state3_alpha_to_coverage_enable != 0;
+                // depth_clip_enable from state3 requires VK_EXT_depth_clip_enable as well
+                dynamic_state_caps.depth_clip_enable =
+                    has_depth_clip_ext
+                    && state3_features.extended_dynamic_state3_depth_clip_enable != 0
+                    && depth_clip_features.depth_clip_enable != 0;
+            }
+            if has_color_write {
+                dynamic_state_caps.color_write_enable =
+                    color_write_features.color_write_enable != 0;
+            }
+
+            // Log what we found
+            engine_info!("galaxy3d::vulkan",
+                "Dynamic state caps: depth_clamp={}, depth_clip={}, color_write_mask={}, alpha_to_coverage={}, color_write={}",
+                dynamic_state_caps.depth_clamp_enable,
+                dynamic_state_caps.depth_clip_enable,
+                dynamic_state_caps.color_write_mask,
+                dynamic_state_caps.alpha_to_coverage_enable,
+                dynamic_state_caps.color_write_enable,
+            );
+
+            // --- Build device extension list ---
+            let mut device_extension_names = vec![ash::khr::swapchain::NAME.as_ptr()];
+            if has_state3 {
+                device_extension_names.push(ash::ext::extended_dynamic_state3::NAME.as_ptr());
+            }
+            if has_color_write {
+                device_extension_names.push(ash::ext::color_write_enable::NAME.as_ptr());
+            }
+            if has_depth_clip_ext {
+                device_extension_names.push(vk::EXT_DEPTH_CLIP_ENABLE_NAME.as_ptr());
+            }
 
             let device_features = vk::PhysicalDeviceFeatures::default()
-                .sampler_anisotropy(true);
+                .sampler_anisotropy(true)
+                .depth_clamp(dynamic_state_caps.depth_clamp_enable);
 
             let mut vulkan_11_features = vk::PhysicalDeviceVulkan11Features::default()
                 .shader_draw_parameters(true);
 
-            let device_create_info = vk::DeviceCreateInfo::default()
+            let mut vulkan_13_features = vk::PhysicalDeviceVulkan13Features::default()
+                .synchronization2(true)
+                .dynamic_rendering(true);
+
+            let mut extended_dynamic_state = vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT::default()
+                .extended_dynamic_state(true);
+
+            // Conditionally enable state3 feature bits we'll actually use
+            let mut state3_enable = vk::PhysicalDeviceExtendedDynamicState3FeaturesEXT::default()
+                .extended_dynamic_state3_depth_clamp_enable(dynamic_state_caps.depth_clamp_enable)
+                .extended_dynamic_state3_depth_clip_enable(dynamic_state_caps.depth_clip_enable)
+                .extended_dynamic_state3_color_write_mask(dynamic_state_caps.color_write_mask)
+                .extended_dynamic_state3_alpha_to_coverage_enable(dynamic_state_caps.alpha_to_coverage_enable);
+
+            let mut depth_clip_enable = vk::PhysicalDeviceDepthClipEnableFeaturesEXT::default()
+                .depth_clip_enable(dynamic_state_caps.depth_clip_enable);
+
+            let mut color_write_enable = vk::PhysicalDeviceColorWriteEnableFeaturesEXT::default()
+                .color_write_enable(dynamic_state_caps.color_write_enable);
+
+            let mut device_create_info = vk::DeviceCreateInfo::default()
                 .queue_create_infos(&queue_create_infos)
                 .enabled_extension_names(&device_extension_names)
                 .enabled_features(&device_features)
-                .push_next(&mut vulkan_11_features);
+                .push_next(&mut vulkan_11_features)
+                .push_next(&mut vulkan_13_features)
+                .push_next(&mut extended_dynamic_state);
+
+            if has_state3 {
+                device_create_info = device_create_info.push_next(&mut state3_enable);
+            }
+            if has_depth_clip_ext {
+                device_create_info = device_create_info.push_next(&mut depth_clip_enable);
+            }
+            if has_color_write {
+                device_create_info = device_create_info.push_next(&mut color_write_enable);
+            }
 
             let device = Arc::new(
                 instance
@@ -393,6 +530,18 @@ impl VulkanGraphicsDevice {
                         Error::InitializationFailed(format!("Failed to create device: {:?}", e))
                     })?,
             );
+
+            // Create extension loaders
+            let ext_dynamic_state3 = if has_state3 {
+                Some(ash::ext::extended_dynamic_state3::Device::new(&instance, &device))
+            } else {
+                None
+            };
+            let ext_color_write_enable = if has_color_write {
+                Some(ash::ext::color_write_enable::Device::new(&instance, &device))
+            } else {
+                None
+            };
 
             let graphics_queue = device.get_device_queue(graphics_family_index, 0);
             let present_queue = device.get_device_queue(present_family_index, 0);
@@ -470,6 +619,9 @@ impl VulkanGraphicsDevice {
                 descriptor_pools: Mutex::new(vec![descriptor_pool]),
                 sampler_cache: Mutex::new(SamplerCache::new(Arc::clone(&gpu_context))),
                 gpu_context,
+                ext_dynamic_state3,
+                ext_color_write_enable,
+                dynamic_state_caps,
             })
         }
     }
@@ -736,65 +888,14 @@ impl VulkanGraphicsDevice {
     }
 
     // ===== Pipeline state conversions =====
-
-    fn cull_mode_to_vk(&self, mode: CullMode) -> vk::CullModeFlags {
-        match mode {
-            CullMode::None => vk::CullModeFlags::NONE,
-            CullMode::Front => vk::CullModeFlags::FRONT,
-            CullMode::Back => vk::CullModeFlags::BACK,
-        }
-    }
-
-    fn front_face_to_vk(&self, face: FrontFace) -> vk::FrontFace {
-        match face {
-            FrontFace::CounterClockwise => vk::FrontFace::COUNTER_CLOCKWISE,
-            FrontFace::Clockwise => vk::FrontFace::CLOCKWISE,
-        }
-    }
+    // Note: cull_mode, front_face, compare_op, stencil_op conversions
+    // moved to vulkan_command_list.rs as free functions (used by set_dynamic_state).
 
     fn polygon_mode_to_vk(&self, mode: PolygonMode) -> vk::PolygonMode {
         match mode {
             PolygonMode::Fill => vk::PolygonMode::FILL,
             PolygonMode::Line => vk::PolygonMode::LINE,
             PolygonMode::Point => vk::PolygonMode::POINT,
-        }
-    }
-
-    fn compare_op_to_vk(&self, op: CompareOp) -> vk::CompareOp {
-        match op {
-            CompareOp::Never => vk::CompareOp::NEVER,
-            CompareOp::Less => vk::CompareOp::LESS,
-            CompareOp::Equal => vk::CompareOp::EQUAL,
-            CompareOp::LessOrEqual => vk::CompareOp::LESS_OR_EQUAL,
-            CompareOp::Greater => vk::CompareOp::GREATER,
-            CompareOp::NotEqual => vk::CompareOp::NOT_EQUAL,
-            CompareOp::GreaterOrEqual => vk::CompareOp::GREATER_OR_EQUAL,
-            CompareOp::Always => vk::CompareOp::ALWAYS,
-        }
-    }
-
-    fn stencil_op_to_vk(&self, op: StencilOp) -> vk::StencilOp {
-        match op {
-            StencilOp::Keep => vk::StencilOp::KEEP,
-            StencilOp::Zero => vk::StencilOp::ZERO,
-            StencilOp::Replace => vk::StencilOp::REPLACE,
-            StencilOp::IncrementAndClamp => vk::StencilOp::INCREMENT_AND_CLAMP,
-            StencilOp::DecrementAndClamp => vk::StencilOp::DECREMENT_AND_CLAMP,
-            StencilOp::Invert => vk::StencilOp::INVERT,
-            StencilOp::IncrementAndWrap => vk::StencilOp::INCREMENT_AND_WRAP,
-            StencilOp::DecrementAndWrap => vk::StencilOp::DECREMENT_AND_WRAP,
-        }
-    }
-
-    fn stencil_op_state_to_vk(&self, state: &StencilOpState) -> vk::StencilOpState {
-        vk::StencilOpState {
-            fail_op: self.stencil_op_to_vk(state.fail_op),
-            pass_op: self.stencil_op_to_vk(state.pass_op),
-            depth_fail_op: self.stencil_op_to_vk(state.depth_fail_op),
-            compare_op: self.compare_op_to_vk(state.compare_op),
-            compare_mask: state.compare_mask,
-            write_mask: state.write_mask,
-            reference: state.reference,
         }
     }
 
@@ -833,15 +934,6 @@ impl VulkanGraphicsDevice {
             SampleCount::S4 => vk::SampleCountFlags::TYPE_4,
             SampleCount::S8 => vk::SampleCountFlags::TYPE_8,
         }
-    }
-
-    fn color_write_mask_to_vk(&self, mask: &ColorWriteMask) -> vk::ColorComponentFlags {
-        let mut flags = vk::ColorComponentFlags::empty();
-        if mask.r { flags |= vk::ColorComponentFlags::R; }
-        if mask.g { flags |= vk::ColorComponentFlags::G; }
-        if mask.b { flags |= vk::ColorComponentFlags::B; }
-        if mask.a { flags |= vk::ColorComponentFlags::A; }
-        flags
     }
 
     /// Convert LoadOp to Vulkan
@@ -953,6 +1045,9 @@ impl GraphicsDevice for VulkanGraphicsDevice {
         let cmd_list = CommandList::new(
             self.device.clone(),
             self.graphics_queue_family,
+            self.dynamic_state_caps,
+            self.ext_dynamic_state3.clone(),
+            self.ext_color_write_enable.clone(),
         )?;
         Ok(Box::new(cmd_list))
     }
@@ -2284,47 +2379,34 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 .viewports(&viewports)
                 .scissors(&scissors);
 
-            // Rasterization state
-            let rasterization_state = {
-                let mut info = vk::PipelineRasterizationStateCreateInfo::default()
-                    .depth_clamp_enable(false)
-                    .rasterizer_discard_enable(false)
-                    .polygon_mode(self.polygon_mode_to_vk(desc.rasterization.polygon_mode))
-                    .line_width(1.0)
-                    .cull_mode(self.cull_mode_to_vk(desc.rasterization.cull_mode))
-                    .front_face(self.front_face_to_vk(desc.rasterization.front_face));
-                if let Some(bias) = desc.rasterization.depth_bias {
-                    info = info
-                        .depth_bias_enable(true)
-                        .depth_bias_constant_factor(bias.constant_factor)
-                        .depth_bias_slope_factor(bias.slope_factor)
-                        .depth_bias_clamp(bias.clamp);
-                } else {
-                    info = info.depth_bias_enable(false);
-                }
-                info
-            };
+            // Rasterization state (cull_mode, front_face, depth_bias are dynamic)
+            let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
+                .depth_clamp_enable(false)
+                .rasterizer_discard_enable(false)
+                .polygon_mode(self.polygon_mode_to_vk(desc.rasterization.polygon_mode))
+                .line_width(1.0)
+                .cull_mode(vk::CullModeFlags::BACK)
+                .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+                .depth_bias_enable(false);
 
-            // Depth/stencil state
+            // Depth/stencil state (all fields are dynamic)
             let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
-                .depth_test_enable(desc.depth_stencil.depth_test_enable)
-                .depth_write_enable(desc.depth_stencil.depth_write_enable)
-                .depth_compare_op(self.compare_op_to_vk(desc.depth_stencil.depth_compare_op))
+                .depth_test_enable(false)
+                .depth_write_enable(false)
+                .depth_compare_op(vk::CompareOp::LESS)
                 .depth_bounds_test_enable(false)
-                .stencil_test_enable(desc.depth_stencil.stencil_test_enable)
-                .front(self.stencil_op_state_to_vk(&desc.depth_stencil.front))
-                .back(self.stencil_op_state_to_vk(&desc.depth_stencil.back));
+                .stencil_test_enable(false);
 
-            // Multisample state
+            // Multisample state — alpha_to_coverage is dynamic if supported, otherwise fixed to false
             let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
                 .sample_shading_enable(false)
                 .rasterization_samples(self.sample_count_to_vk(desc.multisample.sample_count))
-                .alpha_to_coverage_enable(desc.multisample.alpha_to_coverage);
+                .alpha_to_coverage_enable(false);
 
-            // Color blend state
+            // Color blend state — color_write_mask is dynamic if supported, otherwise fixed to RGBA
             let color_blend_attachment = {
                 let mut attachment = vk::PipelineColorBlendAttachmentState::default()
-                    .color_write_mask(self.color_write_mask_to_vk(&desc.color_blend.color_write_mask))
+                    .color_write_mask(vk::ColorComponentFlags::RGBA)
                     .blend_enable(desc.color_blend.blend_enable);
                 if desc.color_blend.blend_enable {
                     attachment = attachment
@@ -2342,8 +2424,45 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 .logic_op_enable(false)
                 .attachments(std::slice::from_ref(&color_blend_attachment));
 
-            // Dynamic state
-            let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+            // Dynamic state — all per-draw states are set via set_dynamic_state()
+            let mut dynamic_states = vec![
+                // Vulkan 1.0 core
+                vk::DynamicState::VIEWPORT,
+                vk::DynamicState::SCISSOR,
+                vk::DynamicState::DEPTH_BIAS,
+                vk::DynamicState::DEPTH_BOUNDS,
+                vk::DynamicState::BLEND_CONSTANTS,
+                vk::DynamicState::STENCIL_COMPARE_MASK,
+                vk::DynamicState::STENCIL_WRITE_MASK,
+                vk::DynamicState::STENCIL_REFERENCE,
+                // Vulkan 1.3 / VK_EXT_extended_dynamic_state
+                vk::DynamicState::CULL_MODE,
+                vk::DynamicState::FRONT_FACE,
+                vk::DynamicState::DEPTH_TEST_ENABLE,
+                vk::DynamicState::DEPTH_WRITE_ENABLE,
+                vk::DynamicState::DEPTH_COMPARE_OP,
+                vk::DynamicState::DEPTH_BIAS_ENABLE,
+                vk::DynamicState::DEPTH_BOUNDS_TEST_ENABLE,
+                vk::DynamicState::STENCIL_TEST_ENABLE,
+                vk::DynamicState::STENCIL_OP,
+            ];
+            // VK_EXT_extended_dynamic_state3 (conditional)
+            if self.dynamic_state_caps.depth_clamp_enable {
+                dynamic_states.push(vk::DynamicState::DEPTH_CLAMP_ENABLE_EXT);
+            }
+            if self.dynamic_state_caps.depth_clip_enable {
+                dynamic_states.push(vk::DynamicState::DEPTH_CLIP_ENABLE_EXT);
+            }
+            if self.dynamic_state_caps.color_write_mask {
+                dynamic_states.push(vk::DynamicState::COLOR_WRITE_MASK_EXT);
+            }
+            if self.dynamic_state_caps.alpha_to_coverage_enable {
+                dynamic_states.push(vk::DynamicState::ALPHA_TO_COVERAGE_ENABLE_EXT);
+            }
+            // VK_EXT_color_write_enable (separate extension)
+            if self.dynamic_state_caps.color_write_enable {
+                dynamic_states.push(vk::DynamicState::COLOR_WRITE_ENABLE_EXT);
+            }
             let dynamic_state = vk::PipelineDynamicStateCreateInfo::default()
                 .dynamic_states(&dynamic_states);
 

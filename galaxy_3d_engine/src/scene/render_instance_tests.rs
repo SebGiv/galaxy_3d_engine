@@ -143,7 +143,6 @@ fn create_render_pipeline_desc() -> crate::graphics_device::PipelineDesc {
         push_constant_ranges: vec![],
         binding_group_layouts: vec![],
         rasterization: Default::default(),
-        depth_stencil: Default::default(),
         color_blend: Default::default(),
         multisample: Default::default(),
         color_formats: vec![],
@@ -230,6 +229,7 @@ fn create_test_material(pipeline: &Arc<Pipeline>) -> Arc<Material> {
         pipeline: pipeline.clone(),
         textures: vec![],
         params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))],
+        pass_render_states: vec![],
     };
     Arc::new(Material::from_desc(0, desc).unwrap())
 }
@@ -251,6 +251,7 @@ fn create_test_material_with_texture(
             ("roughness".to_string(), ParamValue::Float(0.8)),
             ("metallic".to_string(), ParamValue::Float(0.0)),
         ],
+        pass_render_states: vec![],
     };
     Arc::new(Material::from_desc(0, desc).unwrap())
 }
@@ -480,7 +481,7 @@ fn test_from_mesh_extracts_geometry_data() {
 }
 
 #[test]
-fn test_from_mesh_extracts_pipeline_passes() {
+fn test_from_mesh_stores_material() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
@@ -491,9 +492,11 @@ fn test_from_mesh_extracts_pipeline_passes() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Single variant, single pass → 1 pass per submesh
+    // Each submesh stores its material (Arc)
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.passes().len(), 1);
+    assert!(Arc::ptr_eq(sm.material(), &material));
+    // Pipeline is accessible through material
+    assert!(Arc::ptr_eq(sm.material().pipeline(), &pipeline));
 }
 
 #[test]
@@ -508,13 +511,14 @@ fn test_from_mesh_multi_pass_pipeline() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Multi-pass variant → 2 passes per submesh
+    // Multi-pass variant → 2 passes accessible via material's pipeline
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.passes().len(), 2);
+    let variant = sm.material().pipeline().variant(0).unwrap();
+    assert_eq!(variant.pass_count(), 2);
 }
 
 #[test]
-fn test_from_mesh_render_pass_structure() {
+fn test_from_mesh_material_pipeline_structure() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
@@ -525,19 +529,17 @@ fn test_from_mesh_render_pass_structure() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Each submesh has passes with pipeline, binding groups, push constants
+    // Pipeline is resolved from material -> pipeline -> variant -> pass
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.passes().len(), 1);
-
-    let pass = &sm.passes()[0];
+    let variant = sm.material().pipeline().variant(0).unwrap();
+    assert_eq!(variant.pass_count(), 1);
+    let pass = variant.pass(0).unwrap();
     // Pipeline should be set
-    assert!(pass.pipeline().as_ref().reflection().binding_count() == 0);
-    // No texture binding groups (global set 0 is owned by Scene)
-    assert_eq!(pass.texture_binding_groups().len(), 0);
+    assert!(pass.graphics_device_pipeline().as_ref().reflection().binding_count() == 0);
 }
 
 #[test]
-fn test_from_mesh_material_with_texture_no_matching_reflection() {
+fn test_from_mesh_material_with_texture() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
@@ -549,11 +551,10 @@ fn test_from_mesh_material_with_texture_no_matching_reflection() {
         &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
     ).unwrap();
 
-    // Material has textures and params, but mock reflection has no matching bindings
+    // Material with textures is stored on submesh
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.passes().len(), 1);
-    // No texture binding groups (no matching reflection; global set 0 is owned by Scene)
-    assert_eq!(sm.passes()[0].texture_binding_groups().len(), 0);
+    assert!(Arc::ptr_eq(sm.material(), &material));
+    assert_eq!(sm.material().texture_slot_count(), 1);
 }
 
 #[test]
@@ -607,9 +608,11 @@ fn test_from_mesh_variant_index_selection() {
     ).unwrap();
 
     assert_eq!(instance.variant_index(), 1);
-    // Passes should still be extracted (from variant 1)
+    // Material's pipeline has variant 1 ("shadow") with 1 pass
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.passes().len(), 1);
+    let variant = sm.material().pipeline().variant(1).unwrap();
+    assert_eq!(variant.name(), "shadow");
+    assert_eq!(variant.pass_count(), 1);
 }
 
 #[test]
@@ -809,12 +812,11 @@ fn test_render_submesh_all_accessors() {
     assert_eq!(sm.index_count(), 6);
     assert_eq!(sm.topology(), PrimitiveTopology::TriangleList);
 
-    // Pipeline passes
-    assert_eq!(sm.passes().len(), 1);
-
-    // RenderPass structure: no texture binding groups (global set 0 is owned by Scene)
-    let pass = &sm.passes()[0];
-    assert_eq!(pass.texture_binding_groups().len(), 0);
+    // Material is stored on submesh
+    assert!(Arc::ptr_eq(sm.material(), &material));
+    // Pipeline is accessible through material
+    let variant = sm.material().pipeline().variant(0).unwrap();
+    assert_eq!(variant.pass_count(), 1);
 }
 
 // ============================================================================

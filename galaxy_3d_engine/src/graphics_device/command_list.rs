@@ -5,6 +5,7 @@ use crate::error::Result;
 use crate::graphics_device::{
     RenderPass, Framebuffer, Pipeline, Buffer,
     BindingGroup, IndexType, ShaderStage, ImageAccess,
+    DynamicRenderState,
 };
 
 /// Command list for recording rendering commands
@@ -119,6 +120,16 @@ pub trait CommandList: Send + Sync {
     /// * `first_index` - Index of first index
     /// * `vertex_offset` - Value added to vertex index before indexing into the vertex buffer
     fn draw_indexed(&mut self, index_count: u32, first_index: u32, vertex_offset: i32) -> Result<()>;
+
+    /// Set all dynamic pipeline states for the next draw call
+    ///
+    /// The backend translates this into the appropriate vkCmdSet* calls.
+    /// All fields are set unconditionally — the driver handles redundancy filtering.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - The resolved dynamic render state for this draw call
+    fn set_dynamic_state(&mut self, state: &DynamicRenderState) -> Result<()>;
 
 }
 

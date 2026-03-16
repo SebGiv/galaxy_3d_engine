@@ -11,6 +11,8 @@ use galaxy_3d_engine::galaxy3d::render::{
     Texture as RendererTexture,
     Viewport, Rect2D, ClearValue, IndexType, ShaderStage,
     ImageAccess, AccessType, TextureFormat,
+    DynamicRenderState,
+    CullMode, FrontFace, CompareOp, StencilOp, ColorWriteMask,
 };
 use galaxy_3d_engine::{engine_bail, engine_err};
 use ash::vk;
@@ -22,6 +24,7 @@ use crate::vulkan_pipeline::Pipeline;
 use crate::vulkan_buffer::Buffer;
 use crate::vulkan_binding_group::BindingGroup;
 use crate::vulkan_texture::Texture as VulkanTexture;
+use crate::vulkan::DynamicStateCaps;
 
 /// Vulkan command list implementation
 ///
@@ -39,6 +42,12 @@ pub struct CommandList {
     in_render_pass: bool,
     /// Currently bound pipeline layout (for push constants)
     bound_pipeline_layout: Option<vk::PipelineLayout>,
+    /// Runtime caps for optional dynamic states
+    dynamic_state_caps: DynamicStateCaps,
+    /// Optional EXT_extended_dynamic_state3 loader
+    ext_dynamic_state3: Option<ash::ext::extended_dynamic_state3::Device>,
+    /// Optional EXT_color_write_enable loader
+    ext_color_write_enable: Option<ash::ext::color_write_enable::Device>,
 }
 
 impl CommandList {
@@ -51,6 +60,9 @@ impl CommandList {
     pub fn new(
         device: Arc<ash::Device>,
         graphics_queue_family: u32,
+        dynamic_state_caps: DynamicStateCaps,
+        ext_dynamic_state3: Option<ash::ext::extended_dynamic_state3::Device>,
+        ext_color_write_enable: Option<ash::ext::color_write_enable::Device>,
     ) -> Result<Self> {
         unsafe {
             // Create command pool
@@ -77,6 +89,9 @@ impl CommandList {
                 is_recording: false,
                 in_render_pass: false,
                 bound_pipeline_layout: None,
+                dynamic_state_caps,
+                ext_dynamic_state3,
+                ext_color_write_enable,
             })
         }
     }
@@ -430,6 +445,86 @@ impl RendererCommandList for CommandList {
         }
     }
 
+    fn set_dynamic_state(&mut self, state: &DynamicRenderState) -> Result<()> {
+        debug_assert!(self.is_recording, "set_dynamic_state: command list not recording");
+
+        unsafe {
+            let cb = self.command_buffer;
+
+            // Rasterization
+            self.device.cmd_set_cull_mode(cb, cull_mode_to_vk(state.cull_mode));
+            self.device.cmd_set_front_face(cb, front_face_to_vk(state.front_face));
+
+            // Depth
+            self.device.cmd_set_depth_test_enable(cb, state.depth_test_enable);
+            self.device.cmd_set_depth_write_enable(cb, state.depth_write_enable);
+            self.device.cmd_set_depth_compare_op(cb, compare_op_to_vk(state.depth_compare_op));
+            self.device.cmd_set_depth_bias_enable(cb, state.depth_bias_enable);
+            self.device.cmd_set_depth_bias(
+                cb,
+                state.depth_bias.constant_factor,
+                state.depth_bias.clamp,
+                state.depth_bias.slope_factor,
+            );
+            self.device.cmd_set_depth_bounds_test_enable(cb, state.depth_bounds_test_enable);
+            self.device.cmd_set_depth_bounds(cb, state.depth_bounds_min, state.depth_bounds_max);
+
+            // Stencil
+            self.device.cmd_set_stencil_test_enable(cb, state.stencil_test_enable);
+            self.device.cmd_set_stencil_op(
+                cb, vk::StencilFaceFlags::FRONT,
+                stencil_op_to_vk(state.stencil_front.fail_op),
+                stencil_op_to_vk(state.stencil_front.pass_op),
+                stencil_op_to_vk(state.stencil_front.depth_fail_op),
+                compare_op_to_vk(state.stencil_front.compare_op),
+            );
+            self.device.cmd_set_stencil_op(
+                cb, vk::StencilFaceFlags::BACK,
+                stencil_op_to_vk(state.stencil_back.fail_op),
+                stencil_op_to_vk(state.stencil_back.pass_op),
+                stencil_op_to_vk(state.stencil_back.depth_fail_op),
+                compare_op_to_vk(state.stencil_back.compare_op),
+            );
+            self.device.cmd_set_stencil_compare_mask(cb, vk::StencilFaceFlags::FRONT, state.stencil_front.compare_mask);
+            self.device.cmd_set_stencil_compare_mask(cb, vk::StencilFaceFlags::BACK, state.stencil_back.compare_mask);
+            self.device.cmd_set_stencil_write_mask(cb, vk::StencilFaceFlags::FRONT, state.stencil_front.write_mask);
+            self.device.cmd_set_stencil_write_mask(cb, vk::StencilFaceFlags::BACK, state.stencil_back.write_mask);
+            self.device.cmd_set_stencil_reference(cb, vk::StencilFaceFlags::FRONT, state.stencil_front.reference);
+            self.device.cmd_set_stencil_reference(cb, vk::StencilFaceFlags::BACK, state.stencil_back.reference);
+
+            // Blend constants
+            self.device.cmd_set_blend_constants(cb, &state.blend_constants);
+
+            // EXT_extended_dynamic_state3 — conditional on runtime caps
+            // These branches are on constant-runtime values (set once at device creation),
+            // so the branch predictor learns them in ~2 iterations → effectively free.
+            if self.dynamic_state_caps.depth_clamp_enable {
+                self.ext_dynamic_state3.as_ref().unwrap_unchecked()
+                    .cmd_set_depth_clamp_enable(cb, state.depth_clamp_enable);
+            }
+            if self.dynamic_state_caps.depth_clip_enable {
+                self.ext_dynamic_state3.as_ref().unwrap_unchecked()
+                    .cmd_set_depth_clip_enable(cb, state.depth_clip_enable);
+            }
+            if self.dynamic_state_caps.color_write_mask {
+                self.ext_dynamic_state3.as_ref().unwrap_unchecked()
+                    .cmd_set_color_write_mask(cb, 0, &[color_write_mask_to_vk(state.color_write_mask)]);
+            }
+            if self.dynamic_state_caps.alpha_to_coverage_enable {
+                self.ext_dynamic_state3.as_ref().unwrap_unchecked()
+                    .cmd_set_alpha_to_coverage_enable(cb, state.alpha_to_coverage_enable);
+            }
+            // VK_EXT_color_write_enable (separate extension)
+            if self.dynamic_state_caps.color_write_enable {
+                let ext = self.ext_color_write_enable.as_ref().unwrap_unchecked();
+                let enable: vk::Bool32 = state.color_write_enable.into();
+                (ext.fp().cmd_set_color_write_enable_ext)(cb, 1, &enable);
+            }
+        }
+
+        Ok(())
+    }
+
     fn bind_pipeline(&mut self, pipeline: &Arc<dyn RendererPipeline>) -> Result<()> {
         if !self.is_recording {
             engine_bail!("galaxy3d::vulkan", "bind_pipeline: command list not recording");
@@ -620,4 +715,63 @@ impl Drop for CommandList {
             self.device.destroy_command_pool(self.command_pool, None);
         }
     }
+}
+
+// ===== Free conversion functions for DynamicRenderState =====
+// Kept as free functions (no &self) for use from CommandList without
+// needing a reference to VulkanGraphicsDevice.
+
+#[inline(always)]
+fn cull_mode_to_vk(mode: CullMode) -> vk::CullModeFlags {
+    match mode {
+        CullMode::None => vk::CullModeFlags::NONE,
+        CullMode::Front => vk::CullModeFlags::FRONT,
+        CullMode::Back => vk::CullModeFlags::BACK,
+    }
+}
+
+#[inline(always)]
+fn front_face_to_vk(face: FrontFace) -> vk::FrontFace {
+    match face {
+        FrontFace::CounterClockwise => vk::FrontFace::COUNTER_CLOCKWISE,
+        FrontFace::Clockwise => vk::FrontFace::CLOCKWISE,
+    }
+}
+
+#[inline(always)]
+fn compare_op_to_vk(op: CompareOp) -> vk::CompareOp {
+    match op {
+        CompareOp::Never => vk::CompareOp::NEVER,
+        CompareOp::Less => vk::CompareOp::LESS,
+        CompareOp::Equal => vk::CompareOp::EQUAL,
+        CompareOp::LessOrEqual => vk::CompareOp::LESS_OR_EQUAL,
+        CompareOp::Greater => vk::CompareOp::GREATER,
+        CompareOp::NotEqual => vk::CompareOp::NOT_EQUAL,
+        CompareOp::GreaterOrEqual => vk::CompareOp::GREATER_OR_EQUAL,
+        CompareOp::Always => vk::CompareOp::ALWAYS,
+    }
+}
+
+#[inline(always)]
+fn stencil_op_to_vk(op: StencilOp) -> vk::StencilOp {
+    match op {
+        StencilOp::Keep => vk::StencilOp::KEEP,
+        StencilOp::Zero => vk::StencilOp::ZERO,
+        StencilOp::Replace => vk::StencilOp::REPLACE,
+        StencilOp::IncrementAndClamp => vk::StencilOp::INCREMENT_AND_CLAMP,
+        StencilOp::DecrementAndClamp => vk::StencilOp::DECREMENT_AND_CLAMP,
+        StencilOp::Invert => vk::StencilOp::INVERT,
+        StencilOp::IncrementAndWrap => vk::StencilOp::INCREMENT_AND_WRAP,
+        StencilOp::DecrementAndWrap => vk::StencilOp::DECREMENT_AND_WRAP,
+    }
+}
+
+#[inline(always)]
+fn color_write_mask_to_vk(mask: ColorWriteMask) -> vk::ColorComponentFlags {
+    let mut flags = vk::ColorComponentFlags::empty();
+    if mask.r { flags |= vk::ColorComponentFlags::R; }
+    if mask.g { flags |= vk::ColorComponentFlags::G; }
+    if mask.b { flags |= vk::ColorComponentFlags::B; }
+    if mask.a { flags |= vk::ColorComponentFlags::A; }
+    flags
 }

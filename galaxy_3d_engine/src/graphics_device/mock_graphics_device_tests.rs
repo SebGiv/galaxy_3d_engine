@@ -451,7 +451,7 @@ fn test_mock_graphics_device_create_pipeline() {
         push_constant_ranges: vec![],
         binding_group_layouts: vec![],
         rasterization: Default::default(),
-        depth_stencil: Default::default(),
+
         color_blend: Default::default(),
         multisample: Default::default(),
         color_formats: vec![],

@@ -12,11 +12,10 @@ use crate::engine_err;
 use crate::graphics_device::{
     self,
     Buffer,
-    Pipeline as GraphicsDevicePipeline,
-    BindingGroup,
     PrimitiveTopology,
 };
 use crate::resource::mesh::Mesh;
+use crate::resource::material::Material;
 use crate::utils::SlotAllocator;
 
 // ===== SLOT MAP KEY =====
@@ -107,25 +106,13 @@ pub const FLAG_CAST_SHADOW: u64    = 1 << 1;
 pub const FLAG_RECEIVE_SHADOW: u64 = 1 << 2;
 // Bits 3-63 reserved for future extensions
 
-// ===== RENDER PASS =====
-
-/// A single rendering pass with pre-resolved GPU bindings
-///
-/// Contains a pipeline and texture binding groups (Sets 1+).
-/// The global binding group (Set 0) is owned by Scene and shared across all instances.
-pub struct RenderPass {
-    /// The graphics_device pipeline for this pass
-    pipeline: Arc<dyn GraphicsDevicePipeline>,
-    /// Sets 1+: texture bindings (Arc clones from Material, shared across instances)
-    texture_binding_groups: Vec<Arc<dyn BindingGroup>>,
-}
-
 // ===== RENDER SUBMESH =====
 
 /// A single drawable submesh within a RenderLOD.
 ///
-/// Contains geometry offsets and one RenderPass per pipeline pass.
-/// Each RenderPass holds its own pipeline, binding groups, and push constants.
+/// Contains geometry offsets and a reference to its Material.
+/// Pipeline, binding groups, render state, and material parameters
+/// are all resolved from the Material at draw time.
 pub struct RenderSubMesh {
     /// Base vertex offset in the shared vertex buffer
     vertex_offset: u32,
@@ -137,12 +124,10 @@ pub struct RenderSubMesh {
     index_count: u32,
     /// Primitive topology (TriangleList, LineList, etc.)
     topology: PrimitiveTopology,
-    /// Rendering passes with pre-resolved bindings
-    passes: Vec<RenderPass>,
+    /// Material reference (owns pipeline, textures, render state)
+    material: Arc<Material>,
     /// Unique slot index in the GPU scene SSBO
     draw_slot: u32,
-    /// Material slot ID (position in the GPU material SSBO)
-    material_slot_id: u32,
 }
 
 // ===== RENDER LOD =====
@@ -235,35 +220,14 @@ impl RenderInstance {
                         "GeometrySubMesh id {} not found in LOD {}",
                         submesh.submesh_id(), lod_idx))?;
 
-                let material = submesh.material();
-                let material_slot_id = material.slot_id();
+                let material = Arc::clone(submesh.material());
 
-                // Extract pipeline passes for the selected variant
+                // Validate that the selected variant exists in this material's pipeline
                 let pipeline = material.pipeline();
-                let variant = pipeline.variant(variant_index as u32)
+                let _variant = pipeline.variant(variant_index as u32)
                     .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
                         "Pipeline variant index {} out of range (pipeline has {} variants)",
                         variant_index, pipeline.variant_count()))?;
-
-                let mut passes = Vec::with_capacity(variant.pass_count());
-                for pass_idx in 0..variant.pass_count() {
-                    let pass = variant.pass(pass_idx as u32)
-                        .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
-                            "Pass index {} out of range in variant {}",
-                            pass_idx, variant_index))?;
-
-                    let graphics_device_pipeline = pass.graphics_device_pipeline();
-
-                    // Sets 1+: texture bindings (shared from Material)
-                    let texture_bgs = material.texture_binding_groups(
-                        variant_index as u32, pass_idx as u32,
-                    ).unwrap_or(&[]).to_vec();
-
-                    passes.push(RenderPass {
-                        pipeline: Arc::clone(graphics_device_pipeline),
-                        texture_binding_groups: texture_bgs,
-                    });
-                }
 
                 sub_meshes.push(RenderSubMesh {
                     vertex_offset: geom_submesh.vertex_offset(),
@@ -271,9 +235,8 @@ impl RenderInstance {
                     index_offset: geom_submesh.index_offset(),
                     index_count: geom_submesh.index_count(),
                     topology: geom_submesh.topology(),
-                    passes,
+                    material,
                     draw_slot: slot_allocator.alloc(),
-                    material_slot_id,
                 });
             }
 
@@ -417,9 +380,9 @@ impl RenderSubMesh {
         self.topology
     }
 
-    /// Get rendering passes
-    pub fn passes(&self) -> &[RenderPass] {
-        &self.passes
+    /// Get the material reference
+    pub fn material(&self) -> &Arc<Material> {
+        &self.material
     }
 
     /// Get the draw slot index (position in the GPU scene SSBO)
@@ -429,21 +392,7 @@ impl RenderSubMesh {
 
     /// Get the material slot ID (position in the GPU material SSBO)
     pub fn material_slot_id(&self) -> u32 {
-        self.material_slot_id
-    }
-}
-
-// ===== RENDER PASS ACCESSORS =====
-
-impl RenderPass {
-    /// Get the graphics_device pipeline
-    pub fn pipeline(&self) -> &Arc<dyn GraphicsDevicePipeline> {
-        &self.pipeline
-    }
-
-    /// Get the texture binding groups (Sets 1+: shared from Material)
-    pub fn texture_binding_groups(&self) -> &[Arc<dyn BindingGroup>] {
-        &self.texture_binding_groups
+        self.material.slot_id()
     }
 }
 

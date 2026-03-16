@@ -157,7 +157,7 @@ fn create_test_pipeline_desc(
                     push_constant_ranges: vec![],
                     binding_group_layouts: vec![],
                     rasterization: Default::default(),
-                    depth_stencil: Default::default(),
+
                     color_blend: Default::default(),
                     multisample: Default::default(),
                     color_formats: vec![],
@@ -174,6 +174,7 @@ fn create_test_material_desc(pipeline: &Arc<Pipeline>) -> MaterialDesc {
         pipeline: pipeline.clone(),
         textures: vec![],
         params: vec![],
+        pass_render_states: vec![],
     }
 }
 
@@ -1329,7 +1330,6 @@ fn test_add_pipeline_variant() {
                 push_constant_ranges: vec![],
                 binding_group_layouts: vec![],
                 rasterization: Default::default(),
-                depth_stencil: Default::default(),
                 color_blend: Default::default(),
                 multisample: Default::default(),
                 color_formats: vec![],
@@ -1364,7 +1364,6 @@ fn test_add_pipeline_variant_to_nonexistent_pipeline() {
                 push_constant_ranges: vec![],
                 binding_group_layouts: vec![],
                 rasterization: Default::default(),
-                depth_stencil: Default::default(),
                 color_blend: Default::default(),
                 multisample: Default::default(),
                 color_formats: vec![],
@@ -1466,6 +1465,7 @@ fn test_sync_materials_basic() {
             ("roughness".to_string(), ParamValue::Float(0.8)),
             ("color".to_string(), ParamValue::Vec4([1.0, 0.0, 0.0, 1.0])),
         ],
+        pass_render_states: vec![],
     };
     rm.create_material("body".to_string(), mat_desc).unwrap();
 
@@ -1498,6 +1498,7 @@ fn test_sync_materials_type_mismatch_skips() {
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
         ],
+        pass_render_states: vec![],
     };
     rm.create_material("body".to_string(), mat_desc).unwrap();
 
@@ -1531,6 +1532,7 @@ fn test_sync_materials_missing_field_skips() {
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
         ],
+        pass_render_states: vec![],
     };
     rm.create_material("body".to_string(), mat_desc).unwrap();
 
@@ -1564,6 +1566,7 @@ fn test_sync_materials_bool_to_uint() {
         params: vec![
             ("is_metallic".to_string(), ParamValue::Bool(true)),
         ],
+        pass_render_states: vec![],
     };
     rm.create_material("body".to_string(), mat_desc).unwrap();
 
@@ -1596,6 +1599,7 @@ fn test_sync_materials_vec3_padding() {
         params: vec![
             ("normal".to_string(), ParamValue::Vec3([1.0, 0.0, 0.0])),
         ],
+        pass_render_states: vec![],
     };
     rm.create_material("body".to_string(), mat_desc).unwrap();
 
@@ -1631,6 +1635,7 @@ fn test_sync_materials_slot_exceeds_buffer() {
             params: vec![
                 ("roughness".to_string(), ParamValue::Float(0.5)),
             ],
+            pass_render_states: vec![],
         };
         rm.create_material(format!("mat{}", i), mat_desc).unwrap();
     }
@@ -1848,6 +1853,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
             sampler_type: graphics_device::SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
     rm.create_material("ground".to_string(), mat_desc).unwrap();
 
@@ -1887,6 +1893,7 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
             sampler_type: graphics_device::SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
     rm.create_material("flat".to_string(), mat_desc).unwrap();
 
@@ -1923,6 +1930,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
             sampler_type: graphics_device::SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
     rm.create_material("mat".to_string(), mat_desc).unwrap();
 
@@ -1960,6 +1968,7 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
             sampler_type: graphics_device::SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
     rm.create_material("mat".to_string(), mat_desc).unwrap();
 

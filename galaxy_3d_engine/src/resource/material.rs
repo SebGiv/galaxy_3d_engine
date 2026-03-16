@@ -20,7 +20,7 @@ use crate::error::Result;
 use crate::{engine_bail, engine_err};
 use crate::resource::texture::Texture;
 use crate::resource::pipeline::Pipeline;
-use crate::graphics_device::{SamplerType, BindingGroup, BindingResource, BindingType};
+use crate::graphics_device::{SamplerType, BindingGroup, BindingResource, BindingType, DynamicRenderState};
 
 // ===== REFERENCE TYPES =====
 
@@ -86,12 +86,14 @@ pub struct MaterialParam {
 
 // ===== TEXTURE BINDING GROUPS =====
 
-/// Texture binding groups for a single rendering pass.
+/// Texture binding groups and render state for a single rendering pass.
 ///
 /// Contains one BindingGroup per descriptor set (set 1, set 2, ...) that holds
 /// texture/sampler bindings. Empty if the pass shader uses no textures.
+/// Also carries the DynamicRenderState for this pass.
 struct MaterialPassBindings {
     binding_groups: Vec<Arc<dyn BindingGroup>>,
+    render_state: DynamicRenderState,
 }
 
 /// Texture binding groups for a single pipeline variant.
@@ -139,6 +141,10 @@ pub struct MaterialDesc {
     pub pipeline: Arc<Pipeline>,
     pub textures: Vec<MaterialTextureSlotDesc>,
     pub params: Vec<(String, ParamValue)>,
+    /// Dynamic render state per pass (indexed by pass index).
+    /// If fewer entries than passes, remaining passes use DynamicRenderState::default().
+    /// If empty, all passes use DynamicRenderState::default().
+    pub pass_render_states: Vec<DynamicRenderState>,
 }
 
 /// Texture slot descriptor (user-facing, accepts names or indices)
@@ -302,7 +308,12 @@ impl Material {
                     binding_groups.push(bg);
                 }
 
-                pass_bindings.push(MaterialPassBindings { binding_groups });
+                let render_state = desc.pass_render_states
+                    .get(pass_idx)
+                    .copied()
+                    .unwrap_or_default();
+
+                pass_bindings.push(MaterialPassBindings { binding_groups, render_state });
             }
 
             texture_bindings.push(MaterialVariantBindings { passes: pass_bindings });
@@ -373,6 +384,18 @@ impl Material {
         let variant_bindings = self.texture_bindings.get(variant as usize)?;
         let pass_bindings = variant_bindings.passes.get(pass as usize)?;
         Some(&pass_bindings.binding_groups)
+    }
+
+    // ===== RENDER STATE ACCESS =====
+
+    /// Get the DynamicRenderState for a specific variant and pass.
+    ///
+    /// Returns the render state associated with this pass, or None if
+    /// variant or pass index is out of range.
+    pub fn render_state(&self, variant: u32, pass: u32) -> Option<&DynamicRenderState> {
+        let variant_bindings = self.texture_bindings.get(variant as usize)?;
+        let pass_bindings = variant_bindings.passes.get(pass as usize)?;
+        Some(&pass_bindings.render_state)
     }
 
     // ===== PARAM ACCESS =====

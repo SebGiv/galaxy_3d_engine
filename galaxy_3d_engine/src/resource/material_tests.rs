@@ -118,7 +118,7 @@ fn create_test_pipeline(graphics_device: Arc<Mutex<dyn graphics_device::Graphics
                     push_constant_ranges: vec![],
                     binding_group_layouts: vec![],
                     rasterization: Default::default(),
-                    depth_stencil: Default::default(),
+
                     color_blend: Default::default(),
                     multisample: Default::default(),
                     color_formats: vec![],
@@ -143,6 +143,7 @@ fn test_create_material_minimal() {
         pipeline: pipeline.clone(),
         textures: vec![],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -167,6 +168,7 @@ fn test_create_material_with_simple_texture() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -192,6 +194,7 @@ fn test_create_material_with_params() {
             ("base_color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0])),
             ("metallic".to_string(), ParamValue::Float(0.0)),
         ],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -242,6 +245,7 @@ fn test_create_material_with_all_param_types() {
                 [0.0, 0.0, 0.0, 1.0],
             ])),
         ],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -280,6 +284,7 @@ fn test_layer_ref_by_index() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -304,6 +309,7 @@ fn test_layer_ref_by_name() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -328,6 +334,7 @@ fn test_layer_ref_invalid_index() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let result = Material::from_desc(0, desc);
@@ -350,6 +357,7 @@ fn test_layer_ref_invalid_name() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let result = Material::from_desc(0, desc);
@@ -376,6 +384,7 @@ fn test_region_ref_by_index() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -400,6 +409,7 @@ fn test_region_ref_by_name() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -424,6 +434,7 @@ fn test_region_ref_invalid_index() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let result = Material::from_desc(0, desc);
@@ -446,6 +457,7 @@ fn test_region_ref_invalid_name() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let result = Material::from_desc(0, desc);
@@ -468,6 +480,7 @@ fn test_region_without_layer_fails() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let result = Material::from_desc(0, desc);
@@ -503,6 +516,7 @@ fn test_duplicate_texture_slot_name_fails() {
             },
         ],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let result = Material::from_desc(0, desc);
@@ -521,6 +535,7 @@ fn test_duplicate_param_name_fails() {
             ("roughness".to_string(), ParamValue::Float(0.5)),
             ("roughness".to_string(), ParamValue::Float(0.8)), // duplicate
         ],
+        pass_render_states: vec![],
     };
 
     let result = Material::from_desc(0, desc);
@@ -557,6 +572,7 @@ fn test_multiple_texture_slots() {
             },
         ],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -618,6 +634,7 @@ fn test_full_pbr_material() {
             ("base_color".to_string(), ParamValue::Vec4([1.0, 1.0, 1.0, 1.0])),
             ("uv_scale".to_string(), ParamValue::Vec2([1.0, 1.0])),
         ],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -654,6 +671,7 @@ fn test_param_not_found() {
         pipeline,
         textures: vec![],
         params: vec![("roughness".to_string(), ParamValue::Float(0.5))],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -670,6 +688,7 @@ fn test_texture_slot_not_found() {
         pipeline,
         textures: vec![],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -693,6 +712,7 @@ fn test_typed_accessors_correct_type() {
             ("f".to_string(), ParamValue::Float(1.5)),
             ("v4".to_string(), ParamValue::Vec4([1.0, 2.0, 3.0, 4.0])),
         ],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -736,6 +756,7 @@ fn test_texture_slots_slice() {
             },
         ],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -757,6 +778,7 @@ fn test_params_slice() {
             ("x".to_string(), ParamValue::Float(1.0)),
             ("y".to_string(), ParamValue::Int(42)),
         ],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -784,6 +806,7 @@ fn test_param_id() {
             ("alpha".to_string(), ParamValue::Float(0.5)),
             ("beta".to_string(), ParamValue::Int(10)),
         ],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -808,6 +831,7 @@ fn test_texture_slot_id() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(0, desc).unwrap();
@@ -828,6 +852,7 @@ fn test_slot_id() {
         pipeline,
         textures: vec![],
         params: vec![],
+        pass_render_states: vec![],
     };
 
     let material = Material::from_desc(42, desc).unwrap();

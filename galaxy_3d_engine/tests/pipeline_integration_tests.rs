@@ -80,7 +80,6 @@ fn create_variant(
                 push_constant_ranges: vec![],
                 binding_group_layouts: vec![],
                 rasterization: Default::default(),
-                depth_stencil: Default::default(),
                 color_blend: ColorBlendState {
                     blend_enable,
                     ..Default::default()
