@@ -15,9 +15,7 @@ use crate::graphics_device::{
 use crate::resource::geometry::{
     Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
-use crate::resource::pipeline::{
-    Pipeline, PipelineDesc, PipelineVariantDesc, PipelinePassDesc,
-};
+use crate::resource::pipeline::Pipeline;
 use crate::resource::material::{
     Material, MaterialDesc, MaterialTextureSlotDesc, ParamValue,
 };
@@ -150,55 +148,9 @@ fn create_render_pipeline_desc() -> crate::graphics_device::PipelineDesc {
     }
 }
 
-/// Create a pipeline with a single variant "default" (1 pass)
 fn create_test_pipeline(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Pipeline> {
-    let desc = PipelineDesc {
-        graphics_device,
-        variants: vec![PipelineVariantDesc {
-            name: "default".to_string(),
-            passes: vec![PipelinePassDesc {
-                pipeline: create_render_pipeline_desc(),
-            }],
-        }],
-    };
-    Arc::new(Pipeline::from_desc(desc).unwrap())
-}
-
-/// Create a pipeline with 2 variants: "default" (1 pass) and "shadow" (1 pass)
-fn create_multi_variant_pipeline(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Pipeline> {
-    let desc = PipelineDesc {
-        graphics_device,
-        variants: vec![
-            PipelineVariantDesc {
-                name: "default".to_string(),
-                passes: vec![PipelinePassDesc {
-                    pipeline: create_render_pipeline_desc(),
-                }],
-            },
-            PipelineVariantDesc {
-                name: "shadow".to_string(),
-                passes: vec![PipelinePassDesc {
-                    pipeline: create_render_pipeline_desc(),
-                }],
-            },
-        ],
-    };
-    Arc::new(Pipeline::from_desc(desc).unwrap())
-}
-
-/// Create a pipeline with 1 variant "default" (2 passes: base + outline)
-fn create_multi_pass_pipeline(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Pipeline> {
-    let desc = PipelineDesc {
-        graphics_device,
-        variants: vec![PipelineVariantDesc {
-            name: "default".to_string(),
-            passes: vec![
-                PipelinePassDesc { pipeline: create_render_pipeline_desc() },
-                PipelinePassDesc { pipeline: create_render_pipeline_desc() },
-            ],
-        }],
-    };
-    Arc::new(Pipeline::from_desc(desc).unwrap())
+    let gd_pipeline = graphics_device.lock().unwrap().create_pipeline(create_render_pipeline_desc()).unwrap();
+    Arc::new(Pipeline::from_gpu_pipeline(gd_pipeline))
 }
 
 fn create_test_texture(graphics_device: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> Arc<Texture> {
@@ -224,19 +176,20 @@ fn create_test_texture(graphics_device: Arc<Mutex<dyn crate::graphics_device::Gr
     Arc::new(Texture::from_desc(desc).unwrap())
 }
 
-fn create_test_material(pipeline: &Arc<Pipeline>) -> Arc<Material> {
+fn create_test_material(pipeline: &Arc<Pipeline>, graphics_device: &dyn crate::graphics_device::GraphicsDevice) -> Arc<Material> {
     let desc = MaterialDesc {
         pipeline: pipeline.clone(),
         textures: vec![],
         params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))],
-        pass_render_states: vec![],
+        render_state: None,
     };
-    Arc::new(Material::from_desc(0, desc).unwrap())
+    Arc::new(Material::from_desc(0, desc, graphics_device).unwrap())
 }
 
 fn create_test_material_with_texture(
     pipeline: &Arc<Pipeline>,
     texture: &Arc<Texture>,
+    graphics_device: &dyn crate::graphics_device::GraphicsDevice,
 ) -> Arc<Material> {
     let desc = MaterialDesc {
         pipeline: pipeline.clone(),
@@ -251,9 +204,9 @@ fn create_test_material_with_texture(
             ("roughness".to_string(), ParamValue::Float(0.8)),
             ("metallic".to_string(), ParamValue::Float(0.0)),
         ],
-        pass_render_states: vec![],
+        render_state: None,
     };
-    Arc::new(Material::from_desc(0, desc).unwrap())
+    Arc::new(Material::from_desc(0, desc, graphics_device).unwrap())
 }
 
 fn create_test_aabb() -> AABB {
@@ -324,10 +277,9 @@ fn create_test_render_instance(
     mesh: &Mesh,
     matrix: Mat4,
     aabb: AABB,
-    variant_index: usize,
 ) -> crate::error::Result<RenderInstance> {
     let mut alloc = SlotAllocator::new();
-    RenderInstance::from_mesh(mesh, matrix, aabb, variant_index, &mut alloc)
+    RenderInstance::from_mesh(mesh, matrix, aabb, &mut alloc)
 }
 
 // ============================================================================
@@ -394,16 +346,15 @@ fn test_from_mesh_basic() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let matrix = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
     let aabb = create_test_aabb();
 
-    let instance = create_test_render_instance(&mesh, matrix, aabb, 0).unwrap();
+    let instance = create_test_render_instance(&mesh, matrix, aabb).unwrap();
 
     assert_eq!(*instance.world_matrix(), matrix);
-    assert_eq!(instance.variant_index(), 0);
     assert!(instance.is_visible());
     assert_eq!(instance.flags(), FLAG_VISIBLE);
 }
@@ -413,11 +364,11 @@ fn test_from_mesh_lod_count() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // Mesh has 2 LODs
@@ -432,11 +383,11 @@ fn test_from_mesh_submesh_count_per_lod() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // LOD 0: body + head = 2 submeshes
@@ -450,11 +401,11 @@ fn test_from_mesh_extracts_geometry_data() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // LOD 0, submesh 0 = "body": vertex_offset=0, vertex_count=4, index_offset=0, index_count=6
@@ -485,11 +436,11 @@ fn test_from_mesh_stores_material() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // Each submesh stores its material (Arc)
@@ -500,42 +451,21 @@ fn test_from_mesh_stores_material() {
 }
 
 #[test]
-fn test_from_mesh_multi_pass_pipeline() {
-    let graphics_device = create_mock_graphics_device();
-    let geometry = create_test_geometry(graphics_device.clone());
-    let pipeline = create_multi_pass_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
-    let mesh = create_simple_mesh(&geometry, &material);
-
-    let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
-    ).unwrap();
-
-    // Multi-pass variant → 2 passes accessible via material's pipeline
-    let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    let variant = sm.material().pipeline().variant(0).unwrap();
-    assert_eq!(variant.pass_count(), 2);
-}
-
-#[test]
 fn test_from_mesh_material_pipeline_structure() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
-    // Pipeline is resolved from material -> pipeline -> variant -> pass
+    // Pipeline is resolved from material -> pipeline -> graphics_device_pipeline
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    let variant = sm.material().pipeline().variant(0).unwrap();
-    assert_eq!(variant.pass_count(), 1);
-    let pass = variant.pass(0).unwrap();
-    // Pipeline should be set
-    assert!(pass.graphics_device_pipeline().as_ref().reflection().binding_count() == 0);
+    let gd_pipeline = sm.material().pipeline().graphics_device_pipeline();
+    assert!(gd_pipeline.as_ref().reflection().binding_count() == 0);
 }
 
 #[test]
@@ -544,11 +474,11 @@ fn test_from_mesh_material_with_texture() {
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
     let texture = create_test_texture(graphics_device.clone());
-    let material = create_test_material_with_texture(&pipeline, &texture);
+    let material = create_test_material_with_texture(&pipeline, &texture, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // Material with textures is stored on submesh
@@ -562,11 +492,11 @@ fn test_from_mesh_non_indexed_geometry() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_non_indexed_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_non_indexed_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // No index buffer
@@ -583,48 +513,28 @@ fn test_from_mesh_indexed_geometry_has_buffers() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // Has both vertex and index buffer
     assert!(instance.index_buffer().is_some());
 }
 
-#[test]
-fn test_from_mesh_variant_index_selection() {
-    let graphics_device = create_mock_graphics_device();
-    let geometry = create_test_geometry(graphics_device.clone());
-    let pipeline = create_multi_variant_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
-    let mesh = create_simple_mesh(&geometry, &material);
-
-    // Use variant 1 ("shadow")
-    let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 1,
-    ).unwrap();
-
-    assert_eq!(instance.variant_index(), 1);
-    // Material's pipeline has variant 1 ("shadow") with 1 pass
-    let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    let variant = sm.material().pipeline().variant(1).unwrap();
-    assert_eq!(variant.name(), "shadow");
-    assert_eq!(variant.pass_count(), 1);
-}
 
 #[test]
 fn test_from_mesh_default_flags() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // Default flags = FLAG_VISIBLE only
@@ -637,7 +547,7 @@ fn test_from_mesh_stores_bounding_box() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let aabb = AABB {
@@ -645,7 +555,7 @@ fn test_from_mesh_stores_bounding_box() {
         max: Vec3::new(5.0, 10.0, 5.0),
     };
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, aabb, 0,
+        &mesh, Mat4::IDENTITY, aabb,
     ).unwrap();
 
     assert_eq!(instance.bounding_box().min, Vec3::new(-5.0, 0.0, -5.0));
@@ -656,20 +566,6 @@ fn test_from_mesh_stores_bounding_box() {
 // Tests: RenderInstance Error Cases
 // ============================================================================
 
-#[test]
-fn test_from_mesh_invalid_variant_index() {
-    let graphics_device = create_mock_graphics_device();
-    let geometry = create_test_geometry(graphics_device.clone());
-    let pipeline = create_test_pipeline(graphics_device.clone()); // Only 1 variant
-    let material = create_test_material(&pipeline);
-    let mesh = create_simple_mesh(&geometry, &material);
-
-    // Variant index 99 does not exist
-    let result = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 99,
-    );
-    assert!(result.is_err());
-}
 
 // ============================================================================
 // Tests: RenderInstance Accessors and Mutators
@@ -680,11 +576,11 @@ fn test_set_world_matrix() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     assert_eq!(*instance.world_matrix(), Mat4::IDENTITY);
@@ -699,11 +595,11 @@ fn test_set_flags() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     let new_flags = FLAG_VISIBLE | FLAG_CAST_SHADOW | FLAG_RECEIVE_SHADOW;
@@ -716,11 +612,11 @@ fn test_set_visible_true() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // Start visible
@@ -742,11 +638,11 @@ fn test_set_visible_preserves_other_flags() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     // Set multiple flags
@@ -773,11 +669,11 @@ fn test_render_lod_sub_mesh_access() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     let lod = instance.lod(0).unwrap();
@@ -796,11 +692,11 @@ fn test_render_submesh_all_accessors() {
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
     let texture = create_test_texture(graphics_device.clone());
-    let material = create_test_material_with_texture(&pipeline, &texture);
+    let material = create_test_material_with_texture(&pipeline, &texture, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let instance = create_test_render_instance(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0,
+        &mesh, Mat4::IDENTITY, create_test_aabb(),
     ).unwrap();
 
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
@@ -815,8 +711,7 @@ fn test_render_submesh_all_accessors() {
     // Material is stored on submesh
     assert!(Arc::ptr_eq(sm.material(), &material));
     // Pipeline is accessible through material
-    let variant = sm.material().pipeline().variant(0).unwrap();
-    assert_eq!(variant.pass_count(), 1);
+    assert!(Arc::strong_count(sm.material().pipeline().graphics_device_pipeline()) >= 1);
 }
 
 // ============================================================================
@@ -840,12 +735,12 @@ fn test_draw_slot_allocation() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc,
     ).unwrap();
 
     // Mesh has 2 LODs: LOD 0 (2 submeshes) + LOD 1 (1 submesh) = 3 draw slots
@@ -866,12 +761,12 @@ fn test_draw_slot_sequential_allocation() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc,
     ).unwrap();
 
     // First allocation starts at 0 and increments
@@ -888,19 +783,19 @@ fn test_draw_slot_shared_allocator() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut alloc = SlotAllocator::new();
 
     // First instance: slots 0, 1, 2
     let inst1 = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc,
     ).unwrap();
 
     // Second instance: slots 3, 4, 5
     let inst2 = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc,
     ).unwrap();
 
     assert_eq!(alloc.len(), 6);
@@ -916,12 +811,12 @@ fn test_free_draw_slots() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let material = create_test_material(&pipeline);
+    let material = create_test_material(&pipeline, &*graphics_device.lock().unwrap());
     let mesh = create_simple_mesh(&geometry, &material);
 
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(
-        &mesh, Mat4::IDENTITY, create_test_aabb(), 0, &mut alloc,
+        &mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc,
     ).unwrap();
 
     assert_eq!(alloc.len(), 3);

@@ -1,204 +1,47 @@
-/// Resource-level pipeline type with variant and multi-pass support.
+/// Resource-level pipeline type.
 ///
-/// A Pipeline groups related pipeline configurations under named variants.
-/// Each variant contains one or more ordered rendering passes.
-/// For example: "toon_outline" pipeline with variant "static" containing
-/// pass 0 (toon base, cull back) and pass 1 (outline, cull front).
-///
-/// Can be created empty and variants added later (user responsibility).
+/// A Pipeline wraps a single graphics_device::Pipeline (GPU pipeline object)
+/// and exposes its reflection data. Created by the ResourceManager which
+/// handles the GPU pipeline creation via the GraphicsDevice.
 
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::{Arc, Mutex};
-use crate::error::Result;
+use std::sync::Arc;
 use crate::graphics_device;
 
 // ===== PIPELINE =====
 
-/// Pipeline resource with variant support
+/// Pipeline resource wrapping a single GPU pipeline
 pub struct Pipeline {
-    graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
-    variants: Vec<PipelineVariant>,
-    variant_names: FxHashMap<String, usize>,
-}
-
-/// A single pipeline variant with one or more rendering passes
-pub struct PipelineVariant {
-    name: String,
-    passes: Vec<PipelinePass>,
-}
-
-/// A single rendering pass within a pipeline variant
-pub struct PipelinePass {
     graphics_device_pipeline: Arc<dyn graphics_device::Pipeline>,
 }
 
-// ===== DESCRIPTORS =====
+// ===== DESCRIPTOR =====
 
 /// Pipeline creation descriptor
 pub struct PipelineDesc {
-    pub graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
-    pub variants: Vec<PipelineVariantDesc>,
-}
-
-/// Pipeline variant descriptor with one or more passes
-pub struct PipelineVariantDesc {
-    pub name: String,
-    pub passes: Vec<PipelinePassDesc>,
-}
-
-/// Descriptor for a single rendering pass
-pub struct PipelinePassDesc {
     pub pipeline: graphics_device::PipelineDesc,
 }
 
 // ===== PIPELINE IMPLEMENTATION =====
 
 impl Pipeline {
-    /// Create pipeline from descriptor (internal use by ResourceManager)
-    pub(crate) fn from_desc(desc: PipelineDesc) -> Result<Self> {
-        // ========== VALIDATION 1: No duplicate variant names ==========
-        let mut seen_names = FxHashSet::default();
-        for variant_desc in &desc.variants {
-            if !seen_names.insert(&variant_desc.name) {
-                crate::engine_bail!("galaxy3d::Pipeline",
-                    "Duplicate variant name '{}'", variant_desc.name);
-            }
-        }
-
-        // ========== VALIDATION 2: Each variant must have at least one pass ==========
-        for variant_desc in &desc.variants {
-            if variant_desc.passes.is_empty() {
-                crate::engine_bail!("galaxy3d::Pipeline",
-                    "Variant '{}' must have at least one pass", variant_desc.name);
-            }
-        }
-
-        // ========== CREATE VARIANTS ==========
-        let mut variants = Vec::new();
-        let mut variant_names = FxHashMap::default();
-
-        for (vec_index, variant_desc) in desc.variants.into_iter().enumerate() {
-            // Create GPU pipelines for each pass
-            let mut passes = Vec::new();
-            for pass_desc in variant_desc.passes {
-                let graphics_device_pipeline = desc.graphics_device.lock().unwrap()
-                    .create_pipeline(pass_desc.pipeline)?;
-                passes.push(PipelinePass { graphics_device_pipeline });
-            }
-
-            let variant = PipelineVariant {
-                name: variant_desc.name.clone(),
-                passes,
-            };
-
-            variants.push(variant);
-            variant_names.insert(variant_desc.name, vec_index);
-        }
-
-        Ok(Self {
-            graphics_device: desc.graphics_device,
-            variants,
-            variant_names,
-        })
+    /// Create pipeline from a pre-built GPU pipeline (internal use by ResourceManager)
+    pub(crate) fn from_gpu_pipeline(graphics_device_pipeline: Arc<dyn graphics_device::Pipeline>) -> Self {
+        Self { graphics_device_pipeline }
     }
 
-    // ===== VARIANT ACCESS =====
-
-    /// Get variant by index
-    pub fn variant(&self, index: u32) -> Option<&PipelineVariant> {
-        self.variants.get(index as usize)
-    }
-
-    /// Get variant by name
-    pub fn variant_by_name(&self, name: &str) -> Option<&PipelineVariant> {
-        let index = self.variant_names.get(name)?;
-        self.variants.get(*index)
-    }
-
-    /// Get variant index from name
-    pub fn variant_index(&self, name: &str) -> Option<u32> {
-        self.variant_names.get(name).map(|&idx| idx as u32)
-    }
-
-    /// Get total number of variants
-    pub fn variant_count(&self) -> usize {
-        self.variants.len()
-    }
-
-    /// Get maximum pass count across all variants
-    pub fn max_pass_count(&self) -> usize {
-        self.variants.iter().map(|v| v.passes.len()).max().unwrap_or(0)
-    }
-
-    /// Get the graphics device reference (needed by Material for BindingGroup creation)
-    pub fn graphics_device(&self) -> &Arc<Mutex<dyn graphics_device::GraphicsDevice>> {
-        &self.graphics_device
-    }
-
-    // ===== MODIFICATION =====
-
-    /// Add a new variant
-    ///
-    /// Uses the stored graphics device to create GPU pipelines for each pass.
-    pub fn add_variant(&mut self, desc: PipelineVariantDesc) -> Result<u32> {
-        // Check for duplicate name
-        if self.variant_names.contains_key(&desc.name) {
-            crate::engine_bail!("galaxy3d::Pipeline",
-                "Variant '{}' already exists", desc.name);
-        }
-
-        // Validate at least one pass
-        if desc.passes.is_empty() {
-            crate::engine_bail!("galaxy3d::Pipeline",
-                "Variant '{}' must have at least one pass", desc.name);
-        }
-
-        // Create GPU pipelines for each pass
-        let mut passes = Vec::new();
-        for pass_desc in desc.passes {
-            let graphics_device_pipeline = self.graphics_device.lock().unwrap()
-                .create_pipeline(pass_desc.pipeline)?;
-            passes.push(PipelinePass { graphics_device_pipeline });
-        }
-
-        let variant = PipelineVariant {
-            name: desc.name.clone(),
-            passes,
-        };
-
-        let vec_index = self.variants.len();
-        self.variants.push(variant);
-        self.variant_names.insert(desc.name, vec_index);
-
-        Ok(vec_index as u32)
-    }
-}
-
-// ===== PIPELINE VARIANT IMPLEMENTATION =====
-
-impl PipelineVariant {
-    /// Get variant name
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Get number of rendering passes
-    pub fn pass_count(&self) -> usize {
-        self.passes.len()
-    }
-
-    /// Get pass by index
-    pub fn pass(&self, index: u32) -> Option<&PipelinePass> {
-        self.passes.get(index as usize)
-    }
-}
-
-// ===== PIPELINE PASS IMPLEMENTATION =====
-
-impl PipelinePass {
     /// Get the underlying graphics device pipeline
     pub fn graphics_device_pipeline(&self) -> &Arc<dyn graphics_device::Pipeline> {
         &self.graphics_device_pipeline
+    }
+
+    /// Get shader reflection data
+    pub fn reflection(&self) -> &graphics_device::PipelineReflection {
+        self.graphics_device_pipeline.reflection()
+    }
+
+    /// Get the number of binding group layouts
+    pub fn binding_group_layout_count(&self) -> u32 {
+        self.graphics_device_pipeline.binding_group_layout_count()
     }
 }
 

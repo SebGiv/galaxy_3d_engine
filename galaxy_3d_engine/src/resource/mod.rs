@@ -21,8 +21,7 @@ pub use geometry::{
     GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
 pub use pipeline::{
-    Pipeline, PipelineVariant, PipelinePass,
-    PipelineDesc, PipelineVariantDesc, PipelinePassDesc,
+    Pipeline, PipelineDesc,
 };
 pub use material::{
     Material, MaterialTextureSlot, MaterialParam,

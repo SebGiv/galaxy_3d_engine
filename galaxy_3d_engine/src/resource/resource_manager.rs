@@ -15,7 +15,7 @@ use crate::resource::geometry::{
     Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
 use crate::resource::pipeline::{
-    Pipeline, PipelineDesc, PipelineVariantDesc,
+    Pipeline, PipelineDesc,
 };
 use crate::resource::material::{
     Material, MaterialDesc,
@@ -369,20 +369,24 @@ impl ResourceManager {
     /// * `name` - Unique name for this pipeline resource
     /// * `desc` - Pipeline descriptor with graphics_device and variant configurations
     ///
-    pub fn create_pipeline(&mut self, name: String, desc: PipelineDesc) -> Result<Arc<Pipeline>> {
+    pub fn create_pipeline(
+        &mut self,
+        name: String,
+        desc: PipelineDesc,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<Arc<Pipeline>> {
         if self.pipelines.contains_key(&name) {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Pipeline '{}' already exists", name);
         }
 
-        let pipeline = Pipeline::from_desc(desc)?;
-        let variant_count = pipeline.variant_count();
+        let gd_pipeline = graphics_device.create_pipeline(desc.pipeline)?;
+        let pipeline = Pipeline::from_gpu_pipeline(gd_pipeline);
 
         let pipeline_arc = Arc::new(pipeline);
         self.pipelines.insert(name.clone(), Arc::clone(&pipeline_arc));
 
         crate::engine_info!("galaxy3d::ResourceManager",
-            "Created Pipeline resource '{}' ({} variant{})",
-            name, variant_count, if variant_count != 1 { "s" } else { "" });
+            "Created Pipeline resource '{}'", name);
 
         Ok(pipeline_arc)
     }
@@ -411,34 +415,6 @@ impl ResourceManager {
         self.pipelines.len()
     }
 
-    // ===== PIPELINE MODIFICATION =====
-
-    /// Add a variant to an existing pipeline
-    ///
-    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the pipeline Arc exist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The pipeline does not exist
-    /// - Other Arc references prevent mutable access
-    /// - A variant with the same name already exists
-    /// - GPU pipeline creation fails
-    pub fn add_pipeline_variant(
-        &mut self,
-        pipeline_name: &str,
-        desc: PipelineVariantDesc,
-    ) -> Result<u32> {
-        let arc = self.pipelines.get_mut(pipeline_name)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Pipeline '{}' not found", pipeline_name))?;
-
-        let pipeline = Arc::get_mut(arc)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Pipeline '{}': other references exist", pipeline_name))?;
-
-        pipeline.add_variant(desc)
-    }
-
     // ===== MATERIAL CREATION =====
 
     /// Create a material resource and register it
@@ -451,13 +427,18 @@ impl ResourceManager {
     /// * `name` - Unique name for this material resource
     /// * `desc` - Material descriptor with pipeline, textures, and parameters
     ///
-    pub fn create_material(&mut self, name: String, desc: MaterialDesc) -> Result<Arc<Material>> {
+    pub fn create_material(
+        &mut self,
+        name: String,
+        desc: MaterialDesc,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
+    ) -> Result<Arc<Material>> {
         if self.materials.contains_key(&name) {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Material '{}' already exists", name);
         }
 
         let slot_id = self.material_slot_allocator.alloc();
-        let material = Material::from_desc(slot_id, desc)?;
+        let material = Material::from_desc(slot_id, desc, graphics_device)?;
         let texture_count = material.texture_slot_count();
         let param_count = material.param_count();
 

@@ -8,7 +8,7 @@ use crate::graphics_device;
 use crate::resource::geometry::{
     Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
-use crate::resource::pipeline::{Pipeline, PipelineDesc, PipelineVariantDesc, PipelinePassDesc};
+use crate::resource::pipeline::Pipeline;
 use crate::resource::material::{Material, MaterialDesc, ParamValue};
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
@@ -124,40 +124,31 @@ fn create_test_pipeline(graphics_device: Arc<Mutex<dyn graphics_device::Graphics
         }],
     };
 
-    let desc = PipelineDesc {
-        graphics_device,
-        variants: vec![PipelineVariantDesc {
-            name: "default".to_string(),
-            passes: vec![PipelinePassDesc {
-                pipeline: graphics_device::PipelineDesc {
-                    vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
-                    fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
-                    vertex_layout,
-                    topology: graphics_device::PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    binding_group_layouts: vec![],
-                    rasterization: Default::default(),
-
-                    color_blend: Default::default(),
-                    multisample: Default::default(),
-                    color_formats: vec![],
-                    depth_format: None,
-                },
-            }],
-        }],
-    };
-    Arc::new(Pipeline::from_desc(desc).unwrap())
+    let gd_pipeline = graphics_device.lock().unwrap().create_pipeline(graphics_device::PipelineDesc {
+        vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
+        fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
+        vertex_layout,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
+        push_constant_ranges: vec![],
+        binding_group_layouts: vec![],
+        rasterization: Default::default(),
+        color_blend: Default::default(),
+        multisample: Default::default(),
+        color_formats: vec![],
+        depth_format: None,
+    }).unwrap();
+    Arc::new(Pipeline::from_gpu_pipeline(gd_pipeline))
 }
 
 /// Create a material with a distinguishing param value
-fn create_test_material(pipeline: &Arc<Pipeline>, value: f32) -> Arc<Material> {
+fn create_test_material(pipeline: &Arc<Pipeline>, value: f32, graphics_device: &dyn graphics_device::GraphicsDevice) -> Arc<Material> {
     let desc = MaterialDesc {
         pipeline: pipeline.clone(),
         textures: vec![],
         params: vec![("value".to_string(), ParamValue::Float(value))],
-        pass_render_states: vec![],
+        render_state: None,
     };
-    Arc::new(Material::from_desc(0, desc).unwrap())
+    Arc::new(Material::from_desc(0, desc, graphics_device).unwrap())
 }
 
 /// Extract the "value" param from a material as f32
@@ -174,7 +165,7 @@ fn test_create_mesh_single_lod_single_submesh() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry: geometry.clone(),
@@ -199,9 +190,9 @@ fn test_create_mesh_multi_lod() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let skin = create_test_material(&pipeline, 1.0);
-    let armor = create_test_material(&pipeline, 2.0);
-    let pants = create_test_material(&pipeline, 3.0);
+    let skin = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
+    let armor = create_test_material(&pipeline, 2.0, &*graphics_device.lock().unwrap());
+    let pants = create_test_material(&pipeline, 3.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry: geometry.clone(),
@@ -240,7 +231,7 @@ fn test_geometry_mesh_ref_by_name() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry: geometry.clone(),
@@ -264,7 +255,7 @@ fn test_geometry_mesh_ref_by_index() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry: geometry.clone(),
@@ -287,7 +278,7 @@ fn test_geometry_mesh_ref_invalid_name() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry,
@@ -309,7 +300,7 @@ fn test_geometry_mesh_ref_invalid_index() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry,
@@ -335,7 +326,7 @@ fn test_submesh_ref_by_name() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry: geometry.clone(),
@@ -358,7 +349,7 @@ fn test_submesh_ref_by_index() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry: geometry.clone(),
@@ -381,9 +372,9 @@ fn test_submesh_ref_invalid_name() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let skin = create_test_material(&pipeline, 1.0);
-    let armor = create_test_material(&pipeline, 2.0);
-    let pants = create_test_material(&pipeline, 3.0);
+    let skin = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
+    let armor = create_test_material(&pipeline, 2.0, &*graphics_device.lock().unwrap());
+    let pants = create_test_material(&pipeline, 3.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry,
@@ -415,7 +406,7 @@ fn test_submesh_ref_invalid_index() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry,
@@ -443,9 +434,9 @@ fn test_submesh_order_matches_geometry_lod() {
     let pipeline = create_test_pipeline(graphics_device.clone());
 
     // Create materials with distinct values
-    let skin = create_test_material(&pipeline, 1.0);   // for "head"
-    let armor = create_test_material(&pipeline, 2.0);   // for "torso"
-    let pants = create_test_material(&pipeline, 3.0);   // for "legs"
+    let skin = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());   // for "head"
+    let armor = create_test_material(&pipeline, 2.0, &*graphics_device.lock().unwrap());   // for "torso"
+    let pants = create_test_material(&pipeline, 3.0, &*graphics_device.lock().unwrap());   // for "legs"
 
     // Provide submeshes in REVERSE order (legs, torso, head)
     let desc = MeshDesc {
@@ -495,9 +486,9 @@ fn test_lod_order_matches_geometry_mesh() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let skin = create_test_material(&pipeline, 1.0);
-    let armor = create_test_material(&pipeline, 2.0);
-    let pants = create_test_material(&pipeline, 3.0);
+    let skin = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
+    let armor = create_test_material(&pipeline, 2.0, &*graphics_device.lock().unwrap());
+    let pants = create_test_material(&pipeline, 3.0, &*graphics_device.lock().unwrap());
 
     // Provide LODs in REVERSE order (1, 0)
     let desc = MeshDesc {
@@ -538,7 +529,7 @@ fn test_duplicate_lod_index_fails() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry,
@@ -569,9 +560,9 @@ fn test_incomplete_lod_coverage_fails() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let skin = create_test_material(&pipeline, 1.0);
-    let armor = create_test_material(&pipeline, 2.0);
-    let pants = create_test_material(&pipeline, 3.0);
+    let skin = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
+    let armor = create_test_material(&pipeline, 2.0, &*graphics_device.lock().unwrap());
+    let pants = create_test_material(&pipeline, 3.0, &*graphics_device.lock().unwrap());
 
     // "body" has LOD 0 and LOD 1, but we only provide LOD 0
     let desc = MeshDesc {
@@ -597,7 +588,7 @@ fn test_lod_index_out_of_range_fails() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     // "weapon" only has LOD 0, but we specify LOD 5
     let desc = MeshDesc {
@@ -620,7 +611,7 @@ fn test_duplicate_submesh_fails() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry,
@@ -642,8 +633,8 @@ fn test_incomplete_submesh_coverage_fails() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let skin = create_test_material(&pipeline, 1.0);
-    let armor = create_test_material(&pipeline, 2.0);
+    let skin = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
+    let armor = create_test_material(&pipeline, 2.0, &*graphics_device.lock().unwrap());
 
     // "body" LOD 0 has 3 submeshes (head, torso, legs) but we only provide 2
     let desc = MeshDesc {
@@ -680,7 +671,7 @@ fn test_mesh_accessors() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 42.0);
+    let mat = create_test_material(&pipeline, 42.0, &*graphics_device.lock().unwrap());
 
     let desc = MeshDesc {
         geometry: geometry.clone(),
@@ -726,9 +717,9 @@ fn test_mesh_desc_from_name_mapping() {
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
 
-    let skin = create_test_material(&pipeline, 1.0);
-    let armor = create_test_material(&pipeline, 2.0);
-    let pants = create_test_material(&pipeline, 3.0);
+    let skin = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
+    let armor = create_test_material(&pipeline, 2.0, &*graphics_device.lock().unwrap());
+    let pants = create_test_material(&pipeline, 3.0, &*graphics_device.lock().unwrap());
 
     let mapping = FxHashMap::from_iter([
         ("head".to_string(), skin.clone()),
@@ -763,7 +754,7 @@ fn test_mesh_desc_from_name_mapping_missing_material() {
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
 
-    let skin = create_test_material(&pipeline, 1.0);
+    let skin = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     // Only provide "head", missing "torso" and "legs"
     let mapping = FxHashMap::from_iter([
@@ -800,7 +791,7 @@ fn test_mesh_desc_from_name_mapping_by_index() {
     let graphics_device = create_mock_graphics_device();
     let geometry = create_test_geometry(graphics_device.clone());
     let pipeline = create_test_pipeline(graphics_device.clone());
-    let mat = create_test_material(&pipeline, 1.0);
+    let mat = create_test_material(&pipeline, 1.0, &*graphics_device.lock().unwrap());
 
     let mapping = FxHashMap::from_iter([
         ("blade".to_string(), mat),

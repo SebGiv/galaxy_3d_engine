@@ -161,8 +161,6 @@ pub struct RenderInstance {
     flags: u64,
     /// Axis-Aligned Bounding Box in local space
     bounding_box: AABB,
-    /// Active pipeline variant index
-    variant_index: usize,
 }
 
 // ===== RENDER INSTANCE IMPLEMENTATION =====
@@ -179,13 +177,11 @@ impl RenderInstance {
     /// * `mesh` - Source mesh resource
     /// * `world_matrix` - World transform matrix
     /// * `bounding_box` - AABB in local space
-    /// * `variant_index` - Pipeline variant to use (0 = default)
-    /// * `graphics_device` - GraphicsDevice for creating binding groups
+    /// * `slot_allocator` - Allocator for draw slot IDs
     pub(crate) fn from_mesh(
         mesh: &Mesh,
         world_matrix: Mat4,
         bounding_box: AABB,
-        variant_index: usize,
         slot_allocator: &mut SlotAllocator,
     ) -> Result<Self> {
         let geometry = mesh.geometry();
@@ -222,13 +218,6 @@ impl RenderInstance {
 
                 let material = Arc::clone(submesh.material());
 
-                // Validate that the selected variant exists in this material's pipeline
-                let pipeline = material.pipeline();
-                let _variant = pipeline.variant(variant_index as u32)
-                    .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
-                        "Pipeline variant index {} out of range (pipeline has {} variants)",
-                        variant_index, pipeline.variant_count()))?;
-
                 sub_meshes.push(RenderSubMesh {
                     vertex_offset: geom_submesh.vertex_offset(),
                     vertex_count: geom_submesh.vertex_count(),
@@ -251,7 +240,6 @@ impl RenderInstance {
             world_matrix,
             flags: FLAG_VISIBLE,
             bounding_box,
-            variant_index,
         })
     }
 
@@ -319,11 +307,6 @@ impl RenderInstance {
     /// Get the bounding box (local space)
     pub fn bounding_box(&self) -> &AABB {
         &self.bounding_box
-    }
-
-    /// Get the active variant index
-    pub fn variant_index(&self) -> usize {
-        self.variant_index
     }
 
     /// Release all draw slots back to the allocator.

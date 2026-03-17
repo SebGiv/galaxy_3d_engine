@@ -6,7 +6,6 @@
 use super::*;
 use crate::graphics_device::{self, SamplerType};
 use crate::resource::texture::{TextureDesc, LayerDesc, AtlasRegion, AtlasRegionDesc};
-use crate::resource::pipeline::{PipelineDesc, PipelineVariantDesc, PipelinePassDesc};
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
@@ -105,29 +104,22 @@ fn create_test_pipeline(graphics_device: Arc<Mutex<dyn graphics_device::Graphics
         }],
     };
 
-    let desc = PipelineDesc {
-        graphics_device,
-        variants: vec![PipelineVariantDesc {
-            name: "default".to_string(),
-            passes: vec![PipelinePassDesc {
-                pipeline: graphics_device::PipelineDesc {
-                    vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
-                    fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
-                    vertex_layout,
-                    topology: graphics_device::PrimitiveTopology::TriangleList,
-                    push_constant_ranges: vec![],
-                    binding_group_layouts: vec![],
-                    rasterization: Default::default(),
-
-                    color_blend: Default::default(),
-                    multisample: Default::default(),
-                    color_formats: vec![],
-                    depth_format: None,
-                },
-            }],
-        }],
+    let gd_pipeline_desc = graphics_device::PipelineDesc {
+        vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
+        fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
+        vertex_layout,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
+        push_constant_ranges: vec![],
+        binding_group_layouts: vec![],
+        rasterization: Default::default(),
+        color_blend: Default::default(),
+        multisample: Default::default(),
+        color_formats: vec![],
+        depth_format: None,
     };
-    Arc::new(Pipeline::from_desc(desc).unwrap())
+
+    let gd_pipeline = graphics_device.lock().unwrap().create_pipeline(gd_pipeline_desc).unwrap();
+    Arc::new(Pipeline::from_gpu_pipeline(gd_pipeline))
 }
 
 // ============================================================================
@@ -143,10 +135,10 @@ fn test_create_material_minimal() {
         pipeline: pipeline.clone(),
         textures: vec![],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(material.texture_slot_count(), 0);
     assert_eq!(material.param_count(), 0);
     assert!(Arc::ptr_eq(material.pipeline(), &pipeline));
@@ -168,10 +160,10 @@ fn test_create_material_with_simple_texture() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(material.texture_slot_count(), 1);
 
     let slot = material.texture_slot_by_name("albedo").unwrap();
@@ -194,10 +186,10 @@ fn test_create_material_with_params() {
             ("base_color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0])),
             ("metallic".to_string(), ParamValue::Float(0.0)),
         ],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(material.param_count(), 3);
 
     // Access by name
@@ -245,10 +237,10 @@ fn test_create_material_with_all_param_types() {
                 [0.0, 0.0, 0.0, 1.0],
             ])),
         ],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(material.param_count(), 9);
 
     assert_eq!(material.param_by_name("i").unwrap().as_int().unwrap(), -42);
@@ -284,10 +276,10 @@ fn test_layer_ref_by_index() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     let slot = material.texture_slot_by_name("diffuse_map").unwrap();
     assert_eq!(slot.layer(), Some(1));
     assert_eq!(slot.region(), None);
@@ -309,10 +301,10 @@ fn test_layer_ref_by_name() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     let slot = material.texture_slot_by_name("normal_map").unwrap();
     // "normal" is layer index 1 in the indexed texture
     assert_eq!(slot.layer(), Some(1));
@@ -334,10 +326,10 @@ fn test_layer_ref_invalid_index() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let result = Material::from_desc(0, desc);
+    let result = Material::from_desc(0, desc, &*graphics_device.lock().unwrap());
     assert!(result.is_err());
 }
 
@@ -357,10 +349,10 @@ fn test_layer_ref_invalid_name() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let result = Material::from_desc(0, desc);
+    let result = Material::from_desc(0, desc, &*graphics_device.lock().unwrap());
     assert!(result.is_err());
 }
 
@@ -384,10 +376,10 @@ fn test_region_ref_by_index() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     let slot = material.texture_slot_by_name("tile").unwrap();
     assert_eq!(slot.layer(), Some(0));   // "diffuse" = layer 0
     assert_eq!(slot.region(), Some(0));  // region index 0 = "grass"
@@ -409,10 +401,10 @@ fn test_region_ref_by_name() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     let slot = material.texture_slot_by_name("tile").unwrap();
     assert_eq!(slot.layer(), Some(0));   // "diffuse" = layer 0
     assert_eq!(slot.region(), Some(1));  // "stone" = region index 1
@@ -434,10 +426,10 @@ fn test_region_ref_invalid_index() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let result = Material::from_desc(0, desc);
+    let result = Material::from_desc(0, desc, &*graphics_device.lock().unwrap());
     assert!(result.is_err());
 }
 
@@ -457,10 +449,10 @@ fn test_region_ref_invalid_name() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let result = Material::from_desc(0, desc);
+    let result = Material::from_desc(0, desc, &*graphics_device.lock().unwrap());
     assert!(result.is_err());
 }
 
@@ -480,10 +472,10 @@ fn test_region_without_layer_fails() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let result = Material::from_desc(0, desc);
+    let result = Material::from_desc(0, desc, &*graphics_device.lock().unwrap());
     assert!(result.is_err());
 }
 
@@ -516,10 +508,10 @@ fn test_duplicate_texture_slot_name_fails() {
             },
         ],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let result = Material::from_desc(0, desc);
+    let result = Material::from_desc(0, desc, &*graphics_device.lock().unwrap());
     assert!(result.is_err());
 }
 
@@ -535,10 +527,10 @@ fn test_duplicate_param_name_fails() {
             ("roughness".to_string(), ParamValue::Float(0.5)),
             ("roughness".to_string(), ParamValue::Float(0.8)), // duplicate
         ],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let result = Material::from_desc(0, desc);
+    let result = Material::from_desc(0, desc, &*graphics_device.lock().unwrap());
     assert!(result.is_err());
 }
 
@@ -572,10 +564,10 @@ fn test_multiple_texture_slots() {
             },
         ],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(material.texture_slot_count(), 2);
 
     // Access by name
@@ -634,10 +626,10 @@ fn test_full_pbr_material() {
             ("base_color".to_string(), ParamValue::Vec4([1.0, 1.0, 1.0, 1.0])),
             ("uv_scale".to_string(), ParamValue::Vec2([1.0, 1.0])),
         ],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
 
     // Verify pipeline
     assert!(Arc::ptr_eq(material.pipeline(), &pipeline));
@@ -671,10 +663,10 @@ fn test_param_not_found() {
         pipeline,
         textures: vec![],
         params: vec![("roughness".to_string(), ParamValue::Float(0.5))],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert!(material.param_by_name("nonexistent").is_none());
     assert!(material.param(999).is_none());
 }
@@ -688,10 +680,10 @@ fn test_texture_slot_not_found() {
         pipeline,
         textures: vec![],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert!(material.texture_slot_by_name("nonexistent").is_none());
     assert!(material.texture_slot(0).is_none());
 }
@@ -712,10 +704,10 @@ fn test_typed_accessors_correct_type() {
             ("f".to_string(), ParamValue::Float(1.5)),
             ("v4".to_string(), ParamValue::Vec4([1.0, 2.0, 3.0, 4.0])),
         ],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
 
     let f = material.param_by_name("f").unwrap();
     assert!((f.as_float().unwrap() - 1.5).abs() < f32::EPSILON);
@@ -756,10 +748,10 @@ fn test_texture_slots_slice() {
             },
         ],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     let slots = material.texture_slots();
     assert_eq!(slots.len(), 2);
     assert_eq!(slots[0].name(), "a");
@@ -778,10 +770,10 @@ fn test_params_slice() {
             ("x".to_string(), ParamValue::Float(1.0)),
             ("y".to_string(), ParamValue::Int(42)),
         ],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     let params = material.params();
     assert_eq!(params.len(), 2);
     assert_eq!(params[0].name(), "x");
@@ -806,10 +798,10 @@ fn test_param_id() {
             ("alpha".to_string(), ParamValue::Float(0.5)),
             ("beta".to_string(), ParamValue::Int(10)),
         ],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(material.param_id("alpha"), Some(0));
     assert_eq!(material.param_id("beta"), Some(1));
     assert_eq!(material.param_id("nonexistent"), None);
@@ -831,10 +823,10 @@ fn test_texture_slot_id() {
             sampler_type: SamplerType::LinearRepeat,
         }],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(0, desc).unwrap();
+    let material = Material::from_desc(0, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(material.texture_slot_id("diffuse"), Some(0));
     assert_eq!(material.texture_slot_id("nonexistent"), None);
 }
@@ -852,9 +844,9 @@ fn test_slot_id() {
         pipeline,
         textures: vec![],
         params: vec![],
-        pass_render_states: vec![],
+        render_state: None,
     };
 
-    let material = Material::from_desc(42, desc).unwrap();
+    let material = Material::from_desc(42, desc, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(material.slot_id(), 42);
 }

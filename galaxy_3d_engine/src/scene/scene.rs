@@ -122,18 +122,16 @@ impl Scene {
     /// * `mesh` - Source mesh resource
     /// * `world_matrix` - World transform matrix
     /// * `bounding_box` - AABB in local space
-    /// * `variant_index` - Pipeline variant to use (0 = default)
     pub fn create_render_instance(
         &mut self,
         mesh: &Mesh,
         world_matrix: Mat4,
         bounding_box: AABB,
-        variant_index: usize,
     ) -> Result<RenderInstanceKey> {
-        self.ensure_global_binding_group(mesh, variant_index)?;
+        self.ensure_global_binding_group(mesh)?;
 
         let instance = RenderInstance::from_mesh(
-            mesh, world_matrix, bounding_box, variant_index,
+            mesh, world_matrix, bounding_box,
             &mut self.draw_slot_allocator,
         )?;
         let key = self.render_instances.insert(instance);
@@ -268,7 +266,7 @@ impl Scene {
     /// All pipelines must declare the same Set 0 layout (frame UBO + instance SSBO +
     /// material SSBO + light SSBO). We use the first pipeline from the mesh to create
     /// the descriptor set.
-    fn ensure_global_binding_group(&mut self, mesh: &Mesh, variant_index: usize) -> Result<()> {
+    fn ensure_global_binding_group(&mut self, mesh: &Mesh) -> Result<()> {
         if self.global_binding_group.is_some() {
             return Ok(());
         }
@@ -277,16 +275,11 @@ impl Scene {
             .ok_or_else(|| engine_err!("galaxy3d::Scene", "Mesh has no LODs"))?;
         let submesh = mesh_lod.submesh(0)
             .ok_or_else(|| engine_err!("galaxy3d::Scene", "MeshLOD has no submeshes"))?;
-        let variant = submesh.material().pipeline().variant(variant_index as u32)
-            .ok_or_else(|| engine_err!("galaxy3d::Scene",
-                "Pipeline variant {} not found", variant_index))?;
-        let pass = variant.pass(0)
-            .ok_or_else(|| engine_err!("galaxy3d::Scene",
-                "Pipeline variant has no passes"))?;
+        let gd_pipeline = submesh.material().pipeline().graphics_device_pipeline();
 
         let graphics_device_lock = self.graphics_device.lock().unwrap();
         let bg = graphics_device_lock.create_binding_group(
-            pass.graphics_device_pipeline(),
+            gd_pipeline,
             0,
             &[
                 BindingResource::UniformBuffer(self.frame_buffer.graphics_device_buffer().as_ref()),
