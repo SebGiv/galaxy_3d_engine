@@ -7,8 +7,8 @@
 
 mod gpu_test_utils;
 
-use galaxy_3d_engine::galaxy3d::GraphicsDevice;
-use galaxy_3d_engine::galaxy3d::resource::{ResourceManager, PipelineDesc};
+use galaxy_3d_engine::galaxy3d::{Engine, GraphicsDevice};
+use galaxy_3d_engine::galaxy3d::resource::PipelineDesc;
 use galaxy_3d_engine::galaxy3d::render::{
     PipelineDesc as RenderPipelineDesc, VertexLayout, VertexBinding, VertexAttribute,
     BufferFormat, VertexInputRate, PrimitiveTopology, ShaderDesc, ShaderStage,
@@ -68,7 +68,10 @@ fn create_simple_vertex_layout() -> VertexLayout {
 #[serial]
 fn test_integration_create_pipeline() {
     let graphics_device_arc = get_test_graphics_device();
-    let mut rm = ResourceManager::new();
+    Engine::initialize().ok();
+    Engine::create_resource_manager().ok();
+    let rm_arc = Engine::resource_manager().unwrap();
+    let mut rm = rm_arc.lock().unwrap();
 
     let mut graphics_device_lock = graphics_device_arc.lock().unwrap();
     let vertex_shader = graphics_device_lock.create_shader(ShaderDesc {
@@ -109,9 +112,9 @@ fn test_integration_create_pipeline() {
 
     if result.is_ok() {
         assert_eq!(rm.pipeline_count(), 1);
-        assert!(rm.pipeline("test_pipeline").is_some());
+        assert!(rm.pipeline_by_name("test_pipeline").is_some());
 
-        let pipeline = rm.pipeline("test_pipeline").unwrap();
+        let pipeline = rm.pipeline_by_name("test_pipeline").unwrap();
         assert!(pipeline.graphics_device_pipeline().as_ref().reflection().binding_count() == 0
             || true); // Reflection content depends on actual shaders
     }

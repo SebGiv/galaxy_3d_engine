@@ -15,7 +15,7 @@ use crate::graphics_device::{
     PrimitiveTopology,
 };
 use crate::resource::mesh::Mesh;
-use crate::resource::material::Material;
+use crate::resource::resource_manager::{ResourceManager, MaterialKey};
 use crate::utils::SlotAllocator;
 
 // ===== SLOT MAP KEY =====
@@ -110,9 +110,9 @@ pub const FLAG_RECEIVE_SHADOW: u64 = 1 << 2;
 
 /// A single drawable submesh within a RenderLOD.
 ///
-/// Contains geometry offsets and a reference to its Material.
+/// Contains geometry offsets and a material key.
 /// Pipeline, binding groups, render state, and material parameters
-/// are all resolved from the Material at draw time.
+/// are all resolved from the Material (via ResourceManager) at draw time.
 pub struct RenderSubMesh {
     /// Base vertex offset in the shared vertex buffer
     vertex_offset: u32,
@@ -124,10 +124,12 @@ pub struct RenderSubMesh {
     index_count: u32,
     /// Primitive topology (TriangleList, LineList, etc.)
     topology: PrimitiveTopology,
-    /// Material reference (owns pipeline, textures, render state)
-    material: Arc<Material>,
+    /// Material key (resolved via ResourceManager at draw time)
+    material: MaterialKey,
     /// Unique slot index in the GPU scene SSBO
     draw_slot: u32,
+    /// Material slot ID (cached from material at creation time)
+    material_slot_id: u32,
 }
 
 // ===== RENDER LOD =====
@@ -168,24 +170,21 @@ pub struct RenderInstance {
 impl RenderInstance {
     /// Create a RenderInstance from a resource::Mesh
     ///
-    /// Extracts all graphics_device-level objects from the resource hierarchy
-    /// into a flat structure optimized for rendering. Resolves binding groups
-    /// and push constants against pipeline reflection data.
-    ///
-    /// # Arguments
-    ///
-    /// * `mesh` - Source mesh resource
-    /// * `world_matrix` - World transform matrix
-    /// * `bounding_box` - AABB in local space
-    /// * `slot_allocator` - Allocator for draw slot IDs
+    /// Resolves keys via the ResourceManager to extract geometry data.
+    /// Stores MaterialKeys for draw-time resolution.
     pub(crate) fn from_mesh(
         mesh: &Mesh,
         world_matrix: Mat4,
         bounding_box: AABB,
         slot_allocator: &mut SlotAllocator,
+        resource_manager: &ResourceManager,
     ) -> Result<Self> {
-        let geometry = mesh.geometry();
-        let geom_mesh = mesh.geometry_mesh();
+        let geometry = resource_manager.geometry(mesh.geometry())
+            .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
+                "Geometry key not found in ResourceManager"))?;
+        let geom_mesh = geometry.mesh(mesh.geometry_mesh_id())
+            .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
+                "GeometryMesh id {} not found", mesh.geometry_mesh_id()))?;
 
         // Extract shared buffers and index type from Geometry
         let vertex_buffer = Arc::clone(geometry.vertex_buffer());
@@ -216,7 +215,13 @@ impl RenderInstance {
                         "GeometrySubMesh id {} not found in LOD {}",
                         submesh.submesh_id(), lod_idx))?;
 
-                let material = Arc::clone(submesh.material());
+                let material_key = submesh.material();
+
+                // Cache material slot ID at creation time
+                let material_slot_id = resource_manager.material(material_key)
+                    .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
+                        "Material key not found in ResourceManager"))?
+                    .slot_id();
 
                 sub_meshes.push(RenderSubMesh {
                     vertex_offset: geom_submesh.vertex_offset(),
@@ -224,8 +229,9 @@ impl RenderInstance {
                     index_offset: geom_submesh.index_offset(),
                     index_count: geom_submesh.index_count(),
                     topology: geom_submesh.topology(),
-                    material,
+                    material: material_key,
                     draw_slot: slot_allocator.alloc(),
+                    material_slot_id,
                 });
             }
 
@@ -363,9 +369,9 @@ impl RenderSubMesh {
         self.topology
     }
 
-    /// Get the material reference
-    pub fn material(&self) -> &Arc<Material> {
-        &self.material
+    /// Get the material key
+    pub fn material(&self) -> MaterialKey {
+        self.material
     }
 
     /// Get the draw slot index (position in the GPU scene SSBO)
@@ -375,7 +381,7 @@ impl RenderSubMesh {
 
     /// Get the material slot ID (position in the GPU material SSBO)
     pub fn material_slot_id(&self) -> u32 {
-        self.material.slot_id()
+        self.material_slot_id
     }
 }
 

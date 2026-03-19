@@ -556,39 +556,47 @@ impl RenderGraph {
 
         self.command_lists[frame].begin()?;
 
-        // Execute all passes in topological order
-        let order = self.execution_order.clone();
+        // Execute all passes in topological order.
+        // If any error occurs, we must still call end() to leave the command list
+        // in a clean state (not recording), otherwise the next frame's begin() will fail.
+        let result = (|| -> Result<()> {
+            let order = self.execution_order.clone();
 
-        for &pass_idx in &order {
-            // Skip passes with no attachments (pure compute passes would go here later)
-            let rp = match self.passes[pass_idx].graphics_device_render_pass() {
-                Some(rp) => rp.clone(),
-                None => continue,
-            };
-            let fb = match self.passes[pass_idx].graphics_device_framebuffer() {
-                Some(fb) => fb.clone(),
-                None => continue,
-            };
+            for &pass_idx in &order {
+                // Skip passes with no attachments (pure compute passes would go here later)
+                let rp = match self.passes[pass_idx].graphics_device_render_pass() {
+                    Some(rp) => rp.clone(),
+                    None => continue,
+                };
+                let fb = match self.passes[pass_idx].graphics_device_framebuffer() {
+                    Some(fb) => fb.clone(),
+                    None => continue,
+                };
 
-            // Build clear values from per-target ops
-            let clear_values = self.build_clear_values(pass_idx);
+                // Build clear values from per-target ops
+                let clear_values = self.build_clear_values(pass_idx);
 
-            // Build image accesses for backend barrier tracking
-            let accesses = self.build_image_accesses(pass_idx);
+                // Build image accesses for backend barrier tracking
+                let accesses = self.build_image_accesses(pass_idx);
 
-            self.command_lists[frame].begin_render_pass(&rp, &fb, &clear_values, &accesses)?;
+                self.command_lists[frame].begin_render_pass(&rp, &fb, &clear_values, &accesses)?;
 
-            if let Some(action) = self.passes[pass_idx].action_mut() {
-                action.execute(&mut *self.command_lists[frame])?;
+                if let Some(action) = self.passes[pass_idx].action_mut() {
+                    action.execute(&mut *self.command_lists[frame])?;
+                }
+
+                self.command_lists[frame].end_render_pass()?;
             }
 
-            self.command_lists[frame].end_render_pass()?;
-        }
+            // Post-passes commands (e.g. swapchain blit)
+            post_passes(&mut *self.command_lists[frame])?;
 
-        // Post-passes commands (e.g. swapchain blit)
-        post_passes(&mut *self.command_lists[frame])?;
+            Ok(())
+        })();
 
+        // Always end the command list, even if an error occurred above
         self.command_lists[frame].end()?;
+        result?;
         Ok(())
     }
 

@@ -4,6 +4,7 @@
 /// Implementations range from simple forward rendering to sorted/instanced approaches.
 
 use crate::error::Result;
+use crate::engine::Engine;
 use crate::graphics_device::{CommandList, ShaderStage};
 use crate::camera::RenderView;
 use super::scene::Scene;
@@ -40,6 +41,10 @@ impl Drawer for ForwardDrawer {
         cmd.set_viewport(*camera.viewport())?;
         cmd.set_scissor(camera.effective_scissor())?;
 
+        // Resolve ResourceManager singleton
+        let rm_arc = Engine::resource_manager()?;
+        let rm = rm_arc.lock().unwrap();
+
         for &key in view.visible_instances() {
             let instance = match scene.render_instance(key) {
                 Some(inst) => inst,
@@ -60,8 +65,11 @@ impl Drawer for ForwardDrawer {
 
             for sm_idx in 0..lod.sub_mesh_count() {
                 let sub_mesh = lod.sub_mesh(sm_idx).unwrap();
-                let material = sub_mesh.material();
-                let gd_pipeline = material.pipeline().graphics_device_pipeline();
+
+                // Resolve material and pipeline via ResourceManager
+                let material = rm.material(sub_mesh.material()).unwrap();
+                let pipeline = rm.pipeline(material.pipeline()).unwrap();
+                let gd_pipeline = pipeline.graphics_device_pipeline();
 
                 // Bind pipeline
                 cmd.bind_pipeline(gd_pipeline)?;

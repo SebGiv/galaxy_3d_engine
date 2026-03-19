@@ -159,9 +159,9 @@ fn create_test_pipeline_desc() -> PipelineDesc {
 }
 
 /// Create a simple material descriptor for testing (no textures, no params)
-fn create_test_material_desc(pipeline: &Arc<Pipeline>) -> MaterialDesc {
+fn create_test_material_desc(pipeline_key: PipelineKey) -> MaterialDesc {
     MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline_key,
         textures: vec![],
         params: vec![],
         render_state: None,
@@ -173,17 +173,17 @@ fn create_test_material_desc(pipeline: &Arc<Pipeline>) -> MaterialDesc {
 /// Requires a geometry with at least one mesh (index 0) with one LOD (index 0)
 /// and one submesh (index 0).
 fn create_test_mesh_desc(
-    geometry: &Arc<Geometry>,
-    material: &Arc<Material>,
+    geometry_key: GeometryKey,
+    material_key: MaterialKey,
 ) -> MeshDesc {
     MeshDesc {
-        geometry: geometry.clone(),
+        geometry: geometry_key,
         geometry_mesh: GeometryMeshRef::Index(0),
         lods: vec![MeshLODDesc {
             lod_index: 0,
             submeshes: vec![SubMeshDesc {
                 submesh: GeometrySubMeshRef::Index(0),
-                material: material.clone(),
+                material: material_key,
             }],
         }],
     }
@@ -196,17 +196,17 @@ fn create_mesh_prerequisites(
     rm: &mut ResourceManager,
     graphics_device: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
     suffix: &str,
-) -> (Arc<Geometry>, Arc<Material>) {
+) -> (GeometryKey, MaterialKey) {
     let geom_desc = create_test_geometry_desc(graphics_device.clone(), suffix);
-    let geometry = rm.create_geometry(format!("geom_{}", suffix), geom_desc).unwrap();
+    let geometry_key = rm.create_geometry(format!("geom_{}", suffix), geom_desc).unwrap();
 
     let pipe_desc = create_test_pipeline_desc();
-    let pipeline = rm.create_pipeline(format!("pipe_{}", suffix), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let pipeline_key = rm.create_pipeline(format!("pipe_{}", suffix), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(&pipeline);
-    let material = rm.create_material(format!("mat_{}", suffix), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
+    let mat_desc = create_test_material_desc(pipeline_key);
+    let material_key = rm.create_material(format!("mat_{}", suffix), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
-    (geometry, material)
+    (geometry_key, material_key)
 }
 
 // ============================================================================
@@ -247,7 +247,7 @@ fn test_get_texture() {
     let desc = create_test_texture_desc(graphics_device.clone(), "test_texture", 256, 256);
     rm.create_texture("test_texture".to_string(), desc).unwrap();
 
-    let texture = rm.texture("test_texture");
+    let texture = rm.texture_by_name("test_texture");
     assert!(texture.is_some());
     // texture exists (no direct width/height access on resource::Texture)
 }
@@ -255,7 +255,7 @@ fn test_get_texture() {
 #[test]
 fn test_get_texture_not_found() {
     let rm = ResourceManager::new();
-    let texture = rm.texture("nonexistent");
+    let texture = rm.texture_by_name("nonexistent");
     assert!(texture.is_none());
 }
 
@@ -269,7 +269,7 @@ fn test_remove_texture() {
 
     assert_eq!(rm.texture_count(), 1);
 
-    let removed = rm.remove_texture("test_texture");
+    let removed = rm.remove_texture_by_name("test_texture");
     assert!(removed);
     assert_eq!(rm.texture_count(), 0);
 }
@@ -277,7 +277,7 @@ fn test_remove_texture() {
 #[test]
 fn test_remove_texture_not_found() {
     let mut rm = ResourceManager::new();
-    let removed = rm.remove_texture("nonexistent");
+    let removed = rm.remove_texture_by_name("nonexistent");
     assert!(!removed);
 }
 
@@ -310,9 +310,9 @@ fn test_multiple_textures() {
     rm.create_texture("texture3".to_string(), desc3).unwrap();
 
     assert_eq!(rm.texture_count(), 3);
-    assert!(rm.texture("texture1").is_some());
-    assert!(rm.texture("texture2").is_some());
-    assert!(rm.texture("texture3").is_some());
+    assert!(rm.texture_by_name("texture1").is_some());
+    assert!(rm.texture_by_name("texture2").is_some());
+    assert!(rm.texture_by_name("texture3").is_some());
 }
 
 #[test]
@@ -330,10 +330,10 @@ fn test_texture_count() {
     rm.create_texture("texture2".to_string(), desc2).unwrap();
     assert_eq!(rm.texture_count(), 2);
 
-    rm.remove_texture("texture1");
+    rm.remove_texture_by_name("texture1");
     assert_eq!(rm.texture_count(), 1);
 
-    rm.remove_texture("texture2");
+    rm.remove_texture_by_name("texture2");
     assert_eq!(rm.texture_count(), 0);
 }
 
@@ -347,10 +347,10 @@ fn test_create_geometry() {
     let graphics_device = create_mock_graphics_device();
 
     let desc = create_test_geometry_desc(graphics_device.clone(), "test_geom");
-    let geom = rm.create_geometry("test_geom".to_string(), desc).unwrap();
+    let geom_key = rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
     assert_eq!(rm.geometry_count(), 1);
-    assert_eq!(geom.mesh_count(), 1);
+    assert_eq!(rm.geometry(geom_key).unwrap().mesh_count(), 1);
 }
 
 #[test]
@@ -361,14 +361,14 @@ fn test_get_geometry() {
     let desc = create_test_geometry_desc(graphics_device.clone(), "test_geom");
     rm.create_geometry("test_geom".to_string(), desc).unwrap();
 
-    let geom = rm.geometry("test_geom");
+    let geom = rm.geometry_by_name("test_geom");
     assert!(geom.is_some());
 }
 
 #[test]
 fn test_get_geometry_not_found() {
     let rm = ResourceManager::new();
-    let geom = rm.geometry("nonexistent");
+    let geom = rm.geometry_by_name("nonexistent");
     assert!(geom.is_none());
 }
 
@@ -423,9 +423,9 @@ fn test_multiple_geometries() {
     rm.create_geometry("geom3".to_string(), desc3).unwrap();
 
     assert_eq!(rm.geometry_count(), 3);
-    assert!(rm.geometry("geom1").is_some());
-    assert!(rm.geometry("geom2").is_some());
-    assert!(rm.geometry("geom3").is_some());
+    assert!(rm.geometry_by_name("geom1").is_some());
+    assert!(rm.geometry_by_name("geom2").is_some());
+    assert!(rm.geometry_by_name("geom3").is_some());
 }
 
 #[test]
@@ -460,7 +460,7 @@ fn test_create_pipeline() {
     let graphics_device = create_mock_graphics_device();
 
     let desc = create_test_pipeline_desc();
-    let pipeline = rm.create_pipeline("test_pipeline".to_string(), desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("test_pipeline".to_string(), desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.pipeline_count(), 1);
 
@@ -474,14 +474,14 @@ fn test_get_pipeline() {
     let desc = create_test_pipeline_desc();
     rm.create_pipeline("test_pipeline".to_string(), desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let pipeline = rm.pipeline("test_pipeline");
+    let pipeline = rm.pipeline_by_name("test_pipeline");
     assert!(pipeline.is_some());
 }
 
 #[test]
 fn test_get_pipeline_not_found() {
     let rm = ResourceManager::new();
-    let pipeline = rm.pipeline("nonexistent");
+    let pipeline = rm.pipeline_by_name("nonexistent");
     assert!(pipeline.is_none());
 }
 
@@ -536,9 +536,9 @@ fn test_multiple_pipelines() {
     rm.create_pipeline("pipeline3".to_string(), desc3, &mut *graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.pipeline_count(), 3);
-    assert!(rm.pipeline("pipeline1").is_some());
-    assert!(rm.pipeline("pipeline2").is_some());
-    assert!(rm.pipeline("pipeline3").is_some());
+    assert!(rm.pipeline_by_name("pipeline1").is_some());
+    assert!(rm.pipeline_by_name("pipeline2").is_some());
+    assert!(rm.pipeline_by_name("pipeline3").is_some());
 }
 
 #[test]
@@ -575,12 +575,12 @@ fn test_create_material() {
     let pipe_desc = create_test_pipeline_desc();
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(&pipeline);
-    let material = rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
+    let mat_desc = create_test_material_desc(pipeline);
+    let mat_key = rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_count(), 1);
-    assert_eq!(material.texture_slot_count(), 0);
-    assert_eq!(material.param_count(), 0);
+    assert_eq!(rm.material(mat_key).unwrap().texture_slot_count(), 0);
+    assert_eq!(rm.material(mat_key).unwrap().param_count(), 0);
 }
 
 #[test]
@@ -591,17 +591,17 @@ fn test_get_material() {
     let pipe_desc = create_test_pipeline_desc();
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(&pipeline);
+    let mat_desc = create_test_material_desc(pipeline);
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
-    let material = rm.material("body");
+    let material = rm.material_by_name("body");
     assert!(material.is_some());
 }
 
 #[test]
 fn test_get_material_not_found() {
     let rm = ResourceManager::new();
-    let material = rm.material("nonexistent");
+    let material = rm.material_by_name("nonexistent");
     assert!(material.is_none());
 }
 
@@ -613,7 +613,7 @@ fn test_remove_material() {
     let pipe_desc = create_test_pipeline_desc();
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(&pipeline);
+    let mat_desc = create_test_material_desc(pipeline);
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_count(), 1);
@@ -638,10 +638,10 @@ fn test_duplicate_material_fails() {
     let pipe_desc = create_test_pipeline_desc();
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc1 = create_test_material_desc(&pipeline);
+    let mat_desc1 = create_test_material_desc(pipeline);
     rm.create_material("body".to_string(), mat_desc1, &*graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc2 = create_test_material_desc(&pipeline);
+    let mat_desc2 = create_test_material_desc(pipeline);
     let result = rm.create_material("body".to_string(), mat_desc2, &*graphics_device.lock().unwrap());
 
     assert!(result.is_err());
@@ -658,11 +658,11 @@ fn test_material_count() {
 
     assert_eq!(rm.material_count(), 0);
 
-    let mat_desc1 = create_test_material_desc(&pipeline);
+    let mat_desc1 = create_test_material_desc(pipeline);
     rm.create_material("mat1".to_string(), mat_desc1, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_count(), 1);
 
-    let mat_desc2 = create_test_material_desc(&pipeline);
+    let mat_desc2 = create_test_material_desc(pipeline);
     rm.create_material("mat2".to_string(), mat_desc2, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_count(), 2);
 
@@ -684,11 +684,11 @@ fn test_create_mesh() {
 
     let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
-    let mesh_desc = create_test_mesh_desc(&geometry, &material);
-    let mesh = rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
+    let mesh_desc = create_test_mesh_desc(geometry, material);
+    let mesh_key = rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
 
     assert_eq!(rm.mesh_count(), 1);
-    assert_eq!(mesh.lod_count(), 1);
+    assert_eq!(rm.mesh(mesh_key).unwrap().lod_count(), 1);
 }
 
 #[test]
@@ -698,17 +698,17 @@ fn test_get_mesh() {
 
     let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
-    let mesh_desc = create_test_mesh_desc(&geometry, &material);
+    let mesh_desc = create_test_mesh_desc(geometry, material);
     rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
 
-    let mesh = rm.mesh("hero");
+    let mesh = rm.mesh_by_name("hero");
     assert!(mesh.is_some());
 }
 
 #[test]
 fn test_get_mesh_not_found() {
     let rm = ResourceManager::new();
-    let mesh = rm.mesh("nonexistent");
+    let mesh = rm.mesh_by_name("nonexistent");
     assert!(mesh.is_none());
 }
 
@@ -719,7 +719,7 @@ fn test_remove_mesh() {
 
     let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
-    let mesh_desc = create_test_mesh_desc(&geometry, &material);
+    let mesh_desc = create_test_mesh_desc(geometry, material);
     rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
 
     assert_eq!(rm.mesh_count(), 1);
@@ -743,10 +743,10 @@ fn test_duplicate_mesh_fails() {
 
     let (geometry, material) = create_mesh_prerequisites(&mut rm, &graphics_device, "a");
 
-    let mesh_desc1 = create_test_mesh_desc(&geometry, &material);
+    let mesh_desc1 = create_test_mesh_desc(geometry, material);
     rm.create_mesh("hero".to_string(), mesh_desc1).unwrap();
 
-    let mesh_desc2 = create_test_mesh_desc(&geometry, &material);
+    let mesh_desc2 = create_test_mesh_desc(geometry, material);
     let result = rm.create_mesh("hero".to_string(), mesh_desc2);
 
     assert!(result.is_err());
@@ -762,11 +762,11 @@ fn test_mesh_count() {
 
     assert_eq!(rm.mesh_count(), 0);
 
-    let mesh_desc1 = create_test_mesh_desc(&geometry, &material);
+    let mesh_desc1 = create_test_mesh_desc(geometry, material);
     rm.create_mesh("mesh1".to_string(), mesh_desc1).unwrap();
     assert_eq!(rm.mesh_count(), 1);
 
-    let mesh_desc2 = create_test_mesh_desc(&geometry, &material);
+    let mesh_desc2 = create_test_mesh_desc(geometry, material);
     rm.create_mesh("mesh2".to_string(), mesh_desc2).unwrap();
     assert_eq!(rm.mesh_count(), 2);
 
@@ -792,13 +792,13 @@ fn test_mixed_resources() {
     let pipeline_desc = create_test_pipeline_desc();
 
     rm.create_texture("texture".to_string(), texture_desc).unwrap();
-    let geometry = rm.create_geometry("geom".to_string(), geom_desc).unwrap();
-    let pipeline = rm.create_pipeline("pipeline".to_string(), pipeline_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let geometry_key = rm.create_geometry("geom".to_string(), geom_desc).unwrap();
+    let pipeline_key = rm.create_pipeline("pipeline".to_string(), pipeline_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(&pipeline);
-    let material = rm.create_material("material".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
+    let mat_desc = create_test_material_desc(pipeline_key);
+    let material_key = rm.create_material("material".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
-    let mesh_desc = create_test_mesh_desc(&geometry, &material);
+    let mesh_desc = create_test_mesh_desc(geometry_key, material_key);
     rm.create_mesh("mesh".to_string(), mesh_desc).unwrap();
 
     assert_eq!(rm.texture_count(), 1);
@@ -807,11 +807,11 @@ fn test_mixed_resources() {
     assert_eq!(rm.material_count(), 1);
     assert_eq!(rm.mesh_count(), 1);
 
-    assert!(rm.texture("texture").is_some());
-    assert!(rm.geometry("geom").is_some());
-    assert!(rm.pipeline("pipeline").is_some());
-    assert!(rm.material("material").is_some());
-    assert!(rm.mesh("mesh").is_some());
+    assert!(rm.texture_by_name("texture").is_some());
+    assert!(rm.geometry_by_name("geom").is_some());
+    assert!(rm.pipeline_by_name("pipeline").is_some());
+    assert!(rm.material_by_name("material").is_some());
+    assert!(rm.mesh_by_name("mesh").is_some());
 }
 
 #[test]
@@ -830,15 +830,15 @@ fn test_clear_all_resources() {
         rm.create_pipeline(format!("pipeline{}", i), pipeline_desc, &mut *graphics_device.lock().unwrap()).unwrap();
     }
 
-    // Create materials and meshes (need references to existing resources)
+    // Create materials and meshes (need keys to existing resources)
     for i in 0..3 {
-        let pipeline = rm.pipeline(&format!("pipeline{}", i)).unwrap().clone();
-        let geometry = rm.geometry(&format!("geom{}", i)).unwrap().clone();
+        let pipeline_key = rm.pipeline_key(&format!("pipeline{}", i)).unwrap();
+        let geometry_key = rm.geometry_key(&format!("geom{}", i)).unwrap();
 
-        let mat_desc = create_test_material_desc(&pipeline);
-        let material = rm.create_material(format!("material{}", i), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
+        let mat_desc = create_test_material_desc(pipeline_key);
+        let material_key = rm.create_material(format!("material{}", i), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
-        let mesh_desc = create_test_mesh_desc(&geometry, &material);
+        let mesh_desc = create_test_mesh_desc(geometry_key, material_key);
         rm.create_mesh(format!("mesh{}", i), mesh_desc).unwrap();
     }
 
@@ -852,7 +852,7 @@ fn test_clear_all_resources() {
     for i in 0..3 {
         rm.remove_mesh(&format!("mesh{}", i));
         rm.remove_material(&format!("material{}", i));
-        rm.remove_texture(&format!("texture{}", i));
+        rm.remove_texture_by_name(&format!("texture{}", i));
         rm.remove_geometry(&format!("geom{}", i));
         rm.remove_pipeline(&format!("pipeline{}", i));
     }
@@ -948,7 +948,7 @@ fn test_add_texture_layer() {
         ],
     };
 
-    rm.create_texture("test_texture".to_string(), desc).unwrap();
+    let tex_key = rm.create_texture("test_texture".to_string(), desc).unwrap();
 
     // Add a new layer
     let new_layer = LayerDesc {
@@ -958,11 +958,11 @@ fn test_add_texture_layer() {
         regions: vec![],
     };
 
-    let result = rm.add_texture_layer("test_texture", new_layer);
+    let result = rm.add_texture_layer(tex_key, new_layer);
     assert!(result.is_ok());
 
     // Verify layer was added
-    let texture = rm.texture("test_texture").unwrap();
+    let texture = rm.texture_by_name("test_texture").unwrap();
     assert_eq!(texture.layer_count(), 3);
 }
 
@@ -977,7 +977,7 @@ fn test_add_texture_layer_to_nonexistent_texture() {
         regions: vec![],
     };
 
-    let result = rm.add_texture_layer("nonexistent", new_layer);
+    let result = rm.add_texture_layer(TextureKey::default(), new_layer);
     assert!(result.is_err());
 }
 
@@ -988,7 +988,7 @@ fn test_add_texture_layer_to_simple_texture() {
 
     // Create a simple texture (array_layers=1)
     let desc = create_test_texture_desc(graphics_device.clone(), "simple", 256, 256);
-    rm.create_texture("simple".to_string(), desc).unwrap();
+    let tex_key = rm.create_texture("simple".to_string(), desc).unwrap();
 
     // Try to add a layer (should fail - simple textures can't have layers added)
     let new_layer = LayerDesc {
@@ -998,7 +998,7 @@ fn test_add_texture_layer_to_simple_texture() {
         regions: vec![],
     };
 
-    let result = rm.add_texture_layer("simple", new_layer);
+    let result = rm.add_texture_layer(tex_key, new_layer);
     assert!(result.is_err());
 }
 
@@ -1009,7 +1009,7 @@ fn test_add_texture_region() {
 
     // Create a texture with one layer
     let desc = create_test_texture_desc(graphics_device.clone(), "atlas", 256, 256);
-    rm.create_texture("atlas".to_string(), desc).unwrap();
+    let tex_key = rm.create_texture("atlas".to_string(), desc).unwrap();
 
     // Add a region to the default layer
     let region = AtlasRegionDesc {
@@ -1022,11 +1022,11 @@ fn test_add_texture_region() {
         },
     };
 
-    let result = rm.add_texture_region("atlas", "default", region);
+    let result = rm.add_texture_region(tex_key, "default", region);
     assert!(result.is_ok());
 
     // Verify region was added
-    let texture = rm.texture("atlas").unwrap();
+    let texture = rm.texture_by_name("atlas").unwrap();
     let layer = texture.layer_by_name("default").unwrap();
     assert_eq!(layer.region_count(), 1);
 }
@@ -1040,7 +1040,7 @@ fn test_add_texture_region_to_nonexistent_texture() {
         region: AtlasRegion { x: 0, y: 0, width: 64, height: 64 },
     };
 
-    let result = rm.add_texture_region("nonexistent", "layer", region);
+    let result = rm.add_texture_region(TextureKey::default(), "layer", region);
     assert!(result.is_err());
 }
 
@@ -1072,7 +1072,7 @@ fn test_add_geometry_mesh_to_existing_geometry() {
         meshes: vec![], // No initial meshes
     };
 
-    rm.create_geometry("geom".to_string(), desc).unwrap();
+    let geom_key = rm.create_geometry("geom".to_string(), desc).unwrap();
 
     // Add a mesh
     let mesh_desc = GeometryMeshDesc {
@@ -1094,11 +1094,11 @@ fn test_add_geometry_mesh_to_existing_geometry() {
         ],
     };
 
-    let result = rm.add_geometry_mesh("geom", mesh_desc);
+    let result = rm.add_geometry_mesh(geom_key, mesh_desc);
     assert!(result.is_ok());
 
     // Verify mesh was added
-    let geom = rm.geometry("geom").unwrap();
+    let geom = rm.geometry_by_name("geom").unwrap();
     assert_eq!(geom.mesh_count(), 1);
 }
 
@@ -1111,7 +1111,7 @@ fn test_add_geometry_mesh_to_nonexistent_geometry() {
         lods: vec![],
     };
 
-    let result = rm.add_geometry_mesh("nonexistent", mesh_desc);
+    let result = rm.add_geometry_mesh(GeometryKey::default(), mesh_desc);
     assert!(result.is_err());
 }
 
@@ -1162,7 +1162,7 @@ fn test_add_geometry_lod() {
         ],
     };
 
-    rm.create_geometry("geom".to_string(), desc).unwrap();
+    let geom_key = rm.create_geometry("geom".to_string(), desc).unwrap();
 
     // Add a LOD to the mesh
     let lod = GeometryLODDesc {
@@ -1179,11 +1179,11 @@ fn test_add_geometry_lod() {
         ],
     };
 
-    let result = rm.add_geometry_lod("geom", 0, lod);
+    let result = rm.add_geometry_lod(geom_key, 0, lod);
     assert!(result.is_ok());
 
     // Verify LOD was added
-    let geom = rm.geometry("geom").unwrap();
+    let geom = rm.geometry_by_name("geom").unwrap();
     let mesh = geom.mesh(0).unwrap();
     assert_eq!(mesh.lod_count(), 2);
 }
@@ -1197,7 +1197,7 @@ fn test_add_geometry_lod_to_nonexistent_geometry() {
         submeshes: vec![],
     };
 
-    let result = rm.add_geometry_lod("nonexistent", 0, lod);
+    let result = rm.add_geometry_lod(GeometryKey::default(), 0, lod);
     assert!(result.is_err());
 }
 
@@ -1248,7 +1248,7 @@ fn test_add_geometry_submesh() {
         ],
     };
 
-    rm.create_geometry("geom".to_string(), desc).unwrap();
+    let geom_key = rm.create_geometry("geom".to_string(), desc).unwrap();
 
     // Add a submesh to the LOD
     let submesh = GeometrySubMeshDesc {
@@ -1260,11 +1260,11 @@ fn test_add_geometry_submesh() {
         topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
-    let result = rm.add_geometry_submesh("geom", 0, 0, submesh);
+    let result = rm.add_geometry_submesh(geom_key, 0, 0, submesh);
     assert!(result.is_ok());
 
     // Verify submesh was added
-    let geom = rm.geometry("geom").unwrap();
+    let geom = rm.geometry_by_name("geom").unwrap();
     let mesh = geom.mesh(0).unwrap();
     let lod = mesh.lod(0).unwrap();
     assert_eq!(lod.submesh_count(), 2);
@@ -1283,7 +1283,7 @@ fn test_add_geometry_submesh_to_nonexistent_geometry() {
         topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
-    let result = rm.add_geometry_submesh("nonexistent", 0, 0, submesh);
+    let result = rm.add_geometry_submesh(GeometryKey::default(), 0, 0, submesh);
     assert!(result.is_err());
 }
 
@@ -1300,13 +1300,13 @@ fn test_material_slot_id_assigned() {
     let pipe_desc = create_test_pipeline_desc();
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
-    let mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
-    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    let mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
 
-    assert_eq!(mat0.slot_id(), 0);
-    assert_eq!(mat1.slot_id(), 1);
-    assert_eq!(mat2.slot_id(), 2);
+    assert_eq!(rm.material(mat0).unwrap().slot_id(), 0);
+    assert_eq!(rm.material(mat1).unwrap().slot_id(), 1);
+    assert_eq!(rm.material(mat2).unwrap().slot_id(), 2);
 }
 
 #[test]
@@ -1317,17 +1317,17 @@ fn test_material_slot_recycled_after_remove() {
     let pipe_desc = create_test_pipeline_desc();
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
-    let _mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    let _mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
 
-    assert_eq!(mat0.slot_id(), 0);
+    assert_eq!(rm.material(mat0).unwrap().slot_id(), 0);
 
     // Remove mat0, its slot should be recycled
     rm.remove_material("mat0");
 
     // New material should reuse slot 0
-    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
-    assert_eq!(mat2.slot_id(), 0);
+    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    assert_eq!(rm.material(mat2).unwrap().slot_id(), 0);
 }
 
 #[test]
@@ -1341,11 +1341,11 @@ fn test_material_slot_high_water_mark() {
     assert_eq!(rm.material_slot_high_water_mark(), 0);
     assert_eq!(rm.material_slot_count(), 0);
 
-    rm.create_material("mat0".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    rm.create_material("mat0".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_slot_high_water_mark(), 1);
     assert_eq!(rm.material_slot_count(), 1);
 
-    rm.create_material("mat1".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    rm.create_material("mat1".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_slot_high_water_mark(), 2);
     assert_eq!(rm.material_slot_count(), 2);
 
@@ -1353,7 +1353,7 @@ fn test_material_slot_high_water_mark() {
     assert_eq!(rm.material_slot_high_water_mark(), 2); // doesn't shrink
     assert_eq!(rm.material_slot_count(), 1); // but count decreases
 
-    rm.create_material("mat2".to_string(), create_test_material_desc(&pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    rm.create_material("mat2".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_slot_high_water_mark(), 2); // reused slot, no increase
     assert_eq!(rm.material_slot_count(), 2);
 }
@@ -1371,7 +1371,7 @@ fn test_sync_materials_basic() {
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![],
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
@@ -1391,7 +1391,7 @@ fn test_sync_materials_basic() {
         count: 4,
     }).unwrap();
 
-    let result = rm.sync_materials_to_buffer(&buffer);
+    let result = rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap());
     assert!(result.is_ok());
 }
 
@@ -1405,7 +1405,7 @@ fn test_sync_materials_type_mismatch_skips() {
 
     // Material has "roughness" as Float
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![],
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
@@ -1425,7 +1425,7 @@ fn test_sync_materials_type_mismatch_skips() {
     }).unwrap();
 
     // Should succeed (warning, not error)
-    let result = rm.sync_materials_to_buffer(&buffer);
+    let result = rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap());
     assert!(result.is_ok());
 }
 
@@ -1439,7 +1439,7 @@ fn test_sync_materials_missing_field_skips() {
 
     // Material has "roughness" param
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![],
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
@@ -1459,7 +1459,7 @@ fn test_sync_materials_missing_field_skips() {
     }).unwrap();
 
     // Should succeed (warning, not error)
-    let result = rm.sync_materials_to_buffer(&buffer);
+    let result = rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap());
     assert!(result.is_ok());
 }
 
@@ -1473,7 +1473,7 @@ fn test_sync_materials_bool_to_uint() {
 
     // Material has Bool param
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![],
         params: vec![
             ("is_metallic".to_string(), ParamValue::Bool(true)),
@@ -1492,7 +1492,7 @@ fn test_sync_materials_bool_to_uint() {
         count: 4,
     }).unwrap();
 
-    let result = rm.sync_materials_to_buffer(&buffer);
+    let result = rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap());
     assert!(result.is_ok());
 }
 
@@ -1506,7 +1506,7 @@ fn test_sync_materials_vec3_padding() {
 
     // Material has Vec3 param (12 bytes raw, needs padding to 16)
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![],
         params: vec![
             ("normal".to_string(), ParamValue::Vec3([1.0, 0.0, 0.0])),
@@ -1527,7 +1527,7 @@ fn test_sync_materials_vec3_padding() {
 
     // This validates that param_to_padded_bytes produces 16 bytes for Vec3,
     // because update_field strictly validates data.len() == field_size
-    let result = rm.sync_materials_to_buffer(&buffer);
+    let result = rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap());
     assert!(result.is_ok());
 }
 
@@ -1542,7 +1542,7 @@ fn test_sync_materials_slot_exceeds_buffer() {
     // Create 3 materials → slot ids 0, 1, 2
     for i in 0..3 {
         let mat_desc = MaterialDesc {
-            pipeline: pipeline.clone(),
+            pipeline: pipeline,
             textures: vec![],
             params: vec![
                 ("roughness".to_string(), ParamValue::Float(0.5)),
@@ -1563,7 +1563,7 @@ fn test_sync_materials_slot_exceeds_buffer() {
     }).unwrap();
 
     // Should succeed (warning, not error)
-    let result = rm.sync_materials_to_buffer(&buffer);
+    let result = rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap());
     assert!(result.is_ok());
 }
 
@@ -1663,7 +1663,8 @@ fn test_default_material_buffer_creation() {
         "material".to_string(), graphics_device, 4,
     );
     assert!(buffer.is_ok());
-    let buffer = buffer.unwrap();
+    let buffer_key = buffer.unwrap();
+    let buffer = rm.buffer(buffer_key).unwrap();
     assert_eq!(buffer.count(), 4);
     assert_eq!(buffer.kind(), BufferKind::Storage);
 }
@@ -1673,9 +1674,10 @@ fn test_default_material_buffer_fields() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let buffer = rm.create_default_material_buffer(
+    let buffer_key = rm.create_default_material_buffer(
         "material".to_string(), graphics_device, 1,
     ).unwrap();
+    let buffer = rm.buffer(buffer_key).unwrap();
 
     // All 14 fields must exist
     assert!(buffer.field_id("baseColor").is_some());
@@ -1699,9 +1701,10 @@ fn test_default_material_buffer_stride() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let buffer = rm.create_default_material_buffer(
+    let buffer_key = rm.create_default_material_buffer(
         "material".to_string(), graphics_device, 1,
     ).unwrap();
+    let buffer = rm.buffer(buffer_key).unwrap();
 
     // 2×Vec4(16) + 6×Float(4) + 6×UInt(4) = 32 + 24 + 24 = 80
     assert_eq!(buffer.stride(), 80);
@@ -1715,11 +1718,11 @@ fn test_default_material_buffer_defaults() {
     // Verify that creating a buffer with multiple slots and writing all defaults
     // completes without error (MockBuffer::update is a no-op, so we can't read
     // back the values, but we can verify all update_field calls succeed)
-    let buffer = rm.create_default_material_buffer(
+    let buffer_key = rm.create_default_material_buffer(
         "material".to_string(), graphics_device, 4,
     ).unwrap();
 
-    assert_eq!(buffer.count(), 4);
+    assert_eq!(rm.buffer(buffer_key).unwrap().count(), 4);
 }
 
 // ============================================================================
@@ -1756,7 +1759,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![MaterialTextureSlotDesc {
             name: "albedoTexture".to_string(),
             texture: texture.clone(),
@@ -1780,7 +1783,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
     }).unwrap();
 
     // Sync should succeed (layer 2 written to buffer)
-    assert!(rm.sync_materials_to_buffer(&buffer).is_ok());
+    assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
 }
 
 #[test]
@@ -1796,7 +1799,7 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
 
     // Material with texture slot but NO layer (layer = None → writes 0)
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![MaterialTextureSlotDesc {
             name: "albedoTexture".to_string(),
             texture: texture.clone(),
@@ -1818,7 +1821,7 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
         count: 4,
     }).unwrap();
 
-    assert!(rm.sync_materials_to_buffer(&buffer).is_ok());
+    assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
 }
 
 #[test]
@@ -1833,7 +1836,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![MaterialTextureSlotDesc {
             name: "albedoTexture".to_string(),
             texture: texture.clone(),
@@ -1856,7 +1859,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
         count: 4,
     }).unwrap();
 
-    assert!(rm.sync_materials_to_buffer(&buffer).is_ok());
+    assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
 }
 
 #[test]
@@ -1871,7 +1874,7 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        pipeline: pipeline.clone(),
+        pipeline: pipeline,
         textures: vec![MaterialTextureSlotDesc {
             name: "albedoTexture".to_string(),
             texture: texture.clone(),
@@ -1894,5 +1897,5 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
         count: 4,
     }).unwrap();
 
-    assert!(rm.sync_materials_to_buffer(&buffer).is_ok());
+    assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
 }

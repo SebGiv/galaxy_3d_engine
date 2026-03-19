@@ -1,15 +1,14 @@
 /// Resource-level material type.
 ///
 /// A Material describes a surface's visual properties and owns its GPU texture bindings.
-/// It references a Pipeline and provides textures and parameters.
+/// It references a Pipeline (by key) and Textures (by key), and provides parameters.
 ///
-/// At creation time, the Material builds BindingGroups for its textures against
-/// the referenced Pipeline. This avoids duplicating descriptor sets
-/// when multiple RenderInstances share the same Material.
+/// At creation time, the Material resolves keys via the ResourceManager singleton
+/// and builds BindingGroups for its textures against the referenced Pipeline.
 ///
 /// Architecture:
-/// - Pipeline reference: which shader to use
-/// - Texture slots: named texture bindings with optional layer/region targeting
+/// - Pipeline key: which shader to use (resolved via ResourceManager)
+/// - Texture keys: named texture bindings with optional layer/region targeting
 /// - Texture bindings: pre-built BindingGroups organized by [set]
 /// - Parameters: named scalar/vector/matrix values (roughness, base_color, etc.)
 
@@ -18,8 +17,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
-use crate::resource::texture::Texture;
-use crate::resource::pipeline::Pipeline;
+use crate::resource::resource_manager::{ResourceManager, PipelineKey, TextureKey};
 use crate::graphics_device::{self, SamplerType, BindingGroup, BindingResource, BindingType, DynamicRenderState};
 
 // ===== REFERENCE TYPES =====
@@ -91,9 +89,10 @@ pub struct MaterialParam {
 /// A texture bound to a named slot in the material (resolved indices)
 ///
 /// After creation, layer and region references are resolved to u32 indices.
+/// The texture is stored as a key, resolved via the ResourceManager.
 pub struct MaterialTextureSlot {
     name: String,
-    texture: Arc<Texture>,
+    texture: TextureKey,
     layer: Option<u32>,
     region: Option<u32>,
     sampler_type: SamplerType,
@@ -103,11 +102,11 @@ pub struct MaterialTextureSlot {
 
 /// Material resource: visual description of a surface
 ///
-/// References a Pipeline and provides textures (with optional layer/region
-/// targeting), named parameters, and a DynamicRenderState.
+/// References a Pipeline (by key) and provides textures (by key, with optional
+/// layer/region targeting), named parameters, and a DynamicRenderState.
 pub struct Material {
     slot_id: u32,
-    pipeline: Arc<Pipeline>,
+    pipeline: PipelineKey,
     textures: Vec<MaterialTextureSlot>,
     texture_names: FxHashMap<String, usize>,
     params: Vec<MaterialParam>,
@@ -123,7 +122,7 @@ pub struct Material {
 
 /// Material creation descriptor
 pub struct MaterialDesc {
-    pub pipeline: Arc<Pipeline>,
+    pub pipeline: PipelineKey,
     pub textures: Vec<MaterialTextureSlotDesc>,
     pub params: Vec<(String, ParamValue)>,
     /// Dynamic render state for this material.
@@ -134,7 +133,7 @@ pub struct MaterialDesc {
 /// Texture slot descriptor (user-facing, accepts names or indices)
 pub struct MaterialTextureSlotDesc {
     pub name: String,
-    pub texture: Arc<Texture>,
+    pub texture: TextureKey,
     pub layer: Option<LayerRef>,
     pub region: Option<RegionRef>,
     pub sampler_type: SamplerType,
@@ -144,11 +143,20 @@ pub struct MaterialTextureSlotDesc {
 
 impl Material {
     /// Create material from descriptor (internal use by ResourceManager)
+    ///
+    /// Resolves PipelineKey and TextureKeys via the ResourceManager to build
+    /// binding groups, then stores only keys.
     pub(crate) fn from_desc(
         slot_id: u32,
         desc: MaterialDesc,
+        resource_manager: &ResourceManager,
         graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
+
+        // ========== RESOLVE PIPELINE ==========
+        let pipeline_arc = resource_manager.pipeline(desc.pipeline)
+            .ok_or_else(|| engine_err!("galaxy3d::Material",
+                "Pipeline key not found in ResourceManager"))?;
 
         // ========== VALIDATION 1: No duplicate texture slot names ==========
         let mut seen_names = FxHashSet::default();
@@ -173,11 +181,17 @@ impl Material {
         let mut texture_names = FxHashMap::default();
 
         for (vec_index, slot_desc) in desc.textures.into_iter().enumerate() {
+            // Resolve texture key
+            let texture_arc = resource_manager.texture(slot_desc.texture)
+                .ok_or_else(|| engine_err!("galaxy3d::Material",
+                    "Texture slot '{}': texture key not found in ResourceManager",
+                    slot_desc.name))?;
+
             // Resolve layer reference
             let resolved_layer = match slot_desc.layer {
                 None => None,
                 Some(LayerRef::Index(i)) => {
-                    if slot_desc.texture.layer(i).is_none() {
+                    if texture_arc.layer(i).is_none() {
                         engine_bail!("galaxy3d::Material",
                             "Texture slot '{}': layer index {} does not exist",
                             slot_desc.name, i);
@@ -185,7 +199,7 @@ impl Material {
                     Some(i)
                 }
                 Some(LayerRef::Name(ref name)) => {
-                    let idx = slot_desc.texture.layer_index_by_name(name)
+                    let idx = texture_arc.layer_index_by_name(name)
                         .ok_or_else(|| engine_err!("galaxy3d::Material",
                             "Texture slot '{}': layer '{}' not found",
                             slot_desc.name, name))?;
@@ -202,7 +216,7 @@ impl Material {
                             "Texture slot '{}': region specified without a layer",
                             slot_desc.name))?;
 
-                    let layer = slot_desc.texture.layer(layer_idx)
+                    let layer = texture_arc.layer(layer_idx)
                         .ok_or_else(|| engine_err!("galaxy3d::Material",
                             "Texture slot '{}': layer {} not found during region resolution",
                             slot_desc.name, layer_idx))?;
@@ -249,7 +263,7 @@ impl Material {
         // ========== BUILD TEXTURE BINDING GROUPS ==========
         // Match texture slot names against shader reflection
         // to create pre-built BindingGroups (descriptor sets for textures).
-        let graphics_device_pipeline = desc.pipeline.graphics_device_pipeline();
+        let graphics_device_pipeline = pipeline_arc.graphics_device_pipeline();
         let reflection = graphics_device_pipeline.reflection();
 
         // Group CombinedImageSampler bindings by set index
@@ -261,7 +275,11 @@ impl Material {
             if binding.binding_type == BindingType::CombinedImageSampler {
                 if let Some(&tex_idx) = texture_names.get(&binding.name) {
                     let slot = &textures[tex_idx];
-                    let graphics_device_texture = slot.texture().graphics_device_texture();
+                    // Resolve the texture key to get the GPU texture
+                    let texture_arc = resource_manager.texture(slot.texture())
+                        .ok_or_else(|| engine_err!("galaxy3d::Material",
+                            "Texture key not found during binding group creation"))?;
+                    let graphics_device_texture = texture_arc.graphics_device_texture();
                     sets.entry(binding.set)
                         .or_default()
                         .push((binding.binding, BindingResource::SampledTexture(
@@ -308,9 +326,9 @@ impl Material {
 
     // ===== PIPELINE ACCESS =====
 
-    /// Get the referenced pipeline
-    pub fn pipeline(&self) -> &Arc<Pipeline> {
-        &self.pipeline
+    /// Get the pipeline key
+    pub fn pipeline(&self) -> PipelineKey {
+        self.pipeline
     }
 
     // ===== TEXTURE SLOT ACCESS =====
@@ -478,9 +496,9 @@ impl MaterialTextureSlot {
         &self.name
     }
 
-    /// Get the texture resource
-    pub fn texture(&self) -> &Arc<Texture> {
-        &self.texture
+    /// Get the texture key
+    pub fn texture(&self) -> TextureKey {
+        self.texture
     }
 
     /// Get the resolved layer index (None = whole texture / layer 0)

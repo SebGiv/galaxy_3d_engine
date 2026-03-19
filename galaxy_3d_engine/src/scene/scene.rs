@@ -12,6 +12,7 @@ use crate::engine_err;
 use crate::graphics_device::{self, BindingGroup, BindingResource};
 use crate::resource::buffer::Buffer;
 use crate::resource::mesh::Mesh;
+use crate::resource::resource_manager::{ResourceManager, MeshKey};
 use crate::utils::{SlotAllocator, SwapSet};
 use super::render_instance::{
     RenderInstance, RenderInstanceKey, AABB,
@@ -115,24 +116,30 @@ impl Scene {
     /// Create a RenderInstance from a Mesh and add it to the scene
     ///
     /// Returns a stable key that remains valid until the instance is removed.
-    /// Resolves binding groups and push constants against pipeline reflection.
+    /// Resolves keys via the ResourceManager.
     ///
     /// # Arguments
     ///
-    /// * `mesh` - Source mesh resource
+    /// * `mesh_key` - Key of the mesh resource in the ResourceManager
     /// * `world_matrix` - World transform matrix
     /// * `bounding_box` - AABB in local space
+    /// * `resource_manager` - ResourceManager for resolving keys
     pub fn create_render_instance(
         &mut self,
-        mesh: &Mesh,
+        mesh_key: MeshKey,
         world_matrix: Mat4,
         bounding_box: AABB,
+        resource_manager: &ResourceManager,
     ) -> Result<RenderInstanceKey> {
-        self.ensure_global_binding_group(mesh)?;
+        let mesh = resource_manager.mesh(mesh_key)
+            .ok_or_else(|| engine_err!("galaxy3d::Scene", "Mesh key not found in ResourceManager"))?;
+
+        self.ensure_global_binding_group(mesh, resource_manager)?;
 
         let instance = RenderInstance::from_mesh(
             mesh, world_matrix, bounding_box,
             &mut self.draw_slot_allocator,
+            resource_manager,
         )?;
         let key = self.render_instances.insert(instance);
         self.new_instances.insert(key);
@@ -266,7 +273,7 @@ impl Scene {
     /// All pipelines must declare the same Set 0 layout (frame UBO + instance SSBO +
     /// material SSBO + light SSBO). We use the first pipeline from the mesh to create
     /// the descriptor set.
-    fn ensure_global_binding_group(&mut self, mesh: &Mesh) -> Result<()> {
+    fn ensure_global_binding_group(&mut self, mesh: &Mesh, resource_manager: &ResourceManager) -> Result<()> {
         if self.global_binding_group.is_some() {
             return Ok(());
         }
@@ -275,7 +282,12 @@ impl Scene {
             .ok_or_else(|| engine_err!("galaxy3d::Scene", "Mesh has no LODs"))?;
         let submesh = mesh_lod.submesh(0)
             .ok_or_else(|| engine_err!("galaxy3d::Scene", "MeshLOD has no submeshes"))?;
-        let gd_pipeline = submesh.material().pipeline().graphics_device_pipeline();
+
+        let material = resource_manager.material(submesh.material())
+            .ok_or_else(|| engine_err!("galaxy3d::Scene", "Material key not found in ResourceManager"))?;
+        let pipeline = resource_manager.pipeline(material.pipeline())
+            .ok_or_else(|| engine_err!("galaxy3d::Scene", "Pipeline key not found in ResourceManager"))?;
+        let gd_pipeline = pipeline.graphics_device_pipeline();
 
         let graphics_device_lock = self.graphics_device.lock().unwrap();
         let bg = graphics_device_lock.create_binding_group(

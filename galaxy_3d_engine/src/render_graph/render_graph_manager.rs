@@ -18,7 +18,7 @@ pub struct RenderGraphManager {
 
 impl RenderGraphManager {
     /// Create a new empty render graph manager
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             render_graphs: FxHashMap::default(),
         }

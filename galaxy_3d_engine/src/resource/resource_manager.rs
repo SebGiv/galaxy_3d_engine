@@ -1,9 +1,10 @@
 ////! Central resource manager for the engine.
 //!
 //! Stores and provides access to all engine resources (textures, geometries, etc.).
-//! Resources will be added incrementally as the engine evolves.
+//! Uses SlotMaps for O(1) key-based access with stable keys, plus name-based lookup.
 
 use rustc_hash::FxHashMap;
+use slotmap::SlotMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::graphics_device;
@@ -29,14 +30,21 @@ use crate::resource::buffer::{
 use crate::resource::material::ParamValue;
 use crate::utils::SlotAllocator;
 
-pub struct ResourceManager {
-    textures: FxHashMap<String, Arc<Texture>>,
-    geometries: FxHashMap<String, Arc<Geometry>>,
-    pipelines: FxHashMap<String, Arc<Pipeline>>,
-    materials: FxHashMap<String, Arc<Material>>,
-    meshes: FxHashMap<String, Arc<Mesh>>,
-    buffers: FxHashMap<String, Arc<Buffer>>,
-    material_slot_allocator: SlotAllocator,
+// ===== RESOURCE KEYS =====
+
+slotmap::new_key_type! {
+    /// Stable key for a Texture in the ResourceManager.
+    pub struct TextureKey;
+    /// Stable key for a Geometry in the ResourceManager.
+    pub struct GeometryKey;
+    /// Stable key for a Pipeline in the ResourceManager.
+    pub struct PipelineKey;
+    /// Stable key for a Material in the ResourceManager.
+    pub struct MaterialKey;
+    /// Stable key for a Mesh in the ResourceManager.
+    pub struct MeshKey;
+    /// Stable key for a Buffer in the ResourceManager.
+    pub struct BufferKey;
 }
 
 // ===== PRIVATE HELPERS =====
@@ -85,16 +93,42 @@ fn param_to_padded_bytes(value: &ParamValue) -> Vec<u8> {
     }
 }
 
+pub struct ResourceManager {
+    textures: SlotMap<TextureKey, Arc<Texture>>,
+    geometries: SlotMap<GeometryKey, Arc<Geometry>>,
+    pipelines: SlotMap<PipelineKey, Arc<Pipeline>>,
+    materials: SlotMap<MaterialKey, Arc<Material>>,
+    meshes: SlotMap<MeshKey, Arc<Mesh>>,
+    buffers: SlotMap<BufferKey, Arc<Buffer>>,
+
+    texture_names: FxHashMap<String, TextureKey>,
+    geometry_names: FxHashMap<String, GeometryKey>,
+    pipeline_names: FxHashMap<String, PipelineKey>,
+    material_names: FxHashMap<String, MaterialKey>,
+    mesh_names: FxHashMap<String, MeshKey>,
+    buffer_names: FxHashMap<String, BufferKey>,
+
+    material_slot_allocator: SlotAllocator,
+}
+
 impl ResourceManager {
     /// Create a new empty resource manager
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            textures: FxHashMap::default(),
-            geometries: FxHashMap::default(),
-            pipelines: FxHashMap::default(),
-            materials: FxHashMap::default(),
-            meshes: FxHashMap::default(),
-            buffers: FxHashMap::default(),
+            textures: SlotMap::with_key(),
+            geometries: SlotMap::with_key(),
+            pipelines: SlotMap::with_key(),
+            materials: SlotMap::with_key(),
+            meshes: SlotMap::with_key(),
+            buffers: SlotMap::with_key(),
+
+            texture_names: FxHashMap::default(),
+            geometry_names: FxHashMap::default(),
+            pipeline_names: FxHashMap::default(),
+            material_names: FxHashMap::default(),
+            mesh_names: FxHashMap::default(),
+            buffer_names: FxHashMap::default(),
+
             material_slot_allocator: SlotAllocator::new(),
         }
     }
@@ -104,15 +138,9 @@ impl ResourceManager {
     /// Create a texture (simple or indexed, with optional atlas regions per layer)
     ///
     /// Internally creates the GPU texture and descriptor set via the graphics_device.
-    /// Returns the created texture for immediate use.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Unique name for this texture resource
-    /// * `desc` - Texture descriptor with graphics_device, texture settings, and layers
-    ///
-    pub fn create_texture(&mut self, name: String, desc: TextureDesc) -> Result<Arc<Texture>> {
-        if self.textures.contains_key(&name) {
+    /// Returns the TextureKey for future access.
+    pub fn create_texture(&mut self, name: String, desc: TextureDesc) -> Result<TextureKey> {
+        if self.texture_names.contains_key(&name) {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Texture '{}' already exists", name);
         }
 
@@ -120,29 +148,50 @@ impl ResourceManager {
         let is_simple = texture.is_simple();
         let layer_count = texture.layer_count();
 
-        let texture_arc = Arc::new(texture);
-        self.textures.insert(name.clone(), Arc::clone(&texture_arc));
+        let key = self.textures.insert(Arc::new(texture));
+        self.texture_names.insert(name.clone(), key);
 
         crate::engine_info!("galaxy3d::ResourceManager",
             "Created {} texture '{}' ({} layer{})",
             if is_simple { "Simple" } else { "Indexed" },
             name, layer_count, if layer_count > 1 { "s" } else { "" });
 
-        Ok(texture_arc)
+        Ok(key)
     }
 
     // ===== TEXTURE ACCESS =====
 
+    /// Get a texture by key
+    pub fn texture(&self, key: TextureKey) -> Option<&Arc<Texture>> {
+        self.textures.get(key)
+    }
+
     /// Get a texture by name
-    pub fn texture(&self, name: &str) -> Option<&Arc<Texture>> {
-        self.textures.get(name)
+    pub fn texture_by_name(&self, name: &str) -> Option<&Arc<Texture>> {
+        let key = self.texture_names.get(name)?;
+        self.textures.get(*key)
+    }
+
+    /// Get texture key by name
+    pub fn texture_key(&self, name: &str) -> Option<TextureKey> {
+        self.texture_names.get(name).copied()
+    }
+
+    /// Remove a texture by key
+    pub fn remove_texture(&mut self, key: TextureKey) -> bool {
+        if let Some(_) = self.textures.remove(key) {
+            self.texture_names.retain(|_, v| *v != key);
+            crate::engine_info!("galaxy3d::ResourceManager", "Removed Texture resource");
+            true
+        } else {
+            false
+        }
     }
 
     /// Remove a texture by name
-    ///
-    /// Returns `true` if the texture was found and removed.
-    pub fn remove_texture(&mut self, name: &str) -> bool {
-        if self.textures.remove(name).is_some() {
+    pub fn remove_texture_by_name(&mut self, name: &str) -> bool {
+        if let Some(key) = self.texture_names.remove(name) {
+            self.textures.remove(key);
             crate::engine_info!("galaxy3d::ResourceManager", "Removed Texture resource '{}'", name);
             true
         } else {
@@ -158,54 +207,32 @@ impl ResourceManager {
     // ===== TEXTURE MODIFICATION =====
 
     /// Add a layer to an existing indexed texture
-    ///
-    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the texture Arc exist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The texture does not exist
-    /// - The texture is a simple texture (array_layers=1)
-    /// - Other Arc references prevent mutable access
-    /// - Layer validation fails
     pub fn add_texture_layer(
         &mut self,
-        texture_name: &str,
+        texture_key: TextureKey,
         desc: LayerDesc,
     ) -> Result<u32> {
-        let arc = self.textures.get_mut(texture_name)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Texture '{}' not found", texture_name))?;
+        let arc = self.textures.get_mut(texture_key)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Texture not found"))?;
 
         let texture = Arc::get_mut(arc)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate texture '{}': other references exist", texture_name))?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate texture: other references exist"))?;
 
         texture.add_layer(desc)
     }
 
     /// Add a region to an existing texture layer
-    ///
-    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the texture Arc exist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The texture does not exist
-    /// - The layer does not exist
-    /// - Other Arc references prevent mutable access
-    /// - Region validation fails
     pub fn add_texture_region(
         &mut self,
-        texture_name: &str,
+        texture_key: TextureKey,
         layer_name: &str,
         desc: AtlasRegionDesc,
     ) -> Result<u32> {
-        let arc = self.textures.get_mut(texture_name)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Texture '{}' not found", texture_name))?;
+        let arc = self.textures.get_mut(texture_key)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Texture not found"))?;
 
         let texture = Arc::get_mut(arc)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate texture '{}': other references exist", texture_name))?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate texture: other references exist"))?;
 
         texture.add_region(layer_name, desc)
     }
@@ -213,17 +240,8 @@ impl ResourceManager {
     // ===== GEOMETRY CREATION =====
 
     /// Create a geometry resource and register it
-    ///
-    /// Internally creates the GPU vertex and index buffers from the provided data.
-    /// Vertex and index counts are computed automatically from data length and layout.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Unique name for this geometry resource (group name)
-    /// * `desc` - Geometry description with graphics_device, vertex/index data and meshes
-    ///
-    pub fn create_geometry(&mut self, name: String, desc: GeometryDesc) -> Result<Arc<Geometry>> {
-        if self.geometries.contains_key(&name) {
+    pub fn create_geometry(&mut self, name: String, desc: GeometryDesc) -> Result<GeometryKey> {
+        if self.geometry_names.contains_key(&name) {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Geometry '{}' already exists", name);
         }
 
@@ -231,28 +249,39 @@ impl ResourceManager {
         let mesh_count = geometry.mesh_count();
         let total_vertex_count = geometry.total_vertex_count();
         let total_index_count = geometry.total_index_count();
-        let geometry_arc = Arc::new(geometry);
-        self.geometries.insert(name.clone(), Arc::clone(&geometry_arc));
+
+        let key = self.geometries.insert(Arc::new(geometry));
+        self.geometry_names.insert(name.clone(), key);
 
         crate::engine_info!("galaxy3d::ResourceManager",
             "Created Geometry resource '{}' ({} vertices, {} indices, {} meshes)",
             name, total_vertex_count, total_index_count, mesh_count);
 
-        Ok(geometry_arc)
+        Ok(key)
     }
 
     // ===== GEOMETRY ACCESS =====
 
+    /// Get a geometry by key
+    pub fn geometry(&self, key: GeometryKey) -> Option<&Arc<Geometry>> {
+        self.geometries.get(key)
+    }
+
     /// Get a geometry by name
-    pub fn geometry(&self, name: &str) -> Option<&Arc<Geometry>> {
-        self.geometries.get(name)
+    pub fn geometry_by_name(&self, name: &str) -> Option<&Arc<Geometry>> {
+        let key = self.geometry_names.get(name)?;
+        self.geometries.get(*key)
+    }
+
+    /// Get geometry key by name
+    pub fn geometry_key(&self, name: &str) -> Option<GeometryKey> {
+        self.geometry_names.get(name).copied()
     }
 
     /// Remove a geometry by name
-    ///
-    /// Returns `true` if the geometry was found and removed.
     pub fn remove_geometry(&mut self, name: &str) -> bool {
-        if self.geometries.remove(name).is_some() {
+        if let Some(key) = self.geometry_names.remove(name) {
+            self.geometries.remove(key);
             crate::engine_info!("galaxy3d::ResourceManager", "Removed Geometry resource '{}'", name);
             true
         } else {
@@ -268,141 +297,96 @@ impl ResourceManager {
     // ===== GEOMETRY MODIFICATION =====
 
     /// Add a mesh to an existing geometry resource
-    ///
-    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the geometry Arc exist.
-    ///
-    /// # Returns
-    ///
-    /// The id (index) of the newly created mesh.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The geometry does not exist
-    /// - Other Arc references prevent mutable access
-    /// - A mesh with the same name already exists
-    /// - Submesh validation fails (offsets exceed buffer sizes)
-    pub fn add_geometry_mesh(&mut self, geom_name: &str, desc: GeometryMeshDesc) -> Result<usize> {
-        let arc = self.geometries.get_mut(geom_name)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry '{}' not found", geom_name))?;
+    pub fn add_geometry_mesh(&mut self, geom_key: GeometryKey, desc: GeometryMeshDesc) -> Result<usize> {
+        let arc = self.geometries.get_mut(geom_key)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry not found"))?;
 
         let geometry = Arc::get_mut(arc)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry '{}': other references exist", geom_name))?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry: other references exist"))?;
 
         geometry.add_mesh(desc)
     }
 
     /// Add a LOD to an existing mesh
-    ///
-    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the geometry Arc exist.
-    ///
-    /// # Returns
-    ///
-    /// The lod index of the newly created LOD.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The geometry does not exist
-    /// - The mesh does not exist
-    /// - Other Arc references prevent mutable access
-    /// - Submesh validation fails
     pub fn add_geometry_lod(
         &mut self,
-        geom_name: &str,
+        geom_key: GeometryKey,
         mesh_id: usize,
         desc: GeometryLODDesc,
     ) -> Result<usize> {
-        let arc = self.geometries.get_mut(geom_name)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry '{}' not found", geom_name))?;
+        let arc = self.geometries.get_mut(geom_key)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry not found"))?;
 
         let geometry = Arc::get_mut(arc)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry '{}': other references exist", geom_name))?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry: other references exist"))?;
 
         geometry.add_lod(mesh_id, desc)
     }
 
     /// Add a submesh to an existing LOD
-    ///
-    /// Uses `Arc::get_mut` for safe mutable access. This will fail if other
-    /// references to the geometry Arc exist.
-    ///
-    /// # Returns
-    ///
-    /// The id (index) of the newly created submesh.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The geometry does not exist
-    /// - The mesh does not exist
-    /// - Other Arc references prevent mutable access
-    /// - A submesh with the same name already exists in the LOD
-    /// - Submesh validation fails (offsets exceed buffer sizes)
     pub fn add_geometry_submesh(
         &mut self,
-        geom_name: &str,
+        geom_key: GeometryKey,
         mesh_id: usize,
         lod_index: usize,
         desc: GeometrySubMeshDesc,
     ) -> Result<usize> {
-        let arc = self.geometries.get_mut(geom_name)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry '{}' not found", geom_name))?;
+        let arc = self.geometries.get_mut(geom_key)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry not found"))?;
 
         let geometry = Arc::get_mut(arc)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry '{}': other references exist", geom_name))?;
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry: other references exist"))?;
 
         geometry.add_submesh(mesh_id, lod_index, desc)
     }
 
     // ===== PIPELINE CREATION =====
 
-    /// Create a pipeline resource with optional variants
-    ///
-    /// Internally creates GPU pipelines for each variant via the graphics_device.
-    /// Returns the created pipeline for immediate use.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Unique name for this pipeline resource
-    /// * `desc` - Pipeline descriptor with graphics_device and variant configurations
-    ///
+    /// Create a pipeline resource
     pub fn create_pipeline(
         &mut self,
         name: String,
         desc: PipelineDesc,
         graphics_device: &mut dyn graphics_device::GraphicsDevice,
-    ) -> Result<Arc<Pipeline>> {
-        if self.pipelines.contains_key(&name) {
+    ) -> Result<PipelineKey> {
+        if self.pipeline_names.contains_key(&name) {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Pipeline '{}' already exists", name);
         }
 
         let gd_pipeline = graphics_device.create_pipeline(desc.pipeline)?;
         let pipeline = Pipeline::from_gpu_pipeline(gd_pipeline);
 
-        let pipeline_arc = Arc::new(pipeline);
-        self.pipelines.insert(name.clone(), Arc::clone(&pipeline_arc));
+        let key = self.pipelines.insert(Arc::new(pipeline));
+        self.pipeline_names.insert(name.clone(), key);
 
         crate::engine_info!("galaxy3d::ResourceManager",
             "Created Pipeline resource '{}'", name);
 
-        Ok(pipeline_arc)
+        Ok(key)
     }
 
     // ===== PIPELINE ACCESS =====
 
+    /// Get a pipeline by key
+    pub fn pipeline(&self, key: PipelineKey) -> Option<&Arc<Pipeline>> {
+        self.pipelines.get(key)
+    }
+
     /// Get a pipeline by name
-    pub fn pipeline(&self, name: &str) -> Option<&Arc<Pipeline>> {
-        self.pipelines.get(name)
+    pub fn pipeline_by_name(&self, name: &str) -> Option<&Arc<Pipeline>> {
+        let key = self.pipeline_names.get(name)?;
+        self.pipelines.get(*key)
+    }
+
+    /// Get pipeline key by name
+    pub fn pipeline_key(&self, name: &str) -> Option<PipelineKey> {
+        self.pipeline_names.get(name).copied()
     }
 
     /// Remove a pipeline by name
-    ///
-    /// Returns `true` if the pipeline was found and removed.
     pub fn remove_pipeline(&mut self, name: &str) -> bool {
-        if self.pipelines.remove(name).is_some() {
+        if let Some(key) = self.pipeline_names.remove(name) {
+            self.pipelines.remove(key);
             crate::engine_info!("galaxy3d::ResourceManager", "Removed Pipeline resource '{}'", name);
             true
         } else {
@@ -418,32 +402,23 @@ impl ResourceManager {
     // ===== MATERIAL CREATION =====
 
     /// Create a material resource and register it
-    ///
-    /// A material is a pure data description: pipeline reference, texture slots,
-    /// and named parameters. No GPU resources are created at this level.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Unique name for this material resource
-    /// * `desc` - Material descriptor with pipeline, textures, and parameters
-    ///
     pub fn create_material(
         &mut self,
         name: String,
         desc: MaterialDesc,
         graphics_device: &dyn graphics_device::GraphicsDevice,
-    ) -> Result<Arc<Material>> {
-        if self.materials.contains_key(&name) {
+    ) -> Result<MaterialKey> {
+        if self.material_names.contains_key(&name) {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Material '{}' already exists", name);
         }
 
         let slot_id = self.material_slot_allocator.alloc();
-        let material = Material::from_desc(slot_id, desc, graphics_device)?;
+        let material = Material::from_desc(slot_id, desc, &*self, graphics_device)?;
         let texture_count = material.texture_slot_count();
         let param_count = material.param_count();
 
-        let material_arc = Arc::new(material);
-        self.materials.insert(name.clone(), Arc::clone(&material_arc));
+        let key = self.materials.insert(Arc::new(material));
+        self.material_names.insert(name.clone(), key);
 
         crate::engine_info!("galaxy3d::ResourceManager",
             "Created Material resource '{}' slot {} ({} texture slot{}, {} param{})",
@@ -451,28 +426,38 @@ impl ResourceManager {
             texture_count, if texture_count != 1 { "s" } else { "" },
             param_count, if param_count != 1 { "s" } else { "" });
 
-        Ok(material_arc)
+        Ok(key)
     }
 
     // ===== MATERIAL ACCESS =====
 
+    /// Get a material by key
+    pub fn material(&self, key: MaterialKey) -> Option<&Arc<Material>> {
+        self.materials.get(key)
+    }
+
     /// Get a material by name
-    pub fn material(&self, name: &str) -> Option<&Arc<Material>> {
-        self.materials.get(name)
+    pub fn material_by_name(&self, name: &str) -> Option<&Arc<Material>> {
+        let key = self.material_names.get(name)?;
+        self.materials.get(*key)
+    }
+
+    /// Get material key by name
+    pub fn material_key(&self, name: &str) -> Option<MaterialKey> {
+        self.material_names.get(name).copied()
     }
 
     /// Remove a material by name
-    ///
-    /// Returns `true` if the material was found and removed.
     pub fn remove_material(&mut self, name: &str) -> bool {
-        if let Some(material) = self.materials.remove(name) {
-            self.material_slot_allocator.free(material.slot_id());
-            crate::engine_info!("galaxy3d::ResourceManager",
-                "Removed Material resource '{}' (freed slot {})", name, material.slot_id());
-            true
-        } else {
-            false
+        if let Some(key) = self.material_names.remove(name) {
+            if let Some(material) = self.materials.remove(key) {
+                self.material_slot_allocator.free(material.slot_id());
+                crate::engine_info!("galaxy3d::ResourceManager",
+                    "Removed Material resource '{}' (freed slot {})", name, material.slot_id());
+                return true;
+            }
         }
+        false
     }
 
     /// Get the number of registered materials
@@ -498,13 +483,13 @@ impl ResourceManager {
     /// Copies values only when name AND type match. Non-blocking warnings
     /// for mismatches (the function never fails on a mismatch).
     pub fn sync_materials_to_buffer(&self, buffer: &Buffer) -> Result<()> {
-        for (mat_name, material) in &self.materials {
+        for (_, material) in &self.materials {
             let slot_id = material.slot_id();
 
             if slot_id >= buffer.count() {
                 crate::engine_warn!("galaxy3d::ResourceManager",
-                    "sync_materials: material '{}' slot_id {} exceeds buffer count {}",
-                    mat_name, slot_id, buffer.count());
+                    "sync_materials: material slot_id {} exceeds buffer count {}",
+                    slot_id, buffer.count());
                 continue;
             }
 
@@ -514,8 +499,8 @@ impl ResourceManager {
                     Some(idx) => idx,
                     None => {
                         crate::engine_warn!("galaxy3d::ResourceManager",
-                            "sync_materials: material '{}' param '{}' not found in buffer layout",
-                            mat_name, param.name());
+                            "sync_materials: param '{}' not found in buffer layout",
+                            param.name());
                         continue;
                     }
                 };
@@ -526,17 +511,17 @@ impl ResourceManager {
 
                 if param_type != field_type {
                     crate::engine_warn!("galaxy3d::ResourceManager",
-                        "sync_materials: material '{}' param '{}' type mismatch (param: {:?}, field: {:?})",
-                        mat_name, param.name(), param_type, field_type);
+                        "sync_materials: param '{}' type mismatch (param: {:?}, field: {:?})",
+                        param.name(), param_type, field_type);
                     continue;
                 }
 
                 // 3. Specific Bool→UInt info warning
                 if matches!(param.value(), ParamValue::Bool(_)) {
                     crate::engine_warn!("galaxy3d::ResourceManager",
-                        "sync_materials: material '{}' param '{}' is Bool, \
+                        "sync_materials: param '{}' is Bool, \
                          mapped to UInt field (GLSL convention)",
-                        mat_name, param.name());
+                        param.name());
                 }
 
                 // 4. Convert to padded bytes and write
@@ -551,9 +536,9 @@ impl ResourceManager {
                     Some(idx) => idx,
                     None => {
                         crate::engine_warn!("galaxy3d::ResourceManager",
-                            "sync_materials: material '{}' texture slot '{}' \
+                            "sync_materials: texture slot '{}' \
                              not found in buffer layout",
-                            mat_name, slot.name());
+                            slot.name());
                         continue;
                     }
                 };
@@ -562,9 +547,9 @@ impl ResourceManager {
                 let field_type = buffer.fields()[field_index].field_type;
                 if field_type != FieldType::UInt {
                     crate::engine_warn!("galaxy3d::ResourceManager",
-                        "sync_materials: material '{}' texture slot '{}' \
+                        "sync_materials: texture slot '{}' \
                          expects UInt field, found {:?}",
-                        mat_name, slot.name(), field_type);
+                        slot.name(), field_type);
                     continue;
                 }
 
@@ -579,46 +564,46 @@ impl ResourceManager {
     // ===== MESH CREATION =====
 
     /// Create a mesh resource and register it
-    ///
-    /// A mesh combines a GeometryMesh with Materials per submesh per LOD,
-    /// forming a renderable object. No GPU resources beyond those already
-    /// created for Geometry/Material are needed.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Unique name for this mesh resource
-    /// * `desc` - Mesh descriptor with geometry, mesh reference, and LOD material assignments
-    ///
-    pub fn create_mesh(&mut self, name: String, desc: MeshDesc) -> Result<Arc<Mesh>> {
-        if self.meshes.contains_key(&name) {
+    pub fn create_mesh(&mut self, name: String, desc: MeshDesc) -> Result<MeshKey> {
+        if self.mesh_names.contains_key(&name) {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Mesh '{}' already exists", name);
         }
 
-        let mesh = Mesh::from_desc(desc)?;
+        let mesh = Mesh::from_desc(desc, &*self)?;
         let lod_count = mesh.lod_count();
 
-        let mesh_arc = Arc::new(mesh);
-        self.meshes.insert(name.clone(), Arc::clone(&mesh_arc));
+        let key = self.meshes.insert(Arc::new(mesh));
+        self.mesh_names.insert(name.clone(), key);
 
         crate::engine_info!("galaxy3d::ResourceManager",
             "Created Mesh resource '{}' ({} LOD{})",
             name, lod_count, if lod_count != 1 { "s" } else { "" });
 
-        Ok(mesh_arc)
+        Ok(key)
     }
 
     // ===== MESH ACCESS =====
 
+    /// Get a mesh by key
+    pub fn mesh(&self, key: MeshKey) -> Option<&Arc<Mesh>> {
+        self.meshes.get(key)
+    }
+
     /// Get a mesh by name
-    pub fn mesh(&self, name: &str) -> Option<&Arc<Mesh>> {
-        self.meshes.get(name)
+    pub fn mesh_by_name(&self, name: &str) -> Option<&Arc<Mesh>> {
+        let key = self.mesh_names.get(name)?;
+        self.meshes.get(*key)
+    }
+
+    /// Get mesh key by name
+    pub fn mesh_key(&self, name: &str) -> Option<MeshKey> {
+        self.mesh_names.get(name).copied()
     }
 
     /// Remove a mesh by name
-    ///
-    /// Returns `true` if the mesh was found and removed.
     pub fn remove_mesh(&mut self, name: &str) -> bool {
-        if self.meshes.remove(name).is_some() {
+        if let Some(key) = self.mesh_names.remove(name) {
+            self.meshes.remove(key);
             crate::engine_info!("galaxy3d::ResourceManager", "Removed Mesh resource '{}'", name);
             true
         } else {
@@ -634,44 +619,49 @@ impl ResourceManager {
     // ===== BUFFER CREATION =====
 
     /// Create a structured GPU buffer resource (UBO or SSBO)
-    ///
-    /// Computes the layout from the field descriptors (std140 for UBO, std430 for SSBO), allocates
-    /// the GPU buffer, and registers the resource.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Unique name for this buffer resource
-    /// * `desc` - Buffer descriptor with graphics_device, kind, fields, and element count
-    ///
-    pub fn create_buffer(&mut self, name: String, desc: BufferDesc) -> Result<Arc<Buffer>> {
-        if self.buffers.contains_key(&name) {
+    pub fn create_buffer(&mut self, name: String, desc: BufferDesc) -> Result<BufferKey> {
+        if self.buffer_names.contains_key(&name) {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Buffer '{}' already exists", name);
         }
 
         let buffer = Buffer::from_desc(desc)?;
-        let buffer_arc = Arc::new(buffer);
-        self.buffers.insert(name.clone(), Arc::clone(&buffer_arc));
+        let kind = buffer.kind();
+        let count = buffer.count();
+        let stride = buffer.stride();
+        let size = buffer.size();
+
+        let key = self.buffers.insert(Arc::new(buffer));
+        self.buffer_names.insert(name.clone(), key);
 
         crate::engine_info!("galaxy3d::ResourceManager",
             "Created {:?} buffer '{}' ({} elements, stride {} bytes, total {} bytes)",
-            buffer_arc.kind(), name, buffer_arc.count(),
-            buffer_arc.stride(), buffer_arc.size());
+            kind, name, count, stride, size);
 
-        Ok(buffer_arc)
+        Ok(key)
     }
 
     // ===== BUFFER ACCESS =====
 
+    /// Get a buffer by key
+    pub fn buffer(&self, key: BufferKey) -> Option<&Arc<Buffer>> {
+        self.buffers.get(key)
+    }
+
     /// Get a buffer by name
-    pub fn buffer(&self, name: &str) -> Option<&Arc<Buffer>> {
-        self.buffers.get(name)
+    pub fn buffer_by_name(&self, name: &str) -> Option<&Arc<Buffer>> {
+        let key = self.buffer_names.get(name)?;
+        self.buffers.get(*key)
+    }
+
+    /// Get buffer key by name
+    pub fn buffer_key(&self, name: &str) -> Option<BufferKey> {
+        self.buffer_names.get(name).copied()
     }
 
     /// Remove a buffer by name
-    ///
-    /// Returns `true` if the buffer was found and removed.
     pub fn remove_buffer(&mut self, name: &str) -> bool {
-        if self.buffers.remove(name).is_some() {
+        if let Some(key) = self.buffer_names.remove(name) {
+            self.buffers.remove(key);
             crate::engine_info!("galaxy3d::ResourceManager", "Removed Buffer resource '{}'", name);
             true
         } else {
@@ -700,8 +690,8 @@ impl ResourceManager {
         &mut self,
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
-    ) -> Result<Arc<Buffer>> {
-        let buffer = self.create_buffer(name, BufferDesc {
+    ) -> Result<BufferKey> {
+        let key = self.create_buffer(name, BufferDesc {
             graphics_device,
             kind: BufferKind::Uniform,
             fields: vec![
@@ -725,6 +715,8 @@ impl ResourceManager {
             count: 1,
         })?;
 
+        let buffer = self.buffer(key).unwrap();
+
         // Defaults for fields that cause artifacts or crashes if left at 0
         let f = |name: &str| buffer.field_id(name).unwrap();
 
@@ -737,26 +729,17 @@ impl ResourceManager {
         buffer.update_field(0, f("farPlane"),         &1000.0f32.to_ne_bytes())?;
         buffer.update_field(0, f("ambientIntensity"), &1.0f32.to_ne_bytes())?;
 
-        Ok(buffer)
+        Ok(key)
     }
 
     /// Create a default per-instance storage buffer (SSBO) with standard engine fields.
-    ///
-    /// Layout (std430, 256 bytes per element):
-    /// - Transform: world, previousWorld, inverseWorld (Mat4)
-    /// - References: materialSlotId, flags (UInt)
-    /// - 8 bytes padding (Vec4 alignment)
-    /// - Custom: customData (Vec4)
-    /// - Lighting: lightIndices0, lightIndices1 (UVec4) — 8 light indices, 0xFFFFFFFF = empty
-    ///
-    /// Light indices default to 0xFFFFFFFF (no light assigned).
     pub fn create_default_instance_buffer(
         &mut self,
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
-    ) -> Result<Arc<Buffer>> {
-        let buffer = self.create_buffer(name, BufferDesc {
+    ) -> Result<BufferKey> {
+        let key = self.create_buffer(name, BufferDesc {
             graphics_device,
             kind: BufferKind::Storage,
             fields: vec![
@@ -773,6 +756,8 @@ impl ResourceManager {
             count,
         })?;
 
+        let buffer = self.buffer(key).unwrap();
+
         // Safe defaults: lightCount = 0 (zero-initialized), no lights assigned (sentinel 0xFFFFFFFF)
         let no_light = [0xFFFFFFFFu32; 4];
         for i in 0..count {
@@ -780,28 +765,17 @@ impl ResourceManager {
             buffer.update_field(i, 8, bytemuck::bytes_of(&no_light))?; // lightIndices1
         }
 
-        Ok(buffer)
+        Ok(key)
     }
 
     /// Create a default material storage buffer (SSBO) with standard PBR fields.
-    ///
-    /// Layout (std430, 80 bytes per element):
-    /// - Color: baseColor, emissiveColor (Vec4)
-    /// - PBR factors: metallic, roughness, normalScale, ao (Float)
-    /// - Transparency: alphaCutoff, ior (Float)
-    /// - Texture indices: albedoTexture, normalTexture, metallicRoughnessTexture,
-    ///   emissiveTexture, aoTexture (UInt) — u32::MAX = no texture
-    /// - Flags: flags (UInt) — bitfield for material properties
-    ///
-    /// Fields that would cause artifacts or crashes at zero are initialized
-    /// with safe defaults.
     pub fn create_default_material_buffer(
         &mut self,
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
-    ) -> Result<Arc<Buffer>> {
-        let buffer = self.create_buffer(name, BufferDesc {
+    ) -> Result<BufferKey> {
+        let key = self.create_buffer(name, BufferDesc {
             graphics_device,
             kind: BufferKind::Storage,
             fields: vec![
@@ -823,6 +797,8 @@ impl ResourceManager {
             count,
         })?;
 
+        let buffer = self.buffer(key).unwrap();
+
         // Safe defaults for all slots
         let f = |name: &str| buffer.field_id(name).unwrap();
         let no_texture = u32::MAX.to_ne_bytes();
@@ -841,27 +817,17 @@ impl ResourceManager {
             buffer.update_field(i, f("aoTexture"),                &no_texture)?;
         }
 
-        Ok(buffer)
+        Ok(key)
     }
 
     /// Create a default light storage buffer (SSBO) with standard light fields.
-    ///
-    /// Layout (std430, 80 bytes per element, no padding — all Vec4-aligned):
-    /// - positionType:   Vec4 (xyz=position, w=type: 0=dir, 1=point, 2=spot)
-    /// - directionRange: Vec4 (xyz=direction, w=range)
-    /// - colorIntensity: Vec4 (xyz=color, w=intensity)
-    /// - spotParams:     Vec4 (x=cos(inner), y=cos(outer), z=castShadows, w=enabled)
-    /// - attenuation:    Vec4 (x=constant, y=linear, z=quadratic, w=reserved)
-    ///
-    /// All lights default to disabled (spotParams.w = 0.0).
-    /// Attenuation defaults to inverse square law (0.0, 0.0, 1.0, 0.0).
     pub fn create_default_light_buffer(
         &mut self,
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
-    ) -> Result<Arc<Buffer>> {
-        let buffer = self.create_buffer(name, BufferDesc {
+    ) -> Result<BufferKey> {
+        let key = self.create_buffer(name, BufferDesc {
             graphics_device,
             kind: BufferKind::Storage,
             fields: vec![
@@ -874,6 +840,8 @@ impl ResourceManager {
             count,
         })?;
 
+        let buffer = self.buffer(key).unwrap();
+
         // Safe defaults: all lights disabled, inverse square attenuation
         for i in 0..count {
             buffer.update_field(i, 3, // spotParams: disabled
@@ -882,7 +850,7 @@ impl ResourceManager {
                 &[0.0f32, 0.0, 1.0, 0.0].map(|v| v.to_ne_bytes()).concat())?;
         }
 
-        Ok(buffer)
+        Ok(key)
     }
 }
 

@@ -26,31 +26,36 @@ fn create_test_buffers_via_rm(
     let rm_arc = Engine::resource_manager().unwrap();
     let mut rm = rm_arc.lock().unwrap();
 
-    let frame_buffer = rm.create_buffer(format!("{}_frame", prefix), BufferDesc {
+    let frame_key = rm.create_buffer(format!("{}_frame", prefix), BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Uniform,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap();
-    let instance_buffer = rm.create_buffer(format!("{}_instance", prefix), BufferDesc {
+    let instance_key = rm.create_buffer(format!("{}_instance", prefix), BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap();
-    let material_buffer = rm.create_buffer(format!("{}_material", prefix), BufferDesc {
+    let material_key = rm.create_buffer(format!("{}_material", prefix), BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap();
-    let light_buffer = rm.create_buffer(format!("{}_light", prefix), BufferDesc {
+    let light_key = rm.create_buffer(format!("{}_light", prefix), BufferDesc {
         graphics_device,
         kind: BufferKind::Storage,
         fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
         count: 1,
     }).unwrap();
-    (frame_buffer, instance_buffer, material_buffer, light_buffer)
+    (
+        rm.buffer(frame_key).unwrap().clone(),
+        rm.buffer(instance_key).unwrap().clone(),
+        rm.buffer(material_key).unwrap().clone(),
+        rm.buffer(light_key).unwrap().clone(),
+    )
 }
 
 // ============================================================================

@@ -5,7 +5,8 @@
 
 mod gpu_test_utils;
 
-use galaxy_3d_engine::galaxy3d::resource::{ResourceManager, TextureDesc, GeometryDesc};
+use galaxy_3d_engine::galaxy3d::Engine;
+use galaxy_3d_engine::galaxy3d::resource::{TextureDesc, GeometryDesc};
 use galaxy_3d_engine::galaxy3d::resource::{LayerDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc};
 use galaxy_3d_engine::galaxy3d::render::{
     TextureDesc as RenderTextureDesc, TextureFormat, TextureType, TextureUsage, MipmapMode,
@@ -27,7 +28,10 @@ fn test_integration_create_texture_with_vulkan() {
     let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
-    let mut rm = ResourceManager::new();
+    Engine::initialize().ok();
+    Engine::create_resource_manager().ok();
+    let rm_arc = Engine::resource_manager().unwrap();
+    let mut rm = rm_arc.lock().unwrap();
 
     // Create texture descriptor
     let desc = TextureDesc {
@@ -57,7 +61,7 @@ fn test_integration_create_texture_with_vulkan() {
 
     // Verify
     assert_eq!(rm.texture_count(), 1);
-    assert!(rm.texture("test_texture").is_some());
+    assert!(rm.texture_by_name("test_texture").is_some());
 }
 
 #[test]
@@ -68,7 +72,10 @@ fn test_integration_create_geometry_with_vulkan() {
     let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
-    let mut rm = ResourceManager::new();
+    Engine::initialize().ok();
+    Engine::create_resource_manager().ok();
+    let rm_arc = Engine::resource_manager().unwrap();
+    let mut rm = rm_arc.lock().unwrap();
 
     // Create vertex data (quad: 4 vertices)
     let vertices: Vec<f32> = vec![
@@ -141,9 +148,9 @@ fn test_integration_create_geometry_with_vulkan() {
 
     // Verify
     assert_eq!(rm.geometry_count(), 1);
-    assert!(rm.geometry("test_geom").is_some());
+    assert!(rm.geometry_by_name("test_geom").is_some());
 
-    let geom_ref = rm.geometry("test_geom").unwrap();
+    let geom_ref = rm.geometry_by_name("test_geom").unwrap();
     assert_eq!(geom_ref.total_vertex_count(), 4);
     assert_eq!(geom_ref.total_index_count(), 6);
     assert!(geom_ref.is_indexed());
@@ -157,7 +164,10 @@ fn test_integration_multiple_resources() {
     let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
-    let mut rm = ResourceManager::new();
+    Engine::initialize().ok();
+    Engine::create_resource_manager().ok();
+    let rm_arc = Engine::resource_manager().unwrap();
+    let mut rm = rm_arc.lock().unwrap();
 
     // Create multiple textures
     for i in 0..3 {
@@ -187,9 +197,9 @@ fn test_integration_multiple_resources() {
 
     // Verify
     assert_eq!(rm.texture_count(), 3);
-    assert!(rm.texture("texture_0").is_some());
-    assert!(rm.texture("texture_1").is_some());
-    assert!(rm.texture("texture_2").is_some());
+    assert!(rm.texture_by_name("texture_0").is_some());
+    assert!(rm.texture_by_name("texture_1").is_some());
+    assert!(rm.texture_by_name("texture_2").is_some());
 }
 
 // ============================================================================
@@ -207,7 +217,10 @@ fn test_integration_geometry_with_multiple_lods() {
     let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
-    let mut rm = ResourceManager::new();
+    Engine::initialize().ok();
+    Engine::create_resource_manager().ok();
+    let rm_arc = Engine::resource_manager().unwrap();
+    let mut rm = rm_arc.lock().unwrap();
 
     // Create vertex data for different LODs
     // LOD 0: 12 vertices (high detail)
@@ -314,7 +327,7 @@ fn test_integration_geometry_with_multiple_lods() {
     let _geom = rm.create_geometry("lod_geom".to_string(), desc).unwrap();
 
     // Verify geometry structure
-    let geom_ref = rm.geometry("lod_geom").unwrap();
+    let geom_ref = rm.geometry_by_name("lod_geom").unwrap();
     assert_eq!(geom_ref.mesh_count(), 1);
 
     let mesh = geom_ref.mesh(0).unwrap();
@@ -334,7 +347,10 @@ fn test_integration_geometry_with_multiple_submeshes() {
     let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
-    let mut rm = ResourceManager::new();
+    Engine::initialize().ok();
+    Engine::create_resource_manager().ok();
+    let rm_arc = Engine::resource_manager().unwrap();
+    let mut rm = rm_arc.lock().unwrap();
 
     // Create vertex data (12 vertices for 3 submeshes)
     let vertices: Vec<f32> = (0..24).map(|i| i as f32).collect();
@@ -421,7 +437,7 @@ fn test_integration_geometry_with_multiple_submeshes() {
     let _geom = rm.create_geometry("character_geom".to_string(), desc).unwrap();
 
     // Verify geometry structure
-    let geom_ref = rm.geometry("character_geom").unwrap();
+    let geom_ref = rm.geometry_by_name("character_geom").unwrap();
     let mesh = geom_ref.mesh(0).unwrap();
     let lod = mesh.lod(0).unwrap();
 
@@ -439,7 +455,10 @@ fn test_integration_many_resources_stress_test() {
     let graphics_device_arc = get_test_graphics_device();
 
     // Create ResourceManager
-    let mut rm = ResourceManager::new();
+    Engine::initialize().ok();
+    Engine::create_resource_manager().ok();
+    let rm_arc = Engine::resource_manager().unwrap();
+    let mut rm = rm_arc.lock().unwrap();
 
     // Create many textures (50 textures)
     for i in 0..50 {
@@ -537,9 +556,9 @@ fn test_integration_many_resources_stress_test() {
 
     // Verify we can access all resources
     for i in 0..50 {
-        assert!(rm.texture(&format!("texture_{}", i)).is_some());
+        assert!(rm.texture_by_name(&format!("texture_{}", i)).is_some());
     }
     for i in 0..20 {
-        assert!(rm.geometry(&format!("geom_{}", i)).is_some());
+        assert!(rm.geometry_by_name(&format!("geom_{}", i)).is_some());
     }
 }

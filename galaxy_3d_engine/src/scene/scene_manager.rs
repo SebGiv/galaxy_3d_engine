@@ -21,7 +21,7 @@ pub struct SceneManager {
 
 impl SceneManager {
     /// Create a new empty scene manager
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             scenes: FxHashMap::default(),
         }

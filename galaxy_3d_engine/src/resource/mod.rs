@@ -2,7 +2,7 @@
 //!
 //! Provides centralized storage and access to engine resources.
 
-mod resource_manager;
+pub mod resource_manager;
 pub mod texture;
 pub mod geometry;
 pub mod pipeline;
@@ -11,6 +11,9 @@ pub mod mesh;
 pub mod buffer;
 
 pub use resource_manager::ResourceManager;
+pub use resource_manager::{
+    TextureKey, GeometryKey, PipelineKey, MaterialKey, MeshKey, BufferKey,
+};
 pub use texture::{
     Texture, TextureLayer,
     AtlasRegion, AtlasRegionDesc,
