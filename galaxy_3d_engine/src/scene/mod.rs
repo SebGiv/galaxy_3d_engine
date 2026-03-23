@@ -18,7 +18,7 @@ pub use render_instance::{
     AABB, FLAG_VISIBLE, FLAG_CAST_SHADOW, FLAG_RECEIVE_SHADOW,
 };
 pub use light::{Light, LightKey, LightType, LightDesc};
-pub use scene::Scene;
+pub use scene::{Scene, GlobalBinding};
 pub use scene_manager::SceneManager;
 pub use scene_index::SceneIndex;
 pub use octree_scene_index::OctreeSceneIndex;

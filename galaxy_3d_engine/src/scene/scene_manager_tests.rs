@@ -52,7 +52,12 @@ fn create_scene_with_mock(
 ) -> crate::error::Result<Arc<Mutex<Scene>>> {
     let graphics_device = create_mock_graphics_device();
     let (fb, ib, mb, lb) = create_test_buffers(graphics_device.clone());
-    sm.create_scene(name, graphics_device, fb, ib, mb, lb)
+    sm.create_scene(name, graphics_device, vec![
+        GlobalBinding::UniformBuffer(fb),
+        GlobalBinding::StorageBuffer(ib),
+        GlobalBinding::StorageBuffer(mb),
+        GlobalBinding::StorageBuffer(lb),
+    ])
 }
 
 // ============================================================================

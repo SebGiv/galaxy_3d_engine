@@ -1,8 +1,7 @@
 /// Pipeline trait and pipeline descriptor
 
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
-use crate::graphics_device::{Shader, BufferFormat, ShaderStage, BindingGroupLayoutDesc, BindingType, ShaderStageFlags, TextureFormat};
+use crate::graphics_device::{BufferFormat, ShaderStage, BindingType, ShaderStageFlags, TextureFormat};
 
 /// Primitive topology
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,19 +237,25 @@ pub struct DepthBias {
     pub clamp: f32,
 }
 
-/// Rasterization fixed-function state (truly fixed fields only)
+/// Rasterization fixed-function state
 ///
 /// Fields that moved to DynamicRenderState: cull_mode, front_face, depth_bias
 #[derive(Debug, Clone, Copy)]
 pub struct RasterizationState {
     /// Polygon rendering mode
     pub polygon_mode: PolygonMode,
+    /// Enable depth clamping (clamp instead of clip)
+    pub depth_clamp_enable: bool,
+    /// Enable depth clipping
+    pub depth_clip_enable: bool,
 }
 
 impl Default for RasterizationState {
     fn default() -> Self {
         Self {
             polygon_mode: PolygonMode::Fill,
+            depth_clamp_enable: false,
+            depth_clip_enable: true,
         }
     }
 }
@@ -320,7 +325,6 @@ impl Default for ColorWriteMask {
 ///
 /// Blend mode is baked into the pipeline because changing it dynamically
 /// causes shader recompilation on tile-based GPUs (ARM Mali, Adreno).
-/// color_write_mask moved to DynamicRenderState.
 #[derive(Debug, Clone, Copy)]
 pub struct ColorBlendState {
     /// Enable blending
@@ -337,6 +341,10 @@ pub struct ColorBlendState {
     pub dst_alpha_factor: BlendFactor,
     /// Alpha blend operation
     pub alpha_blend_op: BlendOp,
+    /// Color write mask (which RGBA channels are written)
+    pub color_write_mask: ColorWriteMask,
+    /// Enable color writing
+    pub color_write_enable: bool,
 }
 
 impl Default for ColorBlendState {
@@ -349,6 +357,8 @@ impl Default for ColorBlendState {
             src_alpha_factor: BlendFactor::One,
             dst_alpha_factor: BlendFactor::Zero,
             alpha_blend_op: BlendOp::Add,
+            color_write_mask: ColorWriteMask::ALL,
+            color_write_enable: true,
         }
     }
 }
@@ -360,12 +370,15 @@ impl Default for ColorBlendState {
 pub struct MultisampleState {
     /// Number of samples per pixel
     pub sample_count: SampleCount,
+    /// Enable alpha-to-coverage (MSAA transparency)
+    pub alpha_to_coverage_enable: bool,
 }
 
 impl Default for MultisampleState {
     fn default() -> Self {
         Self {
             sample_count: SampleCount::S1,
+            alpha_to_coverage_enable: false,
         }
     }
 }
@@ -415,10 +428,6 @@ pub struct DynamicRenderState {
     pub depth_bounds_min: f32,
     /// Maximum depth bound
     pub depth_bounds_max: f32,
-    /// Enable depth clamping (clamp instead of clip)
-    pub depth_clamp_enable: bool,
-    /// Enable depth clipping
-    pub depth_clip_enable: bool,
     // Stencil
     /// Enable stencil testing
     pub stencil_test_enable: bool,
@@ -427,14 +436,8 @@ pub struct DynamicRenderState {
     /// Stencil operations for back faces
     pub stencil_back: StencilOpState,
     // Color output
-    /// Color write mask (which RGBA channels are written)
-    pub color_write_mask: ColorWriteMask,
-    /// Enable color writing
-    pub color_write_enable: bool,
     /// Blend constants (used with ConstantColor/ConstantAlpha blend factors)
     pub blend_constants: [f32; 4],
-    /// Enable alpha-to-coverage (MSAA transparency)
-    pub alpha_to_coverage_enable: bool,
 }
 
 impl Default for DynamicRenderState {
@@ -450,15 +453,10 @@ impl Default for DynamicRenderState {
             depth_bounds_test_enable: false,
             depth_bounds_min: 0.0,
             depth_bounds_max: 1.0,
-            depth_clamp_enable: false,
-            depth_clip_enable: true,
             stencil_test_enable: false,
             stencil_front: StencilOpState::default(),
             stencil_back: StencilOpState::default(),
-            color_write_mask: ColorWriteMask::ALL,
-            color_write_enable: true,
             blend_constants: [0.0; 4],
-            alpha_to_coverage_enable: false,
         }
     }
 }
@@ -466,23 +464,19 @@ impl Default for DynamicRenderState {
 // ===== PIPELINE DESCRIPTOR =====
 
 /// Descriptor for creating a graphics pipeline
+///
+/// Shaders are passed separately to GraphicsDevice::create_pipeline().
+/// Push constant ranges and descriptor set layouts are deduced automatically
+/// from shader reflection (SPIR-V) by the backend.
 #[derive(Clone)]
 pub struct PipelineDesc {
-    /// Vertex shader
-    pub vertex_shader: Arc<dyn Shader>,
-    /// Fragment shader
-    pub fragment_shader: Arc<dyn Shader>,
     /// Vertex input layout
     pub vertex_layout: VertexLayout,
     /// Primitive topology
     pub topology: PrimitiveTopology,
-    /// Push constant ranges (optional)
-    pub push_constant_ranges: Vec<PushConstantRange>,
-    /// Binding group layouts (one per set index, describing what resources the pipeline expects)
-    pub binding_group_layouts: Vec<BindingGroupLayoutDesc>,
-    /// Rasterization state (polygon_mode only — other fields are dynamic)
+    /// Rasterization state
     pub rasterization: RasterizationState,
-    /// Color blending state (blend mode is fixed — color_write_mask is dynamic)
+    /// Color blending state
     pub color_blend: ColorBlendState,
     /// Multisampling state
     pub multisample: MultisampleState,

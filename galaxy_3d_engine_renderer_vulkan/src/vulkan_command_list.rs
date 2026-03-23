@@ -9,7 +9,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Buffer as RendererBuffer,
     BindingGroup as RendererBindingGroup,
     Texture as RendererTexture,
-    Viewport, Rect2D, ClearValue, IndexType, ShaderStage,
+    Viewport, Rect2D, ClearValue, IndexType, ShaderStageFlags,
     ImageAccess, AccessType, TextureFormat,
     DynamicRenderState,
     CullMode, FrontFace, CompareOp, StencilOp, ColorWriteMask,
@@ -24,7 +24,16 @@ use crate::vulkan_pipeline::Pipeline;
 use crate::vulkan_buffer::Buffer;
 use crate::vulkan_binding_group::BindingGroup;
 use crate::vulkan_texture::Texture as VulkanTexture;
-use crate::vulkan::DynamicStateCaps;
+
+impl CommandList {
+    fn stage_flags_to_vk(flags: ShaderStageFlags) -> vk::ShaderStageFlags {
+        let mut vk_flags = vk::ShaderStageFlags::empty();
+        if flags.contains_vertex() { vk_flags |= vk::ShaderStageFlags::VERTEX; }
+        if flags.contains_fragment() { vk_flags |= vk::ShaderStageFlags::FRAGMENT; }
+        if flags.contains_compute() { vk_flags |= vk::ShaderStageFlags::COMPUTE; }
+        vk_flags
+    }
+}
 
 /// Vulkan command list implementation
 ///
@@ -42,12 +51,6 @@ pub struct CommandList {
     in_render_pass: bool,
     /// Currently bound pipeline layout (for push constants)
     bound_pipeline_layout: Option<vk::PipelineLayout>,
-    /// Runtime caps for optional dynamic states
-    dynamic_state_caps: DynamicStateCaps,
-    /// Optional EXT_extended_dynamic_state3 loader
-    ext_dynamic_state3: Option<ash::ext::extended_dynamic_state3::Device>,
-    /// Optional EXT_color_write_enable loader
-    ext_color_write_enable: Option<ash::ext::color_write_enable::Device>,
 }
 
 impl CommandList {
@@ -60,9 +63,6 @@ impl CommandList {
     pub fn new(
         device: Arc<ash::Device>,
         graphics_queue_family: u32,
-        dynamic_state_caps: DynamicStateCaps,
-        ext_dynamic_state3: Option<ash::ext::extended_dynamic_state3::Device>,
-        ext_color_write_enable: Option<ash::ext::color_write_enable::Device>,
     ) -> Result<Self> {
         unsafe {
             // Create command pool
@@ -89,9 +89,6 @@ impl CommandList {
                 is_recording: false,
                 in_render_pass: false,
                 bound_pipeline_layout: None,
-                dynamic_state_caps,
-                ext_dynamic_state3,
-                ext_color_write_enable,
             })
         }
     }
@@ -494,32 +491,6 @@ impl RendererCommandList for CommandList {
 
             // Blend constants
             self.device.cmd_set_blend_constants(cb, &state.blend_constants);
-
-            // EXT_extended_dynamic_state3 — conditional on runtime caps
-            // These branches are on constant-runtime values (set once at device creation),
-            // so the branch predictor learns them in ~2 iterations → effectively free.
-            if self.dynamic_state_caps.depth_clamp_enable {
-                self.ext_dynamic_state3.as_ref().unwrap_unchecked()
-                    .cmd_set_depth_clamp_enable(cb, state.depth_clamp_enable);
-            }
-            if self.dynamic_state_caps.depth_clip_enable {
-                self.ext_dynamic_state3.as_ref().unwrap_unchecked()
-                    .cmd_set_depth_clip_enable(cb, state.depth_clip_enable);
-            }
-            if self.dynamic_state_caps.color_write_mask {
-                self.ext_dynamic_state3.as_ref().unwrap_unchecked()
-                    .cmd_set_color_write_mask(cb, 0, &[color_write_mask_to_vk(state.color_write_mask)]);
-            }
-            if self.dynamic_state_caps.alpha_to_coverage_enable {
-                self.ext_dynamic_state3.as_ref().unwrap_unchecked()
-                    .cmd_set_alpha_to_coverage_enable(cb, state.alpha_to_coverage_enable);
-            }
-            // VK_EXT_color_write_enable (separate extension)
-            if self.dynamic_state_caps.color_write_enable {
-                let ext = self.ext_color_write_enable.as_ref().unwrap_unchecked();
-                let enable: vk::Bool32 = state.color_write_enable.into();
-                (ext.fp().cmd_set_color_write_enable_ext)(cb, 1, &enable);
-            }
         }
 
         Ok(())
@@ -548,28 +519,20 @@ impl RendererCommandList for CommandList {
         }
     }
 
-    fn push_constants(&mut self, stages: &[ShaderStage], offset: u32, data: &[u8]) -> Result<()> {
+    fn push_constants(&mut self, stage_flags: ShaderStageFlags, offset: u32, data: &[u8]) -> Result<()> {
         if !self.is_recording {
             engine_bail!("galaxy3d::vulkan", "push_constants: command list not recording");
         }
 
         let layout = self.bound_pipeline_layout.ok_or_else(|| engine_err!("galaxy3d::vulkan", "push_constants: no pipeline bound"))?;
 
-        // Convert ShaderStage to vk::ShaderStageFlags
-        let mut stage_flags = vk::ShaderStageFlags::empty();
-        for stage in stages {
-            stage_flags |= match stage {
-                ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
-                ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
-                ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
-            };
-        }
+        let vk_flags = Self::stage_flags_to_vk(stage_flags);
 
         unsafe {
             self.device.cmd_push_constants(
                 self.command_buffer,
                 layout,
-                stage_flags,
+                vk_flags,
                 offset,
                 data,
             );
@@ -767,7 +730,7 @@ fn stencil_op_to_vk(op: StencilOp) -> vk::StencilOp {
 }
 
 #[inline(always)]
-fn color_write_mask_to_vk(mask: ColorWriteMask) -> vk::ColorComponentFlags {
+pub(crate) fn color_write_mask_to_vk(mask: ColorWriteMask) -> vk::ColorComponentFlags {
     let mut flags = vk::ColorComponentFlags::empty();
     if mask.r { flags |= vk::ColorComponentFlags::R; }
     if mask.g { flags |= vk::ColorComponentFlags::G; }

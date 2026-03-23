@@ -103,6 +103,11 @@ impl Updater for NoOpUpdater {
 pub struct DefaultUpdater;
 
 impl DefaultUpdater {
+    /// Default global binding indices (set 0)
+    const BINDING_FRAME: usize     = 0;
+    const BINDING_INSTANCES: usize = 1;
+    const BINDING_LIGHTS: usize    = 3;
+
     /// Field indices matching `create_default_frame_uniform_buffer()` layout
     const FRAME_FIELD_VIEW: usize              = 0;
     const FRAME_FIELD_PROJECTION: usize        = 1;
@@ -137,7 +142,8 @@ impl DefaultUpdater {
 
 impl Updater for DefaultUpdater {
     fn update_frame(&mut self, scene: &Scene, camera: &Camera) -> Result<()> {
-        let buf = scene.frame_buffer();
+        let buf = scene.global_buffer(Self::BINDING_FRAME)
+            .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Frame buffer not found at binding {}", Self::BINDING_FRAME))?;
         let view = camera.view_matrix();
         let proj = camera.projection_matrix();
         let view_proj = camera.view_projection_matrix();
@@ -197,7 +203,8 @@ impl Updater for DefaultUpdater {
                 let slot = sub_mesh.draw_slot();
                 let material_slot_id = sub_mesh.material_slot_id();
 
-                let buf = scene.instance_buffer();
+                let buf = scene.global_buffer(Self::BINDING_INSTANCES)
+                    .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
                 buf.update_field(slot, Self::INSTANCE_FIELD_WORLD,
                     bytemuck::bytes_of(&world))?;
                 buf.update_field(slot, Self::INSTANCE_FIELD_PREVIOUS_WORLD,
@@ -234,7 +241,8 @@ impl Updater for DefaultUpdater {
                 let sub_mesh = lod.sub_mesh(sm_idx).unwrap();
                 let slot = sub_mesh.draw_slot();
 
-                let buf = scene.instance_buffer();
+                let buf = scene.global_buffer(Self::BINDING_INSTANCES)
+                    .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
                 buf.update_field(slot, Self::INSTANCE_FIELD_WORLD,
                     bytemuck::bytes_of(&world))?;
                 buf.update_field(slot, Self::INSTANCE_FIELD_PREVIOUS_WORLD,
@@ -269,7 +277,8 @@ impl Updater for DefaultUpdater {
                 LightType::Spot  => 1.0f32,
             };
 
-            let buf = scene.light_buffer();
+            let buf = scene.global_buffer(Self::BINDING_LIGHTS)
+                .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Light buffer not found at binding {}", Self::BINDING_LIGHTS))?;
             buf.update_field(slot, Self::LIGHT_FIELD_POSITION_TYPE,
                 bytemuck::bytes_of(&[light.position().x, light.position().y, light.position().z, type_id]))?;
             buf.update_field(slot, Self::LIGHT_FIELD_DIRECTION_RANGE,
@@ -295,7 +304,8 @@ impl Updater for DefaultUpdater {
                 LightType::Spot  => 1.0f32,
             };
 
-            let buf = scene.light_buffer();
+            let buf = scene.global_buffer(Self::BINDING_LIGHTS)
+                .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Light buffer not found at binding {}", Self::BINDING_LIGHTS))?;
             buf.update_field(slot, Self::LIGHT_FIELD_POSITION_TYPE,
                 bytemuck::bytes_of(&[light.position().x, light.position().y, light.position().z, type_id]))?;
             buf.update_field(slot, Self::LIGHT_FIELD_DIRECTION_RANGE,
@@ -311,7 +321,8 @@ impl Updater for DefaultUpdater {
             };
             let slot = light.light_slot();
 
-            let buf = scene.light_buffer();
+            let buf = scene.global_buffer(Self::BINDING_LIGHTS)
+                .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Light buffer not found at binding {}", Self::BINDING_LIGHTS))?;
             buf.update_field(slot, Self::LIGHT_FIELD_COLOR_INTENSITY,
                 bytemuck::bytes_of(&[light.color().x, light.color().y, light.color().z, light.intensity()]))?;
             buf.update_field(slot, Self::LIGHT_FIELD_SPOT_PARAMS,
@@ -342,7 +353,8 @@ impl Updater for DefaultUpdater {
                     Some(l) => l,
                     None => continue,
                 };
-                let buf = scene.instance_buffer();
+                let buf = scene.global_buffer(Self::BINDING_INSTANCES)
+                    .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
                 for sm_idx in 0..lod.sub_mesh_count() {
                     let slot = lod.sub_mesh(sm_idx).unwrap().draw_slot();
                     buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,
@@ -421,7 +433,8 @@ impl Updater for DefaultUpdater {
                 Some(l) => l,
                 None => continue,
             };
-            let buf = scene.instance_buffer();
+            let buf = scene.global_buffer(Self::BINDING_INSTANCES)
+                .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
             for sm_idx in 0..lod.sub_mesh_count() {
                 let slot = lod.sub_mesh(sm_idx).unwrap().draw_slot();
                 buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,

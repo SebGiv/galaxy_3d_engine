@@ -16,7 +16,7 @@ use crate::graphics_device::{
     BindingResource,
     RenderPassDesc, FramebufferDesc, Viewport, Rect2D,
     ClearValue, IndexType, TextureInfo, TextureUsage, ImageAccess,
-    PipelineReflection, DynamicRenderState,
+    PipelineReflection, DynamicRenderState, ShaderStageFlags,
 };
 #[cfg(test)]
 use crate::error::Result;
@@ -106,7 +106,14 @@ impl MockShader {
 }
 
 #[cfg(test)]
-impl Shader for MockShader {}
+impl Shader for MockShader {
+    fn reflected_bindings(&self) -> &[crate::graphics_device::ReflectedBinding] {
+        &[]
+    }
+    fn reflected_push_constants(&self) -> &[crate::graphics_device::ReflectedPushConstant] {
+        &[]
+    }
+}
 
 // ============================================================================
 // Mock Pipeline
@@ -225,7 +232,7 @@ impl CommandList for MockCommandList {
         Ok(())
     }
 
-    fn push_constants(&mut self, _stages: &[ShaderStage], _offset: u32, _data: &[u8]) -> Result<()> {
+    fn push_constants(&mut self, _stage_flags: ShaderStageFlags, _offset: u32, _data: &[u8]) -> Result<()> {
         self.commands.push("push_constants".to_string());
         Ok(())
     }
@@ -468,7 +475,12 @@ impl GraphicsDevice for MockGraphicsDevice {
         Ok(Arc::new(MockShader::new(name)))
     }
 
-    fn create_pipeline(&mut self, _desc: PipelineDesc) -> Result<Arc<dyn Pipeline>> {
+    fn create_pipeline(
+        &mut self,
+        _desc: PipelineDesc,
+        _vertex_shader: &Arc<dyn Shader>,
+        _fragment_shader: &Arc<dyn Shader>,
+    ) -> Result<Arc<dyn Pipeline>> {
         let name = "pipeline".to_string();
         self.created_pipelines.lock().unwrap().push(name.clone());
         Ok(Arc::new(MockPipeline::new(name)))

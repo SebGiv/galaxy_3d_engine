@@ -9,6 +9,10 @@ use std::sync::{Arc, Mutex};
 use crate::graphics_device;
 #[cfg(test)]
 use graphics_device::GraphicsDevice as _;
+#[cfg(test)]
+use crate::resource::resource_manager::ResourceManager;
+#[cfg(test)]
+use crate::resource::shader::ShaderDesc;
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -35,46 +39,39 @@ fn create_simple_vertex_layout() -> graphics_device::VertexLayout {
     }
 }
 
-/// Create a mock graphics_device::PipelineDesc for testing
-fn create_mock_pipeline_desc() -> graphics_device::PipelineDesc {
+/// Create a Pipeline via MockGraphicsDevice + ResourceManager
+fn create_test_pipeline() -> crate::resource::Pipeline {
     let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
-    let mut graphics_device_lock = graphics_device.lock().unwrap();
+    let mut rm = ResourceManager::new();
+    let mut gd_lock = graphics_device.lock().unwrap();
 
-    let vertex_shader = graphics_device_lock.create_shader(graphics_device::ShaderDesc {
+    let vk = rm.create_shader("vert".to_string(), ShaderDesc { code: &[], stage: graphics_device::ShaderStage::Vertex, entry_point: "main".to_string() }, &mut *gd_lock).unwrap();
+    let fk = rm.create_shader("frag".to_string(), ShaderDesc { code: &[], stage: graphics_device::ShaderStage::Fragment, entry_point: "main".to_string() }, &mut *gd_lock).unwrap();
+
+    let vertex_shader = gd_lock.create_shader(graphics_device::ShaderDesc {
         stage: graphics_device::ShaderStage::Vertex,
         entry_point: "main".to_string(),
         code: &[],
     }).unwrap();
 
-    let fragment_shader = graphics_device_lock.create_shader(graphics_device::ShaderDesc {
+    let fragment_shader = gd_lock.create_shader(graphics_device::ShaderDesc {
         stage: graphics_device::ShaderStage::Fragment,
         entry_point: "main".to_string(),
         code: &[],
     }).unwrap();
 
-    drop(graphics_device_lock);
-
-    graphics_device::PipelineDesc {
-        vertex_shader,
-        fragment_shader,
+    let desc = graphics_device::PipelineDesc {
         vertex_layout: create_simple_vertex_layout(),
         topology: graphics_device::PrimitiveTopology::TriangleList,
-        push_constant_ranges: vec![],
-        binding_group_layouts: vec![],
         rasterization: Default::default(),
         color_blend: Default::default(),
         multisample: Default::default(),
         color_formats: vec![],
         depth_format: None,
-    }
-}
+    };
 
-/// Create a Pipeline via MockGraphicsDevice
-fn create_test_pipeline() -> crate::resource::Pipeline {
-    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
-    let gd_pipeline = graphics_device.lock().unwrap()
-        .create_pipeline(create_mock_pipeline_desc()).unwrap();
-    crate::resource::Pipeline::from_gpu_pipeline(gd_pipeline)
+    let gd_pipeline = gd_lock.create_pipeline(desc, &vertex_shader, &fragment_shader).unwrap();
+    crate::resource::Pipeline::from_gpu_pipeline(gd_pipeline, vk, fk)
 }
 
 // ============================================================================

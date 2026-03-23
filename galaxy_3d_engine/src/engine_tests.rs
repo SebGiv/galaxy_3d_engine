@@ -782,7 +782,12 @@ fn test_scene_manager_returned_is_usable() {
     // Lock and use the scene manager
     let mut guard = sm.lock().unwrap();
     let (fb, ib, mb, lb) = create_test_buffers(graphics_device.clone());
-    let scene = guard.create_scene("test_scene", graphics_device, fb, ib, mb, lb);
+    let scene = guard.create_scene("test_scene", graphics_device, vec![
+        crate::scene::GlobalBinding::UniformBuffer(fb),
+        crate::scene::GlobalBinding::StorageBuffer(ib),
+        crate::scene::GlobalBinding::StorageBuffer(mb),
+        crate::scene::GlobalBinding::StorageBuffer(lb),
+    ]);
     assert!(scene.is_ok());
 }
 
@@ -875,9 +880,19 @@ fn test_full_engine_lifecycle_with_scene_manager() {
         let sm = Engine::scene_manager().unwrap();
         let mut guard = sm.lock().unwrap();
         let (fb, ib, mb, lb) = create_test_buffers(graphics_device.clone());
-        guard.create_scene("main", graphics_device.clone(), fb.clone(), ib.clone(), mb.clone(), lb.clone()).unwrap();
+        guard.create_scene("main", graphics_device.clone(), vec![
+            crate::scene::GlobalBinding::UniformBuffer(fb),
+            crate::scene::GlobalBinding::StorageBuffer(ib),
+            crate::scene::GlobalBinding::StorageBuffer(mb),
+            crate::scene::GlobalBinding::StorageBuffer(lb),
+        ]).unwrap();
         let (fb2, ib2, mb2, lb2) = create_test_buffers(graphics_device.clone());
-        guard.create_scene("ui", graphics_device.clone(), fb2, ib2, mb2, lb2).unwrap();
+        guard.create_scene("ui", graphics_device.clone(), vec![
+            crate::scene::GlobalBinding::UniformBuffer(fb2),
+            crate::scene::GlobalBinding::StorageBuffer(ib2),
+            crate::scene::GlobalBinding::StorageBuffer(mb2),
+            crate::scene::GlobalBinding::StorageBuffer(lb2),
+        ]).unwrap();
         assert_eq!(guard.scene_count(), 2);
     }
 

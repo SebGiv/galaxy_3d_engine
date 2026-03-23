@@ -22,10 +22,17 @@ pub struct ShaderDesc<'a> {
     pub entry_point: String,
 }
 
+use crate::graphics_device::pipeline::{ReflectedBinding, ReflectedPushConstant};
+
 /// Shader resource trait
 ///
 /// Implemented by backend-specific shader types (e.g., VulkanShader).
 /// The shader is automatically destroyed when dropped.
+/// Exposes SPIR-V reflection data so the backend can deduce
+/// descriptor set layouts and push constant ranges automatically.
 pub trait Shader: Send + Sync {
-    // No public methods, shaders are used by pipelines
+    /// Reflected bindings from compiled shader bytecode
+    fn reflected_bindings(&self) -> &[ReflectedBinding];
+    /// Reflected push constant blocks from compiled shader bytecode
+    fn reflected_push_constants(&self) -> &[ReflectedPushConstant];
 }

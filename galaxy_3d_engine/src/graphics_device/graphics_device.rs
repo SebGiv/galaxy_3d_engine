@@ -202,12 +202,19 @@ pub trait GraphicsDevice: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `desc` - Pipeline descriptor
+    /// * `desc` - Pipeline descriptor (without shaders)
+    /// * `vertex_shader` - Vertex shader
+    /// * `fragment_shader` - Fragment shader
     ///
     /// # Returns
     ///
     /// A shared pointer to the created pipeline
-    fn create_pipeline(&mut self, desc: PipelineDesc) -> Result<Arc<dyn Pipeline>>;
+    fn create_pipeline(
+        &mut self,
+        desc: PipelineDesc,
+        vertex_shader: &Arc<dyn Shader>,
+        fragment_shader: &Arc<dyn Shader>,
+    ) -> Result<Arc<dyn Pipeline>>;
 
     /// Create a command list for recording rendering commands
     ///

@@ -7,11 +7,11 @@
 
 mod gpu_test_utils;
 
-use galaxy_3d_engine::galaxy3d::{Engine, GraphicsDevice};
+use galaxy_3d_engine::galaxy3d::Engine;
 use galaxy_3d_engine::galaxy3d::resource::PipelineDesc;
 use galaxy_3d_engine::galaxy3d::render::{
-    PipelineDesc as RenderPipelineDesc, VertexLayout, VertexBinding, VertexAttribute,
-    BufferFormat, VertexInputRate, PrimitiveTopology, ShaderDesc, ShaderStage,
+    VertexLayout, VertexBinding, VertexAttribute,
+    BufferFormat, VertexInputRate, PrimitiveTopology, ShaderStage,
 };
 use gpu_test_utils::get_test_graphics_device;
 use serial_test::serial;
@@ -74,38 +74,40 @@ fn test_integration_create_pipeline() {
     let mut rm = rm_arc.lock().unwrap();
 
     let mut graphics_device_lock = graphics_device_arc.lock().unwrap();
-    let vertex_shader = graphics_device_lock.create_shader(ShaderDesc {
-        stage: ShaderStage::Vertex,
-        entry_point: "main".to_string(),
-        code: &create_minimal_vertex_shader(),
-    });
-    let fragment_shader = graphics_device_lock.create_shader(ShaderDesc {
-        stage: ShaderStage::Fragment,
-        entry_point: "main".to_string(),
-        code: &create_minimal_fragment_shader(),
-    });
 
-    if vertex_shader.is_err() || fragment_shader.is_err() {
+    let vert_key = rm.create_shader(
+        "test_vert".to_string(),
+        galaxy_3d_engine::galaxy3d::resource::ShaderDesc {
+            code: &create_minimal_vertex_shader(),
+            stage: ShaderStage::Vertex,
+            entry_point: "main".to_string(),
+        },
+        &mut *graphics_device_lock,
+    );
+    let frag_key = rm.create_shader(
+        "test_frag".to_string(),
+        galaxy_3d_engine::galaxy3d::resource::ShaderDesc {
+            code: &create_minimal_fragment_shader(),
+            stage: ShaderStage::Fragment,
+            entry_point: "main".to_string(),
+        },
+        &mut *graphics_device_lock,
+    );
+
+    if vert_key.is_err() || frag_key.is_err() {
         return;
     }
 
-    let vertex_shader = vertex_shader.unwrap();
-    let fragment_shader = fragment_shader.unwrap();
-
     let desc = PipelineDesc {
-        pipeline: RenderPipelineDesc {
-            vertex_shader,
-            fragment_shader,
-            vertex_layout: create_simple_vertex_layout(),
-            topology: PrimitiveTopology::TriangleList,
-            push_constant_ranges: vec![],
-            binding_group_layouts: vec![],
-            rasterization: Default::default(),
-            color_blend: Default::default(),
-            multisample: Default::default(),
-            color_formats: vec![],
-            depth_format: None,
-        },
+        vertex_shader: vert_key.unwrap(),
+        fragment_shader: frag_key.unwrap(),
+        vertex_layout: create_simple_vertex_layout(),
+        topology: PrimitiveTopology::TriangleList,
+        rasterization: Default::default(),
+        color_blend: Default::default(),
+        multisample: Default::default(),
+        color_formats: vec![],
+        depth_format: None,
     };
 
     let result = rm.create_pipeline("test_pipeline".to_string(), desc, &mut *graphics_device_lock);

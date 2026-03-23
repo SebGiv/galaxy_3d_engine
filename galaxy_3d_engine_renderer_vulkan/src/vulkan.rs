@@ -34,7 +34,7 @@ use crate::vulkan_texture::Texture;
 use crate::vulkan_buffer::Buffer;
 use crate::vulkan_shader::Shader;
 use crate::vulkan_pipeline::Pipeline;
-use crate::vulkan_command_list::CommandList;
+use crate::vulkan_command_list::{CommandList, color_write_mask_to_vk};
 use crate::vulkan_render_target::RenderTarget;
 use crate::vulkan_render_pass::RenderPass;
 use crate::vulkan_swapchain::Swapchain;
@@ -93,13 +93,6 @@ pub struct VulkanGraphicsDevice {
     /// Shared GPU context for all resources (textures, buffers)
     /// Owns device, instance, and debug messenger destruction
     gpu_context: Arc<GpuContext>,
-
-    /// Optional EXT_extended_dynamic_state3 device loader (None if extension unavailable)
-    ext_dynamic_state3: Option<ash::ext::extended_dynamic_state3::Device>,
-    /// Optional EXT_color_write_enable device loader (None if extension unavailable)
-    ext_color_write_enable: Option<ash::ext::color_write_enable::Device>,
-    /// Runtime capability flags for optional dynamic states
-    dynamic_state_caps: DynamicStateCaps,
 }
 
 impl VulkanGraphicsDevice {
@@ -531,18 +524,6 @@ impl VulkanGraphicsDevice {
                     })?,
             );
 
-            // Create extension loaders
-            let ext_dynamic_state3 = if has_state3 {
-                Some(ash::ext::extended_dynamic_state3::Device::new(&instance, &device))
-            } else {
-                None
-            };
-            let ext_color_write_enable = if has_color_write {
-                Some(ash::ext::color_write_enable::Device::new(&instance, &device))
-            } else {
-                None
-            };
-
             let graphics_queue = device.get_device_queue(graphics_family_index, 0);
             let present_queue = device.get_device_queue(present_family_index, 0);
 
@@ -619,9 +600,6 @@ impl VulkanGraphicsDevice {
                 descriptor_pools: Mutex::new(vec![descriptor_pool]),
                 sampler_cache: Mutex::new(SamplerCache::new(Arc::clone(&gpu_context))),
                 gpu_context,
-                ext_dynamic_state3,
-                ext_color_write_enable,
-                dynamic_state_caps,
             })
         }
     }
@@ -825,18 +803,18 @@ impl VulkanGraphicsDevice {
     }
 
     /// Merge reflected bindings from vertex + fragment shaders into a PipelineReflection
-    fn merge_shader_reflections(desc: &PipelineDesc) -> Result<PipelineReflection> {
-        let vk_vs = unsafe { &*(Arc::as_ptr(&desc.vertex_shader) as *const Shader) };
-        let vk_fs = unsafe { &*(Arc::as_ptr(&desc.fragment_shader) as *const Shader) };
-
-        // Merge bindings
+    /// Merge reflected bindings from vertex + fragment shaders
+    fn merge_reflected_bindings(
+        vert_bindings: &[ReflectedBinding],
+        frag_bindings: &[ReflectedBinding],
+    ) -> Result<Vec<ReflectedBinding>> {
         let mut merged: Vec<ReflectedBinding> = Vec::new();
 
-        for binding in &vk_vs.reflected_bindings {
+        for binding in vert_bindings {
             merged.push(binding.clone());
         }
 
-        for fs_binding in &vk_fs.reflected_bindings {
+        for fs_binding in frag_bindings {
             if let Some(existing) = merged.iter_mut()
                 .find(|b| b.set == fs_binding.set && b.binding == fs_binding.binding)
             {
@@ -854,18 +832,24 @@ impl VulkanGraphicsDevice {
             }
         }
 
-        // Merge push constants
+        Ok(merged)
+    }
+
+    /// Merge reflected push constants from vertex + fragment shaders
+    fn merge_reflected_push_constants(
+        vert_pcs: &[ReflectedPushConstant],
+        frag_pcs: &[ReflectedPushConstant],
+    ) -> Vec<ReflectedPushConstant> {
         let mut push_constants: Vec<ReflectedPushConstant> = Vec::new();
 
-        for pc in &vk_vs.reflected_push_constants {
+        for pc in vert_pcs {
             push_constants.push(pc.clone());
         }
 
-        for fs_pc in &vk_fs.reflected_push_constants {
+        for fs_pc in frag_pcs {
             if let Some(existing) = push_constants.iter_mut()
                 .find(|p| p.name == fs_pc.name)
             {
-                // Same push constant block in both stages: merge stage_flags
                 existing.stage_flags = ShaderStageFlags::from_bits(
                     existing.stage_flags.bits() | fs_pc.stage_flags.bits()
                 );
@@ -874,7 +858,77 @@ impl VulkanGraphicsDevice {
             }
         }
 
-        Ok(PipelineReflection::new(merged, push_constants))
+        push_constants
+    }
+
+    /// Build VkDescriptorSetLayouts from merged reflected bindings
+    fn build_descriptor_set_layouts(
+        &self,
+        merged_bindings: &[ReflectedBinding],
+    ) -> Result<Vec<vk::DescriptorSetLayout>> {
+        // Group bindings by set index
+        let max_set = merged_bindings.iter().map(|b| b.set).max().unwrap_or(0);
+        let mut layouts: Vec<vk::DescriptorSetLayout> = Vec::new();
+
+        for set_index in 0..=max_set {
+            let bindings_for_set: Vec<vk::DescriptorSetLayoutBinding> = merged_bindings.iter()
+                .filter(|b| b.set == set_index)
+                .map(|b| {
+                    vk::DescriptorSetLayoutBinding::default()
+                        .binding(b.binding)
+                        .descriptor_type(Self::binding_type_to_vk(b.binding_type))
+                        .descriptor_count(1)
+                        .stage_flags(Self::stage_flags_to_vk(b.stage_flags))
+                })
+                .collect();
+
+            let layout_create = vk::DescriptorSetLayoutCreateInfo::default()
+                .bindings(&bindings_for_set);
+
+            let ds_layout = unsafe {
+                self.device.create_descriptor_set_layout(&layout_create, None)
+                    .map_err(|e| engine_err!("galaxy3d::vulkan",
+                        "Failed to create descriptor set layout for set {}: {:?}", set_index, e))?
+            };
+
+            layouts.push(ds_layout);
+        }
+
+        Ok(layouts)
+    }
+
+    /// Build VkPushConstantRanges from merged reflected push constants
+    fn build_push_constant_ranges(
+        vert_pcs: &[ReflectedPushConstant],
+        frag_pcs: &[ReflectedPushConstant],
+    ) -> Vec<vk::PushConstantRange> {
+        let merged = Self::merge_reflected_push_constants(vert_pcs, frag_pcs);
+
+        merged.iter()
+            .map(|pc| {
+                vk::PushConstantRange {
+                    stage_flags: Self::stage_flags_to_vk(pc.stage_flags),
+                    offset: 0,
+                    size: pc.size.unwrap_or(128),
+                }
+            })
+            .collect()
+    }
+
+    /// Merge shader reflections into a PipelineReflection (used after pipeline creation)
+    fn merge_shader_reflections(
+        vertex_shader: &Arc<dyn RendererShader>,
+        fragment_shader: &Arc<dyn RendererShader>,
+    ) -> Result<PipelineReflection> {
+        let merged_bindings = Self::merge_reflected_bindings(
+            vertex_shader.reflected_bindings(),
+            fragment_shader.reflected_bindings(),
+        )?;
+        let push_constants = Self::merge_reflected_push_constants(
+            vertex_shader.reflected_push_constants(),
+            fragment_shader.reflected_push_constants(),
+        );
+        Ok(PipelineReflection::new(merged_bindings, push_constants))
     }
 
     /// Convert PrimitiveTopology to Vulkan topology
@@ -1045,9 +1099,6 @@ impl GraphicsDevice for VulkanGraphicsDevice {
         let cmd_list = CommandList::new(
             self.device.clone(),
             self.graphics_queue_family,
-            self.dynamic_state_caps,
-            self.ext_dynamic_state3.clone(),
-            self.ext_color_write_enable.clone(),
         )?;
         Ok(Box::new(cmd_list))
     }
@@ -2239,7 +2290,12 @@ impl GraphicsDevice for VulkanGraphicsDevice {
         }
     }
 
-    fn create_pipeline(&mut self, desc: PipelineDesc) -> Result<Arc<dyn RendererPipeline>> {
+    fn create_pipeline(
+        &mut self,
+        desc: PipelineDesc,
+        vertex_shader: &Arc<dyn RendererShader>,
+        fragment_shader: &Arc<dyn RendererShader>,
+    ) -> Result<Arc<dyn RendererPipeline>> {
         unsafe {
             // Build color attachments from PipelineDesc::color_formats
             let mut attachments = Vec::new();
@@ -2317,26 +2373,26 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create temporary render pass for pipeline: {:?}", e))?;
 
             // Downcast shaders to Vulkan types
-            let vertex_shader = desc.vertex_shader
+            let vertex_shader_vk = vertex_shader
                 .as_ref() as *const dyn RendererShader as *const Shader;
-            let vertex_shader = &*vertex_shader;
+            let vertex_shader_vk = &*vertex_shader_vk;
 
-            let fragment_shader = desc.fragment_shader
+            let fragment_shader_vk = fragment_shader
                 .as_ref() as *const dyn RendererShader as *const Shader;
-            let fragment_shader = &*fragment_shader;
+            let fragment_shader_vk = &*fragment_shader_vk;
 
             // Create shader stage infos
-            let entry_point_vert = CString::new(vertex_shader.entry_point.as_str()).unwrap();
-            let entry_point_frag = CString::new(fragment_shader.entry_point.as_str()).unwrap();
+            let entry_point_vert = CString::new(vertex_shader_vk.entry_point.as_str()).unwrap();
+            let entry_point_frag = CString::new(fragment_shader_vk.entry_point.as_str()).unwrap();
 
             let shader_stages = [
                 vk::PipelineShaderStageCreateInfo::default()
-                    .stage(vertex_shader.stage)
-                    .module(vertex_shader.module)
+                    .stage(vertex_shader_vk.stage)
+                    .module(vertex_shader_vk.module)
                     .name(&entry_point_vert),
                 vk::PipelineShaderStageCreateInfo::default()
-                    .stage(fragment_shader.stage)
-                    .module(fragment_shader.module)
+                    .stage(fragment_shader_vk.stage)
+                    .module(fragment_shader_vk.module)
                     .name(&entry_point_frag),
             ];
 
@@ -2381,7 +2437,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
 
             // Rasterization state (cull_mode, front_face, depth_bias are dynamic)
             let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
-                .depth_clamp_enable(false)
+                .depth_clamp_enable(desc.rasterization.depth_clamp_enable)
                 .rasterizer_discard_enable(false)
                 .polygon_mode(self.polygon_mode_to_vk(desc.rasterization.polygon_mode))
                 .line_width(1.0)
@@ -2397,16 +2453,16 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 .depth_bounds_test_enable(false)
                 .stencil_test_enable(false);
 
-            // Multisample state — alpha_to_coverage is dynamic if supported, otherwise fixed to false
+            // Multisample state
             let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
                 .sample_shading_enable(false)
                 .rasterization_samples(self.sample_count_to_vk(desc.multisample.sample_count))
-                .alpha_to_coverage_enable(false);
+                .alpha_to_coverage_enable(desc.multisample.alpha_to_coverage_enable);
 
-            // Color blend state — color_write_mask is dynamic if supported, otherwise fixed to RGBA
+            // Color blend state
             let color_blend_attachment = {
                 let mut attachment = vk::PipelineColorBlendAttachmentState::default()
-                    .color_write_mask(vk::ColorComponentFlags::RGBA)
+                    .color_write_mask(color_write_mask_to_vk(desc.color_blend.color_write_mask))
                     .blend_enable(desc.color_blend.blend_enable);
                 if desc.color_blend.blend_enable {
                     attachment = attachment
@@ -2425,7 +2481,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 .attachments(std::slice::from_ref(&color_blend_attachment));
 
             // Dynamic state — all per-draw states are set via set_dynamic_state()
-            let mut dynamic_states = vec![
+            let dynamic_states = vec![
                 // Vulkan 1.0 core
                 vk::DynamicState::VIEWPORT,
                 vk::DynamicState::SCISSOR,
@@ -2446,68 +2502,23 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 vk::DynamicState::STENCIL_TEST_ENABLE,
                 vk::DynamicState::STENCIL_OP,
             ];
-            // VK_EXT_extended_dynamic_state3 (conditional)
-            if self.dynamic_state_caps.depth_clamp_enable {
-                dynamic_states.push(vk::DynamicState::DEPTH_CLAMP_ENABLE_EXT);
-            }
-            if self.dynamic_state_caps.depth_clip_enable {
-                dynamic_states.push(vk::DynamicState::DEPTH_CLIP_ENABLE_EXT);
-            }
-            if self.dynamic_state_caps.color_write_mask {
-                dynamic_states.push(vk::DynamicState::COLOR_WRITE_MASK_EXT);
-            }
-            if self.dynamic_state_caps.alpha_to_coverage_enable {
-                dynamic_states.push(vk::DynamicState::ALPHA_TO_COVERAGE_ENABLE_EXT);
-            }
-            // VK_EXT_color_write_enable (separate extension)
-            if self.dynamic_state_caps.color_write_enable {
-                dynamic_states.push(vk::DynamicState::COLOR_WRITE_ENABLE_EXT);
-            }
             let dynamic_state = vk::PipelineDynamicStateCreateInfo::default()
                 .dynamic_states(&dynamic_states);
 
-            // Pipeline layout with push constants
-            let push_constant_ranges: Vec<vk::PushConstantRange> = desc.push_constant_ranges
-                .iter()
-                .map(|range| {
-                    let mut stage_flags = vk::ShaderStageFlags::empty();
-                    for stage in &range.stages {
-                        stage_flags |= match stage {
-                            ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
-                            ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
-                            ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
-                        };
-                    }
-                    vk::PushConstantRange {
-                        stage_flags,
-                        offset: range.offset,
-                        size: range.size,
-                    }
-                })
-                .collect();
+            // Deduce pipeline layout from shader reflection
+            let merged_bindings = Self::merge_reflected_bindings(
+                vertex_shader.reflected_bindings(),
+                fragment_shader.reflected_bindings(),
+            )?;
 
-            // Create VkDescriptorSetLayouts from abstract BindingGroupLayoutDescs
-            let mut descriptor_set_layouts: Vec<vk::DescriptorSetLayout> = Vec::new();
-            for bg_layout_desc in &desc.binding_group_layouts {
-                let bindings: Vec<vk::DescriptorSetLayoutBinding> = bg_layout_desc.entries
-                    .iter()
-                    .map(|entry| {
-                        vk::DescriptorSetLayoutBinding::default()
-                            .binding(entry.binding)
-                            .descriptor_type(Self::binding_type_to_vk(entry.binding_type))
-                            .descriptor_count(entry.count)
-                            .stage_flags(Self::stage_flags_to_vk(entry.stage_flags))
-                    })
-                    .collect();
+            // Build VkDescriptorSetLayouts from merged reflected bindings
+            let descriptor_set_layouts = self.build_descriptor_set_layouts(&merged_bindings)?;
 
-                let layout_create = vk::DescriptorSetLayoutCreateInfo::default()
-                    .bindings(&bindings);
-
-                let ds_layout = self.device.create_descriptor_set_layout(&layout_create, None)
-                    .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create descriptor set layout: {:?}", e))?;
-
-                descriptor_set_layouts.push(ds_layout);
-            }
+            // Build VkPushConstantRanges from merged reflected push constants
+            let push_constant_ranges = Self::build_push_constant_ranges(
+                vertex_shader.reflected_push_constants(),
+                fragment_shader.reflected_push_constants(),
+            );
 
             let mut layout_create_info = vk::PipelineLayoutCreateInfo::default();
 
@@ -2552,7 +2563,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             self.device.destroy_render_pass(temp_render_pass, None);
 
             // Merge SPIR-V reflections from vertex + fragment shaders
-            let reflection = Self::merge_shader_reflections(&desc)?;
+            let reflection = Self::merge_shader_reflections(vertex_shader, fragment_shader)?;
 
             Ok(Arc::new(Pipeline {
                 pipeline,

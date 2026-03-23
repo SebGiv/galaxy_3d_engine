@@ -13,7 +13,7 @@ use crate::graphics_device::{
     Viewport, Rect2D, ClearValue,
     IndexType, VertexLayout, VertexBinding, VertexAttribute,
     BufferFormat, VertexInputRate, PrimitiveTopology,
-    TextureType,
+    TextureType, ShaderStageFlags,
 };
 use std::sync::{Arc, Mutex};
 
@@ -214,7 +214,7 @@ fn test_mock_command_list_push_constants() {
     let mut cmd_list = MockCommandList::new();
     let data = vec![1u8, 2, 3, 4];
 
-    cmd_list.push_constants(&[ShaderStage::Vertex], 0, &data).unwrap();
+    cmd_list.push_constants(ShaderStageFlags::VERTEX, 0, &data).unwrap();
     assert_eq!(cmd_list.commands.len(), 1);
     assert_eq!(cmd_list.commands[0], "push_constants");
 }
@@ -422,8 +422,17 @@ fn test_mock_graphics_device_create_shader_fragment() {
 fn test_mock_graphics_device_create_pipeline() {
     let mut graphics_device = MockGraphicsDevice::new();
 
-    let vertex_shader = Arc::new(MockShader::new("vert".to_string()));
-    let fragment_shader = Arc::new(MockShader::new("frag".to_string()));
+    let vertex_shader = graphics_device.create_shader(ShaderDesc {
+        stage: ShaderStage::Vertex,
+        code: &[],
+        entry_point: "main".to_string(),
+    }).unwrap();
+
+    let fragment_shader = graphics_device.create_shader(ShaderDesc {
+        stage: ShaderStage::Fragment,
+        code: &[],
+        entry_point: "main".to_string(),
+    }).unwrap();
 
     let vertex_layout = VertexLayout {
         bindings: vec![
@@ -444,21 +453,16 @@ fn test_mock_graphics_device_create_pipeline() {
     };
 
     let desc = PipelineDesc {
-        vertex_shader,
-        fragment_shader,
         vertex_layout,
         topology: PrimitiveTopology::TriangleList,
-        push_constant_ranges: vec![],
-        binding_group_layouts: vec![],
         rasterization: Default::default(),
-
         color_blend: Default::default(),
         multisample: Default::default(),
         color_formats: vec![],
         depth_format: None,
     };
 
-    let _pipeline = graphics_device.create_pipeline(desc).unwrap();
+    let _pipeline = graphics_device.create_pipeline(desc, &vertex_shader, &fragment_shader).unwrap();
 
     let created_pipelines = graphics_device.get_created_pipelines();
     assert_eq!(created_pipelines.len(), 1);

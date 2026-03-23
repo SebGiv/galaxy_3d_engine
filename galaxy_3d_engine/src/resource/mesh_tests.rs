@@ -11,7 +11,8 @@ use crate::resource::geometry::{
 };
 use crate::resource::pipeline::PipelineDesc;
 use crate::resource::material::{MaterialDesc, ParamValue};
-use crate::resource::resource_manager::{ResourceManager, GeometryKey, MaterialKey, PipelineKey};
+use crate::resource::resource_manager::{ResourceManager, GeometryKey, MaterialKey, PipelineKey, ShaderKey};
+use crate::resource::shader::ShaderDesc;
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 
@@ -87,20 +88,26 @@ fn create_test_resources() -> (
     (geom_key, rm, graphics_device)
 }
 
+fn create_test_shaders(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>) -> (ShaderKey, ShaderKey) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let vk = rm.create_shader(format!("vert_{}", id), ShaderDesc { code: &[], stage: graphics_device::ShaderStage::Vertex, entry_point: "main".to_string() }, &mut *gd.lock().unwrap()).unwrap();
+    let fk = rm.create_shader(format!("frag_{}", id), ShaderDesc { code: &[], stage: graphics_device::ShaderStage::Fragment, entry_point: "main".to_string() }, &mut *gd.lock().unwrap()).unwrap();
+    (vk, fk)
+}
+
 fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>, name: &str) -> PipelineKey {
+    let (vk, fk) = create_test_shaders(rm, gd);
     let vertex_layout = graphics_device::VertexLayout {
         bindings: vec![graphics_device::VertexBinding { binding: 0, stride: 8, input_rate: graphics_device::VertexInputRate::Vertex }],
         attributes: vec![graphics_device::VertexAttribute { location: 0, binding: 0, format: graphics_device::BufferFormat::R32G32_SFLOAT, offset: 0 }],
     };
     let desc = PipelineDesc {
-        pipeline: graphics_device::PipelineDesc {
-            vertex_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("vert".to_string())),
-            fragment_shader: Arc::new(graphics_device::mock_graphics_device::MockShader::new("frag".to_string())),
-            vertex_layout, topology: graphics_device::PrimitiveTopology::TriangleList,
-            push_constant_ranges: vec![], binding_group_layouts: vec![],
-            rasterization: Default::default(), color_blend: Default::default(),
-            multisample: Default::default(), color_formats: vec![], depth_format: None,
-        },
+        vertex_shader: vk, fragment_shader: fk,
+        vertex_layout, topology: graphics_device::PrimitiveTopology::TriangleList,
+        rasterization: Default::default(), color_blend: Default::default(),
+        multisample: Default::default(), color_formats: vec![], depth_format: None,
     };
     rm.create_pipeline(name.to_string(), desc, &mut *gd.lock().unwrap()).unwrap()
 }

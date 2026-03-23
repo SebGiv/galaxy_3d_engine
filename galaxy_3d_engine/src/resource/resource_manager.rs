@@ -15,6 +15,7 @@ use crate::resource::texture::{
 use crate::resource::geometry::{
     Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
+use crate::resource::shader::Shader;
 use crate::resource::pipeline::{
     Pipeline, PipelineDesc,
 };
@@ -37,6 +38,8 @@ slotmap::new_key_type! {
     pub struct TextureKey;
     /// Stable key for a Geometry in the ResourceManager.
     pub struct GeometryKey;
+    /// Stable key for a Shader in the ResourceManager.
+    pub struct ShaderKey;
     /// Stable key for a Pipeline in the ResourceManager.
     pub struct PipelineKey;
     /// Stable key for a Material in the ResourceManager.
@@ -96,6 +99,7 @@ fn param_to_padded_bytes(value: &ParamValue) -> Vec<u8> {
 pub struct ResourceManager {
     textures: SlotMap<TextureKey, Arc<Texture>>,
     geometries: SlotMap<GeometryKey, Arc<Geometry>>,
+    shaders: SlotMap<ShaderKey, Arc<Shader>>,
     pipelines: SlotMap<PipelineKey, Arc<Pipeline>>,
     materials: SlotMap<MaterialKey, Arc<Material>>,
     meshes: SlotMap<MeshKey, Arc<Mesh>>,
@@ -103,6 +107,7 @@ pub struct ResourceManager {
 
     texture_names: FxHashMap<String, TextureKey>,
     geometry_names: FxHashMap<String, GeometryKey>,
+    shader_names: FxHashMap<String, ShaderKey>,
     pipeline_names: FxHashMap<String, PipelineKey>,
     material_names: FxHashMap<String, MaterialKey>,
     mesh_names: FxHashMap<String, MeshKey>,
@@ -117,6 +122,7 @@ impl ResourceManager {
         Self {
             textures: SlotMap::with_key(),
             geometries: SlotMap::with_key(),
+            shaders: SlotMap::with_key(),
             pipelines: SlotMap::with_key(),
             materials: SlotMap::with_key(),
             meshes: SlotMap::with_key(),
@@ -124,6 +130,7 @@ impl ResourceManager {
 
             texture_names: FxHashMap::default(),
             geometry_names: FxHashMap::default(),
+            shader_names: FxHashMap::default(),
             pipeline_names: FxHashMap::default(),
             material_names: FxHashMap::default(),
             mesh_names: FxHashMap::default(),
@@ -340,9 +347,64 @@ impl ResourceManager {
         geometry.add_submesh(mesh_id, lod_index, desc)
     }
 
+    // ===== SHADER CREATION =====
+
+    /// Create a shader resource
+    pub fn create_shader(
+        &mut self,
+        name: String,
+        desc: crate::resource::shader::ShaderDesc,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<ShaderKey> {
+        if self.shader_names.contains_key(&name) {
+            crate::engine_bail_warn!("galaxy3d::ResourceManager", "Shader '{}' already exists", name);
+        }
+
+        let gd_shader = graphics_device.create_shader(graphics_device::ShaderDesc {
+            code: desc.code,
+            stage: desc.stage,
+            entry_point: desc.entry_point,
+        })?;
+        let shader = Shader::from_gpu_shader(gd_shader, desc.stage);
+
+        let key = self.shaders.insert(Arc::new(shader));
+        self.shader_names.insert(name.clone(), key);
+
+        crate::engine_info!("galaxy3d::ResourceManager",
+            "Created Shader resource '{}'", name);
+
+        Ok(key)
+    }
+
+    // ===== SHADER ACCESS =====
+
+    /// Get a shader by key
+    pub fn shader(&self, key: ShaderKey) -> Option<&Arc<Shader>> {
+        self.shaders.get(key)
+    }
+
+    /// Get a shader by name
+    pub fn shader_by_name(&self, name: &str) -> Option<&Arc<Shader>> {
+        let key = self.shader_names.get(name)?;
+        self.shaders.get(*key)
+    }
+
+    /// Get shader key by name
+    pub fn shader_key(&self, name: &str) -> Option<ShaderKey> {
+        self.shader_names.get(name).copied()
+    }
+
+    /// Get the number of registered shaders
+    pub fn shader_count(&self) -> usize {
+        self.shaders.len()
+    }
+
     // ===== PIPELINE CREATION =====
 
     /// Create a pipeline resource
+    ///
+    /// Resolves ShaderKeys from the descriptor and passes the GPU shaders
+    /// to the backend for pipeline compilation.
     pub fn create_pipeline(
         &mut self,
         name: String,
@@ -353,8 +415,29 @@ impl ResourceManager {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Pipeline '{}' already exists", name);
         }
 
-        let gd_pipeline = graphics_device.create_pipeline(desc.pipeline)?;
-        let pipeline = Pipeline::from_gpu_pipeline(gd_pipeline);
+        let vert = self.shaders.get(desc.vertex_shader)
+            .ok_or_else(|| crate::engine_err!("galaxy3d::ResourceManager",
+                "Pipeline '{}': vertex shader not found", name))?;
+        let frag = self.shaders.get(desc.fragment_shader)
+            .ok_or_else(|| crate::engine_err!("galaxy3d::ResourceManager",
+                "Pipeline '{}': fragment shader not found", name))?;
+
+        let gd_desc = graphics_device::PipelineDesc {
+            vertex_layout: desc.vertex_layout,
+            topology: desc.topology,
+            rasterization: desc.rasterization,
+            color_blend: desc.color_blend,
+            multisample: desc.multisample,
+            color_formats: desc.color_formats,
+            depth_format: desc.depth_format,
+        };
+
+        let gd_pipeline = graphics_device.create_pipeline(
+            gd_desc,
+            vert.graphics_device_shader(),
+            frag.graphics_device_shader(),
+        )?;
+        let pipeline = Pipeline::from_gpu_pipeline(gd_pipeline, desc.vertex_shader, desc.fragment_shader);
 
         let key = self.pipelines.insert(Arc::new(pipeline));
         self.pipeline_names.insert(name.clone(), key);

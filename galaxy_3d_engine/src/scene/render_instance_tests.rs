@@ -1,10 +1,10 @@
 /// Tests for RenderInstance, RenderLOD, RenderSubMesh, and AABB
 
 use super::*;
-use crate::graphics_device::mock_graphics_device::{MockGraphicsDevice, MockShader};
+use crate::graphics_device::mock_graphics_device::MockGraphicsDevice;
 use crate::graphics_device::{
     PrimitiveTopology, BufferFormat, TextureFormat, TextureUsage,
-    MipmapMode, TextureData, SamplerType,
+    MipmapMode, TextureData, SamplerType, ShaderStage,
     VertexLayout, VertexBinding, VertexAttribute,
     VertexInputRate, IndexType,
 };
@@ -20,8 +20,9 @@ use crate::resource::mesh::{
     MeshDesc, MeshLODDesc, SubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
 };
+use crate::resource::shader::ShaderDesc;
 use crate::resource::resource_manager::{
-    ResourceManager, GeometryKey, PipelineKey, MaterialKey, MeshKey,
+    ResourceManager, GeometryKey, PipelineKey, MaterialKey, MeshKey, ShaderKey,
 };
 use crate::utils::SlotAllocator;
 use glam::{Vec3, Mat4};
@@ -42,13 +43,20 @@ fn create_vertex_layout() -> VertexLayout {
     }
 }
 
-fn create_render_pipeline_desc() -> crate::graphics_device::PipelineDesc {
-    crate::graphics_device::PipelineDesc {
-        vertex_shader: Arc::new(MockShader::new("vert".to_string())),
-        fragment_shader: Arc::new(MockShader::new("frag".to_string())),
+fn create_test_shaders(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> (ShaderKey, ShaderKey) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let vk = rm.create_shader(format!("vert_{}", id), ShaderDesc { code: &[], stage: ShaderStage::Vertex, entry_point: "main".to_string() }, &mut *gd.lock().unwrap()).unwrap();
+    let fk = rm.create_shader(format!("frag_{}", id), ShaderDesc { code: &[], stage: ShaderStage::Fragment, entry_point: "main".to_string() }, &mut *gd.lock().unwrap()).unwrap();
+    (vk, fk)
+}
+
+fn create_test_pipeline_desc(vk: ShaderKey, fk: ShaderKey) -> PipelineDesc {
+    PipelineDesc {
+        vertex_shader: vk, fragment_shader: fk,
         vertex_layout: create_vertex_layout(),
         topology: PrimitiveTopology::TriangleList,
-        push_constant_ranges: vec![], binding_group_layouts: vec![],
         rasterization: Default::default(), color_blend: Default::default(),
         multisample: Default::default(), color_formats: vec![], depth_format: None,
     }
@@ -89,7 +97,8 @@ fn create_test_resources() -> TestResources {
         }],
     }).unwrap();
 
-    let pipeline_key = rm.create_pipeline("p".to_string(), PipelineDesc { pipeline: create_render_pipeline_desc() }, &mut *gd.lock().unwrap()).unwrap();
+    let (vk, fk) = create_test_shaders(&mut rm, &gd);
+    let pipeline_key = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let material_key = rm.create_material("m".to_string(), MaterialDesc {
         pipeline: pipeline_key, textures: vec![],
         params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))],
@@ -130,7 +139,8 @@ fn create_non_indexed_resources() -> (TestResources, MeshKey) {
         }],
     }).unwrap();
 
-    let pk = rm.create_pipeline("p".to_string(), PipelineDesc { pipeline: create_render_pipeline_desc() }, &mut *gd.lock().unwrap()).unwrap();
+    let (vk, fk) = create_test_shaders(&mut rm, &gd);
+    let pk = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let mk = rm.create_material("m".to_string(), MaterialDesc {
         pipeline: pk, textures: vec![], params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))], render_state: None,
     }, &*gd.lock().unwrap()).unwrap();
@@ -317,7 +327,8 @@ fn test_from_mesh_material_with_texture() {
         layers: vec![LayerDesc { name: "default".to_string(), layer_index: 0, data: None, regions: vec![] }],
     }).unwrap();
 
-    let pk = rm.create_pipeline("p".to_string(), PipelineDesc { pipeline: create_render_pipeline_desc() }, &mut *gd.lock().unwrap()).unwrap();
+    let (vk, fk) = create_test_shaders(&mut rm, &gd);
+    let pk = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let mk = rm.create_material("m".to_string(), MaterialDesc {
         pipeline: pk, textures: vec![MaterialTextureSlotDesc {
             name: "diffuse".to_string(), texture: tex_key, layer: None, region: None, sampler_type: SamplerType::LinearRepeat,

@@ -24,7 +24,12 @@ pub struct Shader {
 }
 
 impl RendererShader for Shader {
-    // No public methods
+    fn reflected_bindings(&self) -> &[ReflectedBinding] {
+        &self.reflected_bindings
+    }
+    fn reflected_push_constants(&self) -> &[ReflectedPushConstant] {
+        &self.reflected_push_constants
+    }
 }
 
 impl Drop for Shader {

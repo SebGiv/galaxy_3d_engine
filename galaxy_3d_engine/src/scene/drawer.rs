@@ -5,7 +5,7 @@
 
 use crate::error::Result;
 use crate::engine::Engine;
-use crate::graphics_device::{CommandList, ShaderStage};
+use crate::graphics_device::CommandList;
 use crate::camera::RenderView;
 use super::scene::Scene;
 
@@ -88,10 +88,14 @@ impl Drawer for ForwardDrawer {
                 }
 
                 // Push draw slot index (shader reads instance data from SSBO)
+                // Use stage flags from pipeline reflection (not hardcoded)
                 let draw_slot = sub_mesh.draw_slot();
-                cmd.push_constants(
-                    &[ShaderStage::Vertex, ShaderStage::Fragment], 0, bytemuck::bytes_of(&draw_slot),
-                )?;
+                let reflection = gd_pipeline.reflection();
+                if let Some(pc) = reflection.push_constants().first() {
+                    cmd.push_constants(
+                        pc.stage_flags, 0, bytemuck::bytes_of(&draw_slot),
+                    )?;
+                }
 
                 // Issue draw call
                 if sub_mesh.index_count() > 0 {

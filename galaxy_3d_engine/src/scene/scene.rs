@@ -9,8 +9,9 @@ use slotmap::SlotMap;
 use glam::{Mat4, Vec3};
 use crate::error::Result;
 use crate::engine_err;
-use crate::graphics_device::{self, BindingGroup, BindingResource};
+use crate::graphics_device::{self, BindingGroup, BindingResource, SamplerType};
 use crate::resource::buffer::Buffer;
+use crate::resource::texture::Texture;
 use crate::resource::mesh::Mesh;
 use crate::resource::resource_manager::{ResourceManager, MeshKey};
 use crate::utils::{SlotAllocator, SwapSet};
@@ -18,6 +19,19 @@ use super::render_instance::{
     RenderInstance, RenderInstanceKey, AABB,
 };
 use super::light::{Light, LightKey, LightType, LightDesc};
+
+/// A global binding resource for the scene's set 0 descriptor set.
+///
+/// Each entry maps to a binding index (0, 1, 2, ...) in declaration order.
+/// The scene builds the global binding group from these at first use.
+pub enum GlobalBinding {
+    /// Uniform buffer
+    UniformBuffer(Arc<Buffer>),
+    /// Storage buffer
+    StorageBuffer(Arc<Buffer>),
+    /// Sampled texture with sampler type
+    SampledTexture(Arc<Texture>, SamplerType),
+}
 
 /// A renderable scene containing RenderInstances and Lights.
 ///
@@ -56,17 +70,11 @@ pub struct Scene {
     /// Lights marked for deferred removal
     removed_lights: SwapSet<LightKey>,
 
-    // ----- GPU Buffers -----
+    // ----- Global Bindings -----
 
-    /// Per-frame uniform buffer (camera, lighting, time, post-process)
-    frame_buffer: Arc<Buffer>,
-    /// Per-instance storage buffer (world matrices, material slot, flags)
-    instance_buffer: Arc<Buffer>,
-    /// Material storage buffer (shared material parameters)
-    material_buffer: Arc<Buffer>,
-    /// Light storage buffer (shared light parameters)
-    light_buffer: Arc<Buffer>,
-    /// Set 0 binding group (frame UBO + instance SSBO + material SSBO + light SSBO), shared by all instances
+    /// User-defined global bindings for set 0 (binding 0, 1, 2, ... in order)
+    global_bindings: Vec<GlobalBinding>,
+    /// Set 0 binding group, built lazily from global_bindings
     global_binding_group: Option<Arc<dyn BindingGroup>>,
 }
 
@@ -76,16 +84,10 @@ impl Scene {
     /// # Arguments
     ///
     /// * `graphics_device` - GraphicsDevice for creating GPU resources
-    /// * `frame_buffer` - Per-frame uniform buffer (camera, lighting, time)
-    /// * `instance_buffer` - Per-instance storage buffer (world matrices, flags)
-    /// * `material_buffer` - Material storage buffer (shared material parameters)
-    /// * `light_buffer` - Light storage buffer (shared light parameters)
+    /// * `global_bindings` - Global bindings for set 0 (UBO, SSBO, or Texture+Sampler in order)
     pub(crate) fn new(
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
-        frame_buffer: Arc<Buffer>,
-        instance_buffer: Arc<Buffer>,
-        material_buffer: Arc<Buffer>,
-        light_buffer: Arc<Buffer>,
+        global_bindings: Vec<GlobalBinding>,
     ) -> Self {
         Self {
             graphics_device,
@@ -100,10 +102,7 @@ impl Scene {
             dirty_light_transforms: SwapSet::new(),
             dirty_light_data: SwapSet::new(),
             removed_lights: SwapSet::new(),
-            frame_buffer,
-            instance_buffer,
-            material_buffer,
-            light_buffer,
+            global_bindings,
             global_binding_group: None,
         }
     }
@@ -241,27 +240,27 @@ impl Scene {
         self.render_instances.len()
     }
 
-    /// Get the per-frame uniform buffer
-    pub fn frame_buffer(&self) -> &Arc<Buffer> {
-        &self.frame_buffer
+    /// Get a global binding at the given index
+    pub fn global_binding(&self, index: usize) -> Option<&GlobalBinding> {
+        self.global_bindings.get(index)
     }
 
-    /// Get the per-instance storage buffer
-    pub fn instance_buffer(&self) -> &Arc<Buffer> {
-        &self.instance_buffer
+    /// Get the number of global bindings
+    pub fn global_binding_count(&self) -> usize {
+        self.global_bindings.len()
     }
 
-    /// Get the material storage buffer
-    pub fn material_buffer(&self) -> &Arc<Buffer> {
-        &self.material_buffer
+    /// Get the buffer from a global binding at the given index.
+    /// Returns None if the index is out of range or the binding is not a buffer.
+    pub fn global_buffer(&self, index: usize) -> Option<&Arc<Buffer>> {
+        match self.global_bindings.get(index)? {
+            GlobalBinding::UniformBuffer(buf) => Some(buf),
+            GlobalBinding::StorageBuffer(buf) => Some(buf),
+            GlobalBinding::SampledTexture(_, _) => None,
+        }
     }
 
-    /// Get the light storage buffer
-    pub fn light_buffer(&self) -> &Arc<Buffer> {
-        &self.light_buffer
-    }
-
-    /// Get the global binding group (Set 0: frame UBO + instance SSBO + material SSBO).
+    /// Get the global binding group (Set 0).
     ///
     /// Returns None if no instance has been created yet.
     pub fn global_binding_group(&self) -> Option<&Arc<dyn BindingGroup>> {
@@ -270,9 +269,8 @@ impl Scene {
 
     /// Lazily create the global binding group (Set 0) from the first pipeline encountered.
     ///
-    /// All pipelines must declare the same Set 0 layout (frame UBO + instance SSBO +
-    /// material SSBO + light SSBO). We use the first pipeline from the mesh to create
-    /// the descriptor set.
+    /// Builds the binding group from the user-declared global_bindings Vec.
+    /// Uses the first pipeline from the mesh to create the descriptor set.
     fn ensure_global_binding_group(&mut self, mesh: &Mesh, resource_manager: &ResourceManager) -> Result<()> {
         if self.global_binding_group.is_some() {
             return Ok(());
@@ -289,16 +287,24 @@ impl Scene {
             .ok_or_else(|| engine_err!("galaxy3d::Scene", "Pipeline key not found in ResourceManager"))?;
         let gd_pipeline = pipeline.graphics_device_pipeline();
 
+        let resources: Vec<BindingResource> = self.global_bindings.iter()
+            .map(|gb| match gb {
+                GlobalBinding::UniformBuffer(buf) =>
+                    BindingResource::UniformBuffer(buf.graphics_device_buffer().as_ref()),
+                GlobalBinding::StorageBuffer(buf) =>
+                    BindingResource::StorageBuffer(buf.graphics_device_buffer().as_ref()),
+                GlobalBinding::SampledTexture(tex, sampler_type) =>
+                    BindingResource::SampledTexture(
+                        tex.graphics_device_texture().as_ref(), *sampler_type,
+                    ),
+            })
+            .collect();
+
         let graphics_device_lock = self.graphics_device.lock().unwrap();
         let bg = graphics_device_lock.create_binding_group(
             gd_pipeline,
             0,
-            &[
-                BindingResource::UniformBuffer(self.frame_buffer.graphics_device_buffer().as_ref()),
-                BindingResource::StorageBuffer(self.instance_buffer.graphics_device_buffer().as_ref()),
-                BindingResource::StorageBuffer(self.material_buffer.graphics_device_buffer().as_ref()),
-                BindingResource::StorageBuffer(self.light_buffer.graphics_device_buffer().as_ref()),
-            ],
+            &resources,
         )?;
 
         self.global_binding_group = Some(bg);

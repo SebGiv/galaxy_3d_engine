@@ -5,6 +5,7 @@
 pub mod resource_manager;
 pub mod texture;
 pub mod geometry;
+pub mod shader;
 pub mod pipeline;
 pub mod material;
 pub mod mesh;
@@ -12,7 +13,10 @@ pub mod buffer;
 
 pub use resource_manager::ResourceManager;
 pub use resource_manager::{
-    TextureKey, GeometryKey, PipelineKey, MaterialKey, MeshKey, BufferKey,
+    TextureKey, GeometryKey, ShaderKey, PipelineKey, MaterialKey, MeshKey, BufferKey,
+};
+pub use shader::{
+    Shader, ShaderDesc,
 };
 pub use texture::{
     Texture, TextureLayer,
