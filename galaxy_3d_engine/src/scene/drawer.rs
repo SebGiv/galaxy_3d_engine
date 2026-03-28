@@ -82,11 +82,6 @@ impl Drawer for ForwardDrawer {
                     cmd.bind_binding_group(gd_pipeline, global_bg.set_index(), global_bg)?;
                 }
 
-                // Sets 1+: texture bindings (from Material)
-                for bg in material.binding_groups() {
-                    cmd.bind_binding_group(gd_pipeline, bg.set_index(), bg)?;
-                }
-
                 // Push draw slot index (shader reads instance data from SSBO)
                 // Use stage flags from pipeline reflection (not hardcoded)
                 let draw_slot = sub_mesh.draw_slot();

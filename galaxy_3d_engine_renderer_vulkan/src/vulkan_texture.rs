@@ -3,10 +3,11 @@
 use galaxy_3d_engine::galaxy3d::{Result, Error};
 use galaxy_3d_engine::galaxy3d::render::Texture as RendererTexture;
 use galaxy_3d_engine::galaxy3d::render::TextureInfo;
+use galaxy_3d_engine::galaxy3d::utils::SlotAllocator;
 use galaxy_3d_engine::{engine_error, engine_bail, engine_err, engine_warn_err};
 use ash::vk;
 use gpu_allocator::vulkan::Allocation;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::vulkan_context::GpuContext;
 
@@ -22,6 +23,10 @@ pub struct Texture {
     pub(crate) allocation: Option<Allocation>,
     /// Read-only texture properties
     pub(crate) info: TextureInfo,
+    /// Bindless index in the type-specific bindless table
+    pub(crate) bindless_index: u32,
+    /// Shared allocator for freeing the bindless index on drop
+    pub(crate) bindless_allocator: Option<Arc<Mutex<SlotAllocator>>>,
 }
 
 impl Texture {
@@ -39,6 +44,8 @@ impl Texture {
             view,
             allocation: Some(allocation),
             info,
+            bindless_index: 0, // Set by BindlessState after creation
+            bindless_allocator: None, // Set by BindlessState after creation
         }
     }
 }
@@ -46,6 +53,10 @@ impl Texture {
 impl RendererTexture for Texture {
     fn info(&self) -> &TextureInfo {
         &self.info
+    }
+
+    fn bindless_index(&self) -> u32 {
+        self.bindless_index
     }
 
     fn update(&self, layer: u32, mip_level: u32, data: &[u8]) -> Result<()> {
@@ -231,6 +242,11 @@ impl RendererTexture for Texture {
 
 impl Drop for Texture {
     fn drop(&mut self) {
+        // Free the bindless index back to the allocator
+        if let Some(allocator) = self.bindless_allocator.take() {
+            allocator.lock().unwrap().free(self.bindless_index);
+        }
+
         unsafe {
             // Destroy image view
             self.ctx.device.destroy_image_view(self.view, None);

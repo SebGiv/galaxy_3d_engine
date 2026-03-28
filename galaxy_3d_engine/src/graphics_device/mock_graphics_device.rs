@@ -61,11 +61,14 @@ impl Buffer for MockBuffer {
 pub struct MockTexture {
     pub info: TextureInfo,
     pub name: String,
+    pub bindless_index: u32,
 }
 
 #[cfg(test)]
 impl MockTexture {
     pub fn new(width: u32, height: u32, array_layers: u32, texture_type: crate::graphics_device::TextureType, name: String) -> Self {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static NEXT_BINDLESS_INDEX: AtomicU32 = AtomicU32::new(0);
         Self {
             info: TextureInfo {
                 width,
@@ -77,6 +80,7 @@ impl MockTexture {
                 texture_type,
             },
             name,
+            bindless_index: NEXT_BINDLESS_INDEX.fetch_add(1, Ordering::Relaxed),
         }
     }
 }
@@ -85,6 +89,10 @@ impl MockTexture {
 impl Texture for MockTexture {
     fn info(&self) -> &TextureInfo {
         &self.info
+    }
+
+    fn bindless_index(&self) -> u32 {
+        self.bindless_index
     }
 }
 

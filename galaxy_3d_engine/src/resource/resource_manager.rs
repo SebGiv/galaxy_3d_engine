@@ -612,33 +612,31 @@ impl ResourceManager {
                 buffer.update_field(slot_id, field_index, &bytes)?;
             }
 
-            // ===== TEXTURE SLOTS → BUFFER FIELDS (layer index) =====
+            // ===== TEXTURE SLOTS → BUFFER FIELDS (bindless index, sampler index, layer) =====
+            // Convention: slot name "albedo" maps to fields "albedoTexture", "albedoSampler", "albedoLayer"
             for slot in material.texture_slots() {
-                // 1. Find field by slot name
-                let field_index = match buffer.field_id(slot.name()) {
-                    Some(idx) => idx,
-                    None => {
-                        crate::engine_warn!("galaxy3d::ResourceManager",
-                            "sync_materials: texture slot '{}' \
-                             not found in buffer layout",
-                            slot.name());
-                        continue;
-                    }
-                };
+                let slot_name = slot.name();
 
-                // 2. Check field is UInt
-                let field_type = buffer.fields()[field_index].field_type;
-                if field_type != FieldType::UInt {
-                    crate::engine_warn!("galaxy3d::ResourceManager",
-                        "sync_materials: texture slot '{}' \
-                         expects UInt field, found {:?}",
-                        slot.name(), field_type);
-                    continue;
+                // Write bindless texture index → "{name}Texture"
+                let tex_field_name = format!("{}Texture", slot_name);
+                if let Some(field_index) = buffer.field_id(&tex_field_name) {
+                    let value = slot.bindless_index();
+                    buffer.update_field(slot_id, field_index, &value.to_ne_bytes())?;
                 }
 
-                // 3. Write layer index (0 if no layer specified)
-                let layer_value: u32 = slot.layer().unwrap_or(0);
-                buffer.update_field(slot_id, field_index, &layer_value.to_ne_bytes())?;
+                // Write sampler index → "{name}Sampler"
+                let sampler_field_name = format!("{}Sampler", slot_name);
+                if let Some(field_index) = buffer.field_id(&sampler_field_name) {
+                    let value = slot.sampler_index();
+                    buffer.update_field(slot_id, field_index, &value.to_ne_bytes())?;
+                }
+
+                // Write layer index → "{name}Layer"
+                let layer_field_name = format!("{}Layer", slot_name);
+                if let Some(field_index) = buffer.field_id(&layer_field_name) {
+                    let value: u32 = slot.layer().unwrap_or(0);
+                    buffer.update_field(slot_id, field_index, &value.to_ne_bytes())?;
+                }
             }
         }
         Ok(())
@@ -862,20 +860,30 @@ impl ResourceManager {
             graphics_device,
             kind: BufferKind::Storage,
             fields: vec![
-                FieldDesc { name: "baseColor".to_string(),                field_type: FieldType::Vec4 },
-                FieldDesc { name: "emissiveColor".to_string(),            field_type: FieldType::Vec4 },
-                FieldDesc { name: "metallic".to_string(),                 field_type: FieldType::Float },
-                FieldDesc { name: "roughness".to_string(),                field_type: FieldType::Float },
-                FieldDesc { name: "normalScale".to_string(),              field_type: FieldType::Float },
-                FieldDesc { name: "ao".to_string(),                       field_type: FieldType::Float },
-                FieldDesc { name: "alphaCutoff".to_string(),              field_type: FieldType::Float },
-                FieldDesc { name: "ior".to_string(),                      field_type: FieldType::Float },
-                FieldDesc { name: "albedoTexture".to_string(),            field_type: FieldType::UInt },
-                FieldDesc { name: "normalTexture".to_string(),            field_type: FieldType::UInt },
-                FieldDesc { name: "metallicRoughnessTexture".to_string(), field_type: FieldType::UInt },
-                FieldDesc { name: "emissiveTexture".to_string(),          field_type: FieldType::UInt },
-                FieldDesc { name: "aoTexture".to_string(),                field_type: FieldType::UInt },
-                FieldDesc { name: "flags".to_string(),                    field_type: FieldType::UInt },
+                FieldDesc { name: "baseColor".to_string(),                    field_type: FieldType::Vec4 },
+                FieldDesc { name: "emissiveColor".to_string(),                field_type: FieldType::Vec4 },
+                FieldDesc { name: "metallic".to_string(),                     field_type: FieldType::Float },
+                FieldDesc { name: "roughness".to_string(),                    field_type: FieldType::Float },
+                FieldDesc { name: "normalScale".to_string(),                  field_type: FieldType::Float },
+                FieldDesc { name: "ao".to_string(),                           field_type: FieldType::Float },
+                FieldDesc { name: "alphaCutoff".to_string(),                  field_type: FieldType::Float },
+                FieldDesc { name: "ior".to_string(),                          field_type: FieldType::Float },
+                FieldDesc { name: "albedoTexture".to_string(),                field_type: FieldType::UInt },
+                FieldDesc { name: "albedoSampler".to_string(),                field_type: FieldType::UInt },
+                FieldDesc { name: "albedoLayer".to_string(),                  field_type: FieldType::UInt },
+                FieldDesc { name: "normalTexture".to_string(),                field_type: FieldType::UInt },
+                FieldDesc { name: "normalSampler".to_string(),                field_type: FieldType::UInt },
+                FieldDesc { name: "normalLayer".to_string(),                  field_type: FieldType::UInt },
+                FieldDesc { name: "metallicRoughnessTexture".to_string(),     field_type: FieldType::UInt },
+                FieldDesc { name: "metallicRoughnessSampler".to_string(),     field_type: FieldType::UInt },
+                FieldDesc { name: "metallicRoughnessLayer".to_string(),       field_type: FieldType::UInt },
+                FieldDesc { name: "emissiveTexture".to_string(),              field_type: FieldType::UInt },
+                FieldDesc { name: "emissiveSampler".to_string(),              field_type: FieldType::UInt },
+                FieldDesc { name: "emissiveLayer".to_string(),                field_type: FieldType::UInt },
+                FieldDesc { name: "aoTexture".to_string(),                    field_type: FieldType::UInt },
+                FieldDesc { name: "aoSampler".to_string(),                    field_type: FieldType::UInt },
+                FieldDesc { name: "aoLayer".to_string(),                      field_type: FieldType::UInt },
+                FieldDesc { name: "flags".to_string(),                        field_type: FieldType::UInt },
             ],
             count,
         })?;
@@ -893,11 +901,21 @@ impl ResourceManager {
             buffer.update_field(i, f("ao"),          &1.0f32.to_ne_bytes())?;
             buffer.update_field(i, f("alphaCutoff"), &0.5f32.to_ne_bytes())?;
             buffer.update_field(i, f("ior"),         &1.5f32.to_ne_bytes())?;
-            buffer.update_field(i, f("albedoTexture"),            &no_texture)?;
-            buffer.update_field(i, f("normalTexture"),            &no_texture)?;
-            buffer.update_field(i, f("metallicRoughnessTexture"), &no_texture)?;
-            buffer.update_field(i, f("emissiveTexture"),          &no_texture)?;
-            buffer.update_field(i, f("aoTexture"),                &no_texture)?;
+            buffer.update_field(i, f("albedoTexture"),                &no_texture)?;
+            buffer.update_field(i, f("albedoSampler"),                &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("albedoLayer"),                  &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("normalTexture"),                &no_texture)?;
+            buffer.update_field(i, f("normalSampler"),                &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("normalLayer"),                  &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("metallicRoughnessTexture"),     &no_texture)?;
+            buffer.update_field(i, f("metallicRoughnessSampler"),     &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("metallicRoughnessLayer"),       &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("emissiveTexture"),              &no_texture)?;
+            buffer.update_field(i, f("emissiveSampler"),              &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("emissiveLayer"),                &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("aoTexture"),                    &no_texture)?;
+            buffer.update_field(i, f("aoSampler"),                    &0u32.to_ne_bytes())?;
+            buffer.update_field(i, f("aoLayer"),                      &0u32.to_ne_bytes())?;
         }
 
         Ok(key)

@@ -1725,8 +1725,8 @@ fn test_default_material_buffer_stride() {
     ).unwrap();
     let buffer = rm.buffer(buffer_key).unwrap();
 
-    // 2×Vec4(16) + 6×Float(4) + 6×UInt(4) = 32 + 24 + 24 = 80
-    assert_eq!(buffer.stride(), 80);
+    // 2×Vec4(16) + 6×Float(4) + 16×UInt(4) = 32 + 24 + 64 = 120, padded to 128 (std430 alignment)
+    assert_eq!(buffer.stride(), 128);
 }
 
 #[test]
@@ -1780,7 +1780,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
     let mat_desc = MaterialDesc {
         pipeline: pipeline,
         textures: vec![MaterialTextureSlotDesc {
-            name: "albedoTexture".to_string(),
+            name: "albedo".to_string(),
             texture: texture.clone(),
             layer: Some(LayerRef::Index(2)),
             region: None,
@@ -1791,17 +1791,19 @@ fn test_sync_materials_texture_slot_writes_layer() {
     };
     rm.create_material("ground".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
-    // Buffer with a UInt field matching the slot name
+    // Buffer with UInt fields matching the bindless convention: {name}Texture, {name}Sampler, {name}Layer
     let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::UInt },
+            FieldDesc { name: "albedoSampler".to_string(), field_type: FieldType::UInt },
+            FieldDesc { name: "albedoLayer".to_string(),   field_type: FieldType::UInt },
         ],
         count: 4,
     }).unwrap();
 
-    // Sync should succeed (layer 2 written to buffer)
+    // Sync should succeed (bindless index, sampler index, layer written to buffer)
     assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
 }
 
@@ -1820,7 +1822,7 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
     let mat_desc = MaterialDesc {
         pipeline: pipeline,
         textures: vec![MaterialTextureSlotDesc {
-            name: "albedoTexture".to_string(),
+            name: "albedo".to_string(),
             texture: texture.clone(),
             layer: None,
             region: None,
@@ -1836,6 +1838,8 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
         kind: BufferKind::Storage,
         fields: vec![
             FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::UInt },
+            FieldDesc { name: "albedoSampler".to_string(), field_type: FieldType::UInt },
+            FieldDesc { name: "albedoLayer".to_string(),   field_type: FieldType::UInt },
         ],
         count: 4,
     }).unwrap();
@@ -1857,7 +1861,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
     let mat_desc = MaterialDesc {
         pipeline: pipeline,
         textures: vec![MaterialTextureSlotDesc {
-            name: "albedoTexture".to_string(),
+            name: "albedo".to_string(),
             texture: texture.clone(),
             layer: None,
             region: None,
@@ -1868,7 +1872,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
     };
     rm.create_material("mat".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
-    // Buffer has NO field named "albedoTexture" → warning, no error
+    // Buffer has NO field named "albedoTexture" → silently skipped
     let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,
@@ -1895,7 +1899,7 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
     let mat_desc = MaterialDesc {
         pipeline: pipeline,
         textures: vec![MaterialTextureSlotDesc {
-            name: "albedoTexture".to_string(),
+            name: "albedo".to_string(),
             texture: texture.clone(),
             layer: None,
             region: None,
@@ -1906,7 +1910,7 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
     };
     rm.create_material("mat".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
-    // Buffer has "albedoTexture" but as Float, not UInt → warning, no error
+    // Buffer has "albedoTexture" but as Float, not UInt — silently written (no type check on bindless fields)
     let buffer = rm.create_buffer("mat_buf".to_string(), BufferDesc {
         graphics_device: graphics_device.clone(),
         kind: BufferKind::Storage,

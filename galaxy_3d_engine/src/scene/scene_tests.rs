@@ -760,7 +760,7 @@ fn test_global_binding_group_created_on_first_instance() {
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), &s.rm).unwrap();
     let bg = scene.global_binding_group();
     assert!(bg.is_some());
-    assert_eq!(bg.unwrap().set_index(), 0);
+    assert_eq!(bg.unwrap().set_index(), 1); // Set 0 is reserved for bindless textures
 }
 
 #[test]

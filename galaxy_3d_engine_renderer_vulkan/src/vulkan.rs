@@ -16,11 +16,12 @@ use galaxy_3d_engine::galaxy3d::render::{
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
     GraphicsDeviceStats, VertexInputRate,
-    Config, DebugSeverity, TextureUsage,
+    Config, BindlessConfig, DebugSeverity, TextureUsage, SamplerType,
     MipmapMode, ManualMipmapData,
     PolygonMode,
     BlendFactor, BlendOp, SampleCount,
 };
+use galaxy_3d_engine::galaxy3d::utils::SlotAllocator;
 use ash::vk;
 use std::sync::{Arc, Mutex};
 use std::ffi::CString;
@@ -54,6 +55,226 @@ pub struct DynamicStateCaps {
     pub color_write_mask: bool,
     pub alpha_to_coverage_enable: bool,
     pub color_write_enable: bool,
+}
+
+// ============================================================================
+// Bindless State
+// ============================================================================
+
+// Binding indices within the bindless descriptor set (set 0) — fixed layout convention
+
+/// Internal state for bindless texture and sampler tables.
+///
+/// A single persistent descriptor set (set 0) contains all bindless tables:
+///   binding 0: texture2D[]      (max 4096)
+///   binding 1: texture2DArray[] (max 64)
+///   binding 2: textureCube[]    (max 64)   — future
+///   binding 3: texture3D[]      (max 16)   — future
+///   binding 4: sampler[]        (6 fixed)
+///
+/// Textures are registered/unregistered via SlotAllocators.
+/// Samplers are filled at init and never modified.
+/// The descriptor set persists for the lifetime of the GraphicsDevice.
+#[allow(dead_code)] // Cube/3D allocators reserved for future texture types
+struct BindlessState {
+    // Allocators (one per texture type, shared with textures for Drop)
+    texture_2d_allocator:    Arc<Mutex<SlotAllocator>>,
+    texture_cube_allocator:  Arc<Mutex<SlotAllocator>>,
+    texture_3d_allocator:    Arc<Mutex<SlotAllocator>>,
+    texture_array_allocator: Arc<Mutex<SlotAllocator>>,
+
+    // Single descriptor set containing all bindless bindings
+    descriptor_set: vk::DescriptorSet,
+    layout:         vk::DescriptorSetLayout,
+
+    // Dedicated descriptor pool (UPDATE_AFTER_BIND)
+    pool: vk::DescriptorPool,
+}
+
+/// Binding indices within the bindless descriptor set (set 0)
+const BINDLESS_BINDING_TEXTURE_2D:    u32 = 0;
+const BINDLESS_BINDING_TEXTURE_ARRAY: u32 = 1;
+const BINDLESS_BINDING_TEXTURE_CUBE:  u32 = 2;
+const BINDLESS_BINDING_TEXTURE_3D:    u32 = 3;
+const BINDLESS_BINDING_SAMPLER:       u32 = 4;
+
+impl BindlessState {
+    /// Create the bindless state: pool, layout, descriptor set, and fill sampler table.
+    unsafe fn new(
+        device: &ash::Device,
+        sampler_cache: &mut SamplerCache,
+        config: &BindlessConfig,
+    ) -> Result<Self> {
+        let max_2d = config.max_texture_2d;
+        let max_cube = config.max_texture_cube;
+        let max_3d = config.max_texture_3d;
+        let max_array = config.max_texture_2d_array;
+        let sampler_count = 6u32; // SamplerType variant count
+
+        // --- Pool ---
+        let total_sampled_images = max_2d + max_cube + max_3d + max_array;
+        let pool_sizes = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: total_sampled_images,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLER,
+                descriptor_count: sampler_count,
+            },
+        ];
+
+        let pool_info = vk::DescriptorPoolCreateInfo::default()
+            .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+            .max_sets(1)
+            .pool_sizes(&pool_sizes);
+
+        let pool = device.create_descriptor_pool(&pool_info, None)
+            .map_err(|e| engine_err!("galaxy3d::vulkan::bindless", "Failed to create bindless descriptor pool: {:?}", e))?;
+
+        // --- Layout: 5 bindings in one descriptor set ---
+        let bindings = [
+            // binding 0: texture2D[]
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDLESS_BINDING_TEXTURE_2D)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(max_2d)
+                .stage_flags(vk::ShaderStageFlags::ALL),
+            // binding 1: texture2DArray[]
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDLESS_BINDING_TEXTURE_ARRAY)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(max_array)
+                .stage_flags(vk::ShaderStageFlags::ALL),
+            // binding 2: textureCube[]
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDLESS_BINDING_TEXTURE_CUBE)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(max_cube)
+                .stage_flags(vk::ShaderStageFlags::ALL),
+            // binding 3: texture3D[]
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDLESS_BINDING_TEXTURE_3D)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(max_3d)
+                .stage_flags(vk::ShaderStageFlags::ALL),
+            // binding 4: sampler[] (fixed count)
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(BINDLESS_BINDING_SAMPLER)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .descriptor_count(sampler_count)
+                .stage_flags(vk::ShaderStageFlags::ALL),
+        ];
+
+        // All bindings are PARTIALLY_BOUND + UPDATE_AFTER_BIND
+        let binding_flags = [
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+        ];
+
+        let mut flags_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
+            .binding_flags(&binding_flags);
+
+        let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
+            .bindings(&bindings)
+            .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+            .push_next(&mut flags_info);
+
+        let layout = device.create_descriptor_set_layout(&layout_info, None)
+            .map_err(|e| engine_err!("galaxy3d::vulkan::bindless", "Failed to create bindless layout: {:?}", e))?;
+
+        // --- Allocate the single descriptor set ---
+        let layouts = [layout];
+        let alloc_info = vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(pool)
+            .set_layouts(&layouts);
+
+        let sets = device.allocate_descriptor_sets(&alloc_info)
+            .map_err(|e| engine_err!("galaxy3d::vulkan::bindless", "Failed to allocate bindless descriptor set: {:?}", e))?;
+        let descriptor_set = sets[0];
+
+        // --- Fill sampler table (binding 4) with all SamplerType variants ---
+        let sampler_types = [
+            SamplerType::LinearRepeat,
+            SamplerType::LinearClamp,
+            SamplerType::NearestRepeat,
+            SamplerType::NearestClamp,
+            SamplerType::Shadow,
+            SamplerType::Anisotropic,
+        ];
+
+        let sampler_infos: Vec<vk::DescriptorImageInfo> = sampler_types.iter()
+            .map(|st| {
+                vk::DescriptorImageInfo::default()
+                    .sampler(sampler_cache.get(*st))
+            })
+            .collect();
+
+        let sampler_writes: Vec<vk::WriteDescriptorSet> = sampler_infos.iter()
+            .enumerate()
+            .map(|(i, info)| {
+                vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor_set)
+                    .dst_binding(BINDLESS_BINDING_SAMPLER)
+                    .dst_array_element(i as u32)
+                    .descriptor_type(vk::DescriptorType::SAMPLER)
+                    .image_info(std::slice::from_ref(info))
+            })
+            .collect();
+
+        device.update_descriptor_sets(&sampler_writes, &[]);
+
+        Ok(Self {
+            texture_2d_allocator: Arc::new(Mutex::new(SlotAllocator::new())),
+            texture_cube_allocator: Arc::new(Mutex::new(SlotAllocator::new())),
+            texture_3d_allocator: Arc::new(Mutex::new(SlotAllocator::new())),
+            texture_array_allocator: Arc::new(Mutex::new(SlotAllocator::new())),
+            descriptor_set,
+            layout,
+            pool,
+        })
+    }
+
+    /// Allocate a bindless index for a texture and update the descriptor set.
+    /// Returns (index, shared_allocator) — the allocator is kept by the texture for Drop.
+    unsafe fn register_texture(
+        &mut self,
+        device: &ash::Device,
+        texture_type: TextureType,
+        image_view: vk::ImageView,
+    ) -> (u32, Arc<Mutex<SlotAllocator>>) {
+        let (allocator, binding) = match texture_type {
+            TextureType::Tex2D   => (&self.texture_2d_allocator, BINDLESS_BINDING_TEXTURE_2D),
+            TextureType::Array2D => (&self.texture_array_allocator, BINDLESS_BINDING_TEXTURE_ARRAY),
+        };
+
+        let index = allocator.lock().unwrap().alloc();
+        let allocator_clone = Arc::clone(allocator);
+
+        let image_info = vk::DescriptorImageInfo::default()
+            .image_view(image_view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(self.descriptor_set)
+            .dst_binding(binding)
+            .dst_array_element(index)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .image_info(std::slice::from_ref(&image_info));
+
+        device.update_descriptor_sets(&[write], &[]);
+
+        (index, allocator_clone)
+    }
+
+    /// Destroy all Vulkan resources
+    unsafe fn shutdown(&mut self, device: &ash::Device) {
+        device.destroy_descriptor_set_layout(self.layout, None);
+        device.destroy_descriptor_pool(self.pool, None);
+    }
 }
 
 /// Vulkan device implementation
@@ -93,6 +314,9 @@ pub struct VulkanGraphicsDevice {
     /// Shared GPU context for all resources (textures, buffers)
     /// Owns device, instance, and debug messenger destruction
     gpu_context: Arc<GpuContext>,
+
+    /// Bindless texture and sampler tables
+    bindless_state: BindlessState,
 }
 
 impl VulkanGraphicsDevice {
@@ -477,6 +701,14 @@ impl VulkanGraphicsDevice {
             let mut vulkan_11_features = vk::PhysicalDeviceVulkan11Features::default()
                 .shader_draw_parameters(true);
 
+            let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::default()
+                .descriptor_indexing(true)
+                .shader_sampled_image_array_non_uniform_indexing(true)
+                .runtime_descriptor_array(true)
+                .descriptor_binding_variable_descriptor_count(true)
+                .descriptor_binding_sampled_image_update_after_bind(true)
+                .descriptor_binding_partially_bound(true);
+
             let mut vulkan_13_features = vk::PhysicalDeviceVulkan13Features::default()
                 .synchronization2(true)
                 .dynamic_rendering(true);
@@ -502,6 +734,7 @@ impl VulkanGraphicsDevice {
                 .enabled_extension_names(&device_extension_names)
                 .enabled_features(&device_features)
                 .push_next(&mut vulkan_11_features)
+                .push_next(&mut vulkan_12_features)
                 .push_next(&mut vulkan_13_features)
                 .push_next(&mut extended_dynamic_state);
 
@@ -585,6 +818,9 @@ impl VulkanGraphicsDevice {
                 debug_messenger,
             ));
 
+            let mut sampler_cache = SamplerCache::new(Arc::clone(&gpu_context));
+            let bindless_state = BindlessState::new(&device, &mut sampler_cache, &config.bindless)?;
+
             Ok(Self {
                 _entry: entry,
                 _instance: instance,
@@ -598,8 +834,9 @@ impl VulkanGraphicsDevice {
                 submit_fences,
                 current_submit_fence: 0,
                 descriptor_pools: Mutex::new(vec![descriptor_pool]),
-                sampler_cache: Mutex::new(SamplerCache::new(Arc::clone(&gpu_context))),
+                sampler_cache: Mutex::new(sampler_cache),
                 gpu_context,
+                bindless_state,
             })
         }
     }
@@ -862,16 +1099,25 @@ impl VulkanGraphicsDevice {
     }
 
     /// Build VkDescriptorSetLayouts from merged reflected bindings
+    /// Build descriptor set layouts from reflected bindings.
+    ///
+    /// Set 0 is reserved for the bindless descriptor set (managed by BindlessState).
+    /// This function only builds layouts for sets 1+. Bindings declared at set 0
+    /// in the shader are skipped (they use the bindless layout).
     fn build_descriptor_set_layouts(
         &self,
         merged_bindings: &[ReflectedBinding],
     ) -> Result<Vec<vk::DescriptorSetLayout>> {
-        // Group bindings by set index
-        let max_set = merged_bindings.iter().map(|b| b.set).max().unwrap_or(0);
+        // Only consider bindings for sets 1+ (set 0 = bindless, handled separately)
+        let non_bindless_bindings: Vec<&ReflectedBinding> = merged_bindings.iter()
+            .filter(|b| b.set > 0)
+            .collect();
+
+        let max_set = non_bindless_bindings.iter().map(|b| b.set).max().unwrap_or(0);
         let mut layouts: Vec<vk::DescriptorSetLayout> = Vec::new();
 
-        for set_index in 0..=max_set {
-            let bindings_for_set: Vec<vk::DescriptorSetLayoutBinding> = merged_bindings.iter()
+        for set_index in 1..=max_set {
+            let bindings_for_set: Vec<vk::DescriptorSetLayoutBinding> = non_bindless_bindings.iter()
                 .filter(|b| b.set == set_index)
                 .map(|b| {
                     vk::DescriptorSetLayoutBinding::default()
@@ -1099,6 +1345,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
         let cmd_list = CommandList::new(
             self.device.clone(),
             self.graphics_queue_family,
+            self.bindless_state.descriptor_set,
         )?;
         Ok(Box::new(cmd_list))
     }
@@ -1346,13 +1593,20 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             let vk_pipeline = pipeline.as_ref() as *const dyn RendererPipeline as *const Pipeline;
             let vk_pipeline = &*vk_pipeline;
 
-            if set_index as usize >= vk_pipeline.descriptor_set_layouts.len() {
+            // Set 0 is the bindless set (owned by BindlessState, not the pipeline).
+            // Pipeline's descriptor_set_layouts stores only sets 1+, so we offset by 1.
+            if set_index == 0 {
                 engine_bail!("galaxy3d::vulkan",
-                    "create_binding_group: set_index {} out of range (pipeline has {} layouts)",
+                    "create_binding_group: set 0 is reserved for bindless textures (managed by backend)");
+            }
+            let layout_index = (set_index - 1) as usize;
+            if layout_index >= vk_pipeline.descriptor_set_layouts.len() {
+                engine_bail!("galaxy3d::vulkan",
+                    "create_binding_group: set_index {} out of range (pipeline has sets 1..={})",
                     set_index, vk_pipeline.descriptor_set_layouts.len());
             }
 
-            let ds_layout = vk_pipeline.descriptor_set_layouts[set_index as usize];
+            let ds_layout = vk_pipeline.descriptor_set_layouts[layout_index];
 
             // Allocate descriptor set from pool (grow dynamically if exhausted)
             let layouts = [ds_layout];
@@ -1531,6 +1785,8 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                         | vk::ImageUsageFlags::TRANSFER_DST
                 }
             };
+            // All textures need SAMPLED for bindless (they are all registered in the bindless set 0)
+            usage_flags |= vk::ImageUsageFlags::SAMPLED;
             if matches!(desc.mipmap, MipmapMode::Generate { .. }) && mip_levels > 1 {
                 usage_flags |= vk::ImageUsageFlags::TRANSFER_SRC;
             }
@@ -2197,13 +2453,22 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 desc.texture_type,
             );
 
-            Ok(Arc::new(Texture::new(
+            // Allocate bindless index and register in the bindless table
+            let (bindless_index, bindless_allocator) = self.bindless_state.register_texture(
+                &self.device, desc.texture_type, view,
+            );
+
+            let mut texture = Texture::new(
                 Arc::clone(&self.gpu_context),
                 image,
                 view,
                 allocation,
                 info,
-            )))
+            );
+            texture.bindless_index = bindless_index;
+            texture.bindless_allocator = Some(bindless_allocator);
+
+            Ok(Arc::new(texture))
         }
     }
 
@@ -2511,8 +2776,12 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 fragment_shader.reflected_bindings(),
             )?;
 
-            // Build VkDescriptorSetLayouts from merged reflected bindings
-            let descriptor_set_layouts = self.build_descriptor_set_layouts(&merged_bindings)?;
+            // Build VkDescriptorSetLayouts from merged reflected bindings (sets 1+)
+            let reflected_set_layouts = self.build_descriptor_set_layouts(&merged_bindings)?;
+
+            // Inject bindless layout at set 0, then append reflected layouts (sets 1+)
+            let mut descriptor_set_layouts = vec![self.bindless_state.layout];
+            descriptor_set_layouts.extend_from_slice(&reflected_set_layouts);
 
             // Build VkPushConstantRanges from merged reflected push constants
             let push_constant_ranges = Self::build_push_constant_ranges(
@@ -2522,7 +2791,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
 
             let mut layout_create_info = vk::PipelineLayoutCreateInfo::default();
 
-            // Add descriptor set layouts if present
+            // Add descriptor set layouts (set 0 = bindless, sets 1+ = reflected)
             if !descriptor_set_layouts.is_empty() {
                 layout_create_info = layout_create_info.set_layouts(&descriptor_set_layouts);
             }
@@ -2568,7 +2837,9 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             Ok(Arc::new(Pipeline {
                 pipeline,
                 pipeline_layout: layout,
-                descriptor_set_layouts,
+                // Only store layouts owned by this pipeline (sets 1+).
+                // Set 0 (bindless) is owned by BindlessState and must not be destroyed here.
+                descriptor_set_layouts: reflected_set_layouts,
                 device: (*self.device).clone(),
                 reflection,
             }))
@@ -2720,7 +2991,10 @@ impl Drop for VulkanGraphicsDevice {
             //    After this, self.gpu_context is the sole Arc<GpuContext> owner.
             self.sampler_cache.get_mut().unwrap().shutdown();
 
-            // 2. Destroy VulkanGraphicsDevice-owned Vulkan objects
+            // 2. Destroy bindless state (layouts + pool)
+            self.bindless_state.shutdown(&self.device);
+
+            // 3. Destroy VulkanGraphicsDevice-owned Vulkan objects
             for &fence in &self.submit_fences {
                 self.device.destroy_fence(fence, None);
             }

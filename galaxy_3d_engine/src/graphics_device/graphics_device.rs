@@ -106,6 +106,33 @@ impl ValidationStats {
     }
 }
 
+/// Bindless texture table configuration
+///
+/// Defines the maximum number of textures per type in the bindless descriptor set.
+/// These sizes are fixed after initialization (the Vulkan descriptor set has a fixed size).
+#[derive(Debug, Clone)]
+pub struct BindlessConfig {
+    /// Maximum number of 2D textures (default: 4096)
+    pub max_texture_2d: u32,
+    /// Maximum number of cubemap textures (default: 64)
+    pub max_texture_cube: u32,
+    /// Maximum number of 3D textures (default: 16)
+    pub max_texture_3d: u32,
+    /// Maximum number of 2D array textures (default: 64)
+    pub max_texture_2d_array: u32,
+}
+
+impl Default for BindlessConfig {
+    fn default() -> Self {
+        Self {
+            max_texture_2d: 4096,
+            max_texture_cube: 64,
+            max_texture_3d: 16,
+            max_texture_2d_array: 64,
+        }
+    }
+}
+
 /// Graphics device configuration
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -127,6 +154,8 @@ pub struct Config {
     pub panic_on_error: bool,
     /// Track and display validation statistics
     pub enable_validation_stats: bool,
+    /// Bindless texture table sizes
+    pub bindless: BindlessConfig,
 }
 
 impl Default for Config {
@@ -141,6 +170,7 @@ impl Default for Config {
             break_on_validation_error: false,
             panic_on_error: false,
             enable_validation_stats: cfg!(debug_assertions),
+            bindless: BindlessConfig::default(),
         }
     }
 }

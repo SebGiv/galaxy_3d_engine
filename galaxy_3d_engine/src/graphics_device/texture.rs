@@ -268,6 +268,13 @@ pub trait Texture: Send + Sync {
     /// Get the read-only properties of this texture
     fn info(&self) -> &TextureInfo;
 
+    /// Get the bindless index for this texture in its type-specific bindless table.
+    ///
+    /// Every texture receives a bindless index at creation time, assigned by the backend.
+    /// The index is used by materials to reference textures in the GPU material buffer,
+    /// and the shader reads textures via `textures_2d[index]`, `cubemaps[index]`, etc.
+    fn bindless_index(&self) -> u32;
+
     /// Update texture data at a specific layer and mip level
     ///
     /// Uploads pixel data to a specific layer and mip level of an existing texture.

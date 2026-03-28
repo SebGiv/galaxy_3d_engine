@@ -51,6 +51,8 @@ pub struct CommandList {
     in_render_pass: bool,
     /// Currently bound pipeline layout (for push constants)
     bound_pipeline_layout: Option<vk::PipelineLayout>,
+    /// Bindless descriptor set (set 0) — bound on every bind_pipeline
+    bindless_descriptor_set: vk::DescriptorSet,
 }
 
 impl CommandList {
@@ -63,6 +65,7 @@ impl CommandList {
     pub fn new(
         device: Arc<ash::Device>,
         graphics_queue_family: u32,
+        bindless_descriptor_set: vk::DescriptorSet,
     ) -> Result<Self> {
         unsafe {
             // Create command pool
@@ -89,6 +92,7 @@ impl CommandList {
                 is_recording: false,
                 in_render_pass: false,
                 bound_pipeline_layout: None,
+                bindless_descriptor_set,
             })
         }
     }
@@ -514,6 +518,18 @@ impl RendererCommandList for CommandList {
 
             // Save pipeline layout for push constants
             self.bound_pipeline_layout = Some(vk_pipeline.pipeline_layout);
+
+            // Bind the bindless descriptor set (set 0) with the current pipeline layout.
+            // Must be done on every bind_pipeline because pipeline layouts with different
+            // push constant ranges are incompatible, which invalidates all descriptor sets.
+            self.device.cmd_bind_descriptor_sets(
+                self.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                vk_pipeline.pipeline_layout,
+                0, // firstSet = 0
+                &[self.bindless_descriptor_set],
+                &[],
+            );
 
             Ok(())
         }

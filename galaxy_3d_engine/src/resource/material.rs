@@ -12,13 +12,11 @@
 /// - Texture bindings: pre-built BindingGroups organized by [set]
 /// - Parameters: named scalar/vector/matrix values (roughness, base_color, etc.)
 
-use std::collections::BTreeMap;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
 use crate::resource::resource_manager::{ResourceManager, PipelineKey, TextureKey};
-use crate::graphics_device::{self, SamplerType, BindingGroup, BindingResource, BindingType, DynamicRenderState};
+use crate::graphics_device::{self, SamplerType, DynamicRenderState};
 
 // ===== REFERENCE TYPES =====
 
@@ -93,6 +91,8 @@ pub struct MaterialParam {
 pub struct MaterialTextureSlot {
     name: String,
     texture: TextureKey,
+    bindless_index: u32,
+    sampler_index: u32,
     layer: Option<u32>,
     region: Option<u32>,
     sampler_type: SamplerType,
@@ -111,9 +111,6 @@ pub struct Material {
     texture_names: FxHashMap<String, usize>,
     params: Vec<MaterialParam>,
     param_names: FxHashMap<String, usize>,
-    /// Pre-built texture BindingGroups organized by [set].
-    /// Built at creation time from pipeline reflection data.
-    binding_groups: Vec<Arc<dyn BindingGroup>>,
     /// Dynamic render state for this material
     render_state: DynamicRenderState,
 }
@@ -150,11 +147,11 @@ impl Material {
         slot_id: u32,
         desc: MaterialDesc,
         resource_manager: &ResourceManager,
-        graphics_device: &dyn graphics_device::GraphicsDevice,
+        _graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
 
-        // ========== RESOLVE PIPELINE ==========
-        let pipeline_arc = resource_manager.pipeline(desc.pipeline)
+        // ========== VALIDATE PIPELINE ==========
+        let _pipeline = resource_manager.pipeline(desc.pipeline)
             .ok_or_else(|| engine_err!("galaxy3d::Material",
                 "Pipeline key not found in ResourceManager"))?;
 
@@ -241,10 +238,17 @@ impl Material {
                 }
             };
 
+            // Read bindless index from the GPU texture
+            let gd_texture = texture_arc.graphics_device_texture();
+            let bindless_index = gd_texture.bindless_index();
+            let sampler_index = slot_desc.sampler_type as u32;
+
             texture_names.insert(slot_desc.name.clone(), vec_index);
             textures.push(MaterialTextureSlot {
                 name: slot_desc.name,
                 texture: slot_desc.texture,
+                bindless_index,
+                sampler_index,
                 layer: resolved_layer,
                 region: resolved_region,
                 sampler_type: slot_desc.sampler_type,
@@ -260,49 +264,6 @@ impl Material {
             params.push(MaterialParam { name, value });
         }
 
-        // ========== BUILD TEXTURE BINDING GROUPS ==========
-        // Match texture slot names against shader reflection
-        // to create pre-built BindingGroups (descriptor sets for textures).
-        let graphics_device_pipeline = pipeline_arc.graphics_device_pipeline();
-        let reflection = graphics_device_pipeline.reflection();
-
-        // Group CombinedImageSampler bindings by set index
-        let mut sets: BTreeMap<u32, Vec<(u32, BindingResource)>> = BTreeMap::new();
-
-        for binding_idx in 0..reflection.binding_count() {
-            let binding = reflection.binding(binding_idx).unwrap();
-
-            if binding.binding_type == BindingType::CombinedImageSampler {
-                if let Some(&tex_idx) = texture_names.get(&binding.name) {
-                    let slot = &textures[tex_idx];
-                    // Resolve the texture key to get the GPU texture
-                    let texture_arc = resource_manager.texture(slot.texture())
-                        .ok_or_else(|| engine_err!("galaxy3d::Material",
-                            "Texture key not found during binding group creation"))?;
-                    let graphics_device_texture = texture_arc.graphics_device_texture();
-                    sets.entry(binding.set)
-                        .or_default()
-                        .push((binding.binding, BindingResource::SampledTexture(
-                            graphics_device_texture.as_ref(),
-                            slot.sampler_type(),
-                        )));
-                }
-            }
-        }
-
-        // Create one BindingGroup per set (sorted by binding index)
-        let mut binding_groups = Vec::new();
-        for (set_index, mut bindings) in sets {
-            bindings.sort_by_key(|(binding_idx, _)| *binding_idx);
-            let resources: Vec<BindingResource> = bindings.into_iter()
-                .map(|(_, res)| res)
-                .collect();
-            let bg = graphics_device.create_binding_group(
-                graphics_device_pipeline, set_index, &resources,
-            )?;
-            binding_groups.push(bg);
-        }
-
         let render_state = desc.render_state.unwrap_or_default();
 
         Ok(Self {
@@ -312,7 +273,6 @@ impl Material {
             texture_names,
             params,
             param_names,
-            binding_groups,
             render_state,
         })
     }
@@ -357,13 +317,6 @@ impl Material {
     /// Get number of texture slots
     pub fn texture_slot_count(&self) -> usize {
         self.textures.len()
-    }
-
-    // ===== TEXTURE BINDING GROUP ACCESS =====
-
-    /// Get pre-built texture BindingGroups (one per descriptor set).
-    pub fn binding_groups(&self) -> &[Arc<dyn BindingGroup>] {
-        &self.binding_groups
     }
 
     // ===== RENDER STATE ACCESS =====
@@ -499,6 +452,16 @@ impl MaterialTextureSlot {
     /// Get the texture key
     pub fn texture(&self) -> TextureKey {
         self.texture
+    }
+
+    /// Get the bindless index for this texture in its type-specific bindless table
+    pub fn bindless_index(&self) -> u32 {
+        self.bindless_index
+    }
+
+    /// Get the sampler index in the bindless sampler table (= SamplerType as u32)
+    pub fn sampler_index(&self) -> u32 {
+        self.sampler_index
     }
 
     /// Get the resolved layer index (None = whole texture / layer 0)

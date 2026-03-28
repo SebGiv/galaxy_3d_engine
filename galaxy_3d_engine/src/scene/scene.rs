@@ -303,7 +303,7 @@ impl Scene {
         let graphics_device_lock = self.graphics_device.lock().unwrap();
         let bg = graphics_device_lock.create_binding_group(
             gd_pipeline,
-            0,
+            1, // Set 1: scene global bindings (set 0 is reserved for bindless textures)
             &resources,
         )?;
 
