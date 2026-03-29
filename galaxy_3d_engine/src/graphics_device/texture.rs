@@ -2,6 +2,7 @@
 
 use crate::error::Result;
 use crate::engine_err;
+use super::pipeline::SampleCount;
 
 /// Texture format enumeration
 ///
@@ -193,6 +194,8 @@ pub struct TextureDesc {
     pub mipmap: MipmapMode,
     /// Texture dimensionality and view type
     pub texture_type: TextureType,
+    /// Number of samples per pixel (default: S1 = no multisampling)
+    pub sample_count: SampleCount,
 }
 
 // ===== TEXTURE INFO =====
@@ -217,6 +220,8 @@ pub struct TextureInfo {
     pub mip_levels: u32,
     /// Texture dimensionality and view type
     pub texture_type: TextureType,
+    /// Number of samples per pixel (S1 = no multisampling)
+    pub sample_count: SampleCount,
 }
 
 impl TextureInfo {
@@ -229,8 +234,9 @@ impl TextureInfo {
         array_layers: u32,
         mip_levels: u32,
         texture_type: TextureType,
+        sample_count: SampleCount,
     ) -> Self {
-        Self { width, height, format, usage, array_layers, mip_levels, texture_type }
+        Self { width, height, format, usage, array_layers, mip_levels, texture_type, sample_count }
     }
 
     /// Returns true if this texture has mipmaps (mip_levels > 1)

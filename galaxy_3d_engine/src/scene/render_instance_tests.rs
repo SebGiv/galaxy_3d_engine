@@ -323,6 +323,7 @@ fn test_from_mesh_material_with_texture() {
             usage: TextureUsage::Sampled, array_layers: 1,
             data: Some(TextureData::Single(vec![255u8; 64*64*4])),
             mipmap: MipmapMode::None, texture_type: crate::graphics_device::TextureType::Tex2D,
+            sample_count: crate::graphics_device::SampleCount::S1,
         },
         layers: vec![LayerDesc { name: "default".to_string(), layer_index: 0, data: None, regions: vec![] }],
     }).unwrap();

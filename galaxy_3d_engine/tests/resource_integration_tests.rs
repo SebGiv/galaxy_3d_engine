@@ -9,7 +9,7 @@ use galaxy_3d_engine::galaxy3d::Engine;
 use galaxy_3d_engine::galaxy3d::resource::{TextureDesc, GeometryDesc};
 use galaxy_3d_engine::galaxy3d::resource::{LayerDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc};
 use galaxy_3d_engine::galaxy3d::render::{
-    TextureDesc as RenderTextureDesc, TextureFormat, TextureType, TextureUsage, MipmapMode,
+    TextureDesc as RenderTextureDesc, TextureFormat, TextureType, TextureUsage, MipmapMode, SampleCount,
     BufferFormat, VertexLayout, VertexBinding, VertexAttribute, VertexInputRate,
     IndexType, PrimitiveTopology,
 };
@@ -45,6 +45,7 @@ fn test_integration_create_texture_with_vulkan() {
             mipmap: MipmapMode::None,
             data: None,
             texture_type: TextureType::Tex2D,
+            sample_count: SampleCount::S1,
         },
         layers: vec![
             LayerDesc {
@@ -182,6 +183,7 @@ fn test_integration_multiple_resources() {
                 mipmap: MipmapMode::None,
                 data: None,
                 texture_type: TextureType::Tex2D,
+                sample_count: SampleCount::S1,
             },
             layers: vec![
                 LayerDesc {
@@ -473,6 +475,7 @@ fn test_integration_many_resources_stress_test() {
                 mipmap: MipmapMode::None,
                 data: None,
                 texture_type: TextureType::Tex2D,
+                sample_count: SampleCount::S1,
             },
             layers: vec![
                 LayerDesc {

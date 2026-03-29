@@ -1,6 +1,6 @@
 /// RenderPass trait - describes how to configure a render pass
 
-use crate::graphics_device::TextureFormat;
+use crate::graphics_device::{TextureFormat, SampleCount};
 
 /// Render pass trait
 ///
@@ -16,6 +16,11 @@ pub struct RenderPassDesc {
     pub color_attachments: Vec<AttachmentDesc>,
     /// Optional depth/stencil attachment
     pub depth_stencil_attachment: Option<AttachmentDesc>,
+    /// Resolve attachments for MSAA color targets (empty if no MSAA).
+    /// When present, the GPU automatically resolves each MSAA color attachment
+    /// into the corresponding resolve attachment at the end of the render pass.
+    /// Must have the same length as `color_attachments` or be empty.
+    pub color_resolve_attachments: Vec<AttachmentDesc>,
 }
 
 /// Descriptor for a single attachment in a render pass
@@ -23,8 +28,8 @@ pub struct RenderPassDesc {
 pub struct AttachmentDesc {
     /// Pixel format
     pub format: TextureFormat,
-    /// Number of samples (1 = no MSAA)
-    pub samples: u32,
+    /// Number of samples per pixel (S1 = no MSAA)
+    pub samples: SampleCount,
     /// Load operation (what to do with existing content)
     pub load_op: LoadOp,
     /// Store operation (what to do with rendered content)

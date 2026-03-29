@@ -22,6 +22,7 @@ use crate::graphics_device;
 use crate::resource;
 use super::access_type::{AccessType, ResourceAccess};
 use super::pass_action::PassAction;
+use super::render_target;
 use super::render_pass::RenderPass;
 use super::render_target::{RenderTarget, TargetOps};
 
@@ -344,6 +345,44 @@ impl RenderGraph {
                 "RenderTarget index {} out of bounds (count: {})", target_id, target_count))
     }
 
+    // ===== MSAA RESOLVE =====
+
+    /// Associate a resolve target with an MSAA color target.
+    ///
+    /// At the end of the render pass, the GPU automatically resolves the MSAA
+    /// color attachment into the resolve texture (single-sample). This is
+    /// required to sample the result in subsequent passes (e.g. tonemap).
+    ///
+    /// The resolve texture must have the same format and dimensions as the
+    /// MSAA target, with `sample_count: S1`.
+    pub fn set_resolve_target(
+        &mut self,
+        msaa_target_id: usize,
+        resolve_texture: Arc<resource::Texture>,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
+    ) -> Result<()> {
+        let target = self.target_mut(msaa_target_id)?;
+
+        // Validate: target must be a color attachment
+        if !matches!(target.ops(), TargetOps::Color { .. }) {
+            engine_bail!("galaxy3d::RenderGraph",
+                "set_resolve_target: target {} is not a color target", msaa_target_id);
+        }
+
+        let resolve_rt = graphics_device.create_render_target_texture(
+            resolve_texture.graphics_device_texture().as_ref(),
+            target.layer(),
+            target.mip_level(),
+        )?;
+
+        target.resolve = Some(render_target::ResolveTarget {
+            texture: resolve_texture,
+            graphics_device_render_target: resolve_rt,
+        });
+
+        Ok(())
+    }
+
     // ===== COMPILE =====
 
     /// Resolve the graph: topological sort, GPU render passes,
@@ -394,10 +433,24 @@ impl RenderGraph {
             let mut depth_target = None;
             let mut fb_width = 0u32;
             let mut fb_height = 0u32;
+            let mut pass_sample_count: Option<graphics_device::SampleCount> = None;
 
             for &(target_id, _access_type) in &attachments {
                 let target = &self.targets[target_id];
                 let rt = target.graphics_device_render_target().clone();
+                let texture_sample_count = target.texture().graphics_device_texture().info().sample_count;
+
+                // Validate all attachments have the same sample count (Vulkan requirement)
+                match pass_sample_count {
+                    None => pass_sample_count = Some(texture_sample_count),
+                    Some(existing) if existing != texture_sample_count => {
+                        crate::engine_bail!("galaxy3d::render_graph",
+                            "compile: mismatched sample counts in pass — \
+                             expected {:?}, found {:?}",
+                            existing, texture_sample_count);
+                    }
+                    _ => {}
+                }
 
                 if fb_width == 0 {
                     fb_width = rt.width();
@@ -408,7 +461,7 @@ impl RenderGraph {
                     TargetOps::Color { load_op, store_op, .. } => {
                         color_attachment_descs.push(graphics_device::AttachmentDesc {
                             format: rt.format(),
-                            samples: 1,
+                            samples: texture_sample_count,
                             load_op: *load_op,
                             store_op: *store_op,
                             stencil_load_op: graphics_device::LoadOp::DontCare,
@@ -422,7 +475,7 @@ impl RenderGraph {
                     } => {
                         depth_attachment_desc = Some(graphics_device::AttachmentDesc {
                             format: rt.format(),
-                            samples: 1,
+                            samples: texture_sample_count,
                             load_op: *depth_load_op,
                             store_op: *depth_store_op,
                             stencil_load_op: *stencil_load_op,
@@ -433,10 +486,30 @@ impl RenderGraph {
                 }
             }
 
+            // Collect resolve attachments for MSAA color targets
+            let mut resolve_attachment_descs = Vec::new();
+            let mut resolve_targets = Vec::new();
+            for &(target_id, _) in &attachments {
+                let target = &self.targets[target_id];
+                if let Some(resolve) = &target.resolve {
+                    let resolve_rt = &resolve.graphics_device_render_target;
+                    resolve_attachment_descs.push(graphics_device::AttachmentDesc {
+                        format: resolve_rt.format(),
+                        samples: graphics_device::SampleCount::S1,
+                        load_op: graphics_device::LoadOp::DontCare,
+                        store_op: graphics_device::StoreOp::Store,
+                        stencil_load_op: graphics_device::LoadOp::DontCare,
+                        stencil_store_op: graphics_device::StoreOp::DontCare,
+                    });
+                    resolve_targets.push(resolve_rt.clone());
+                }
+            }
+
             // Create GPU render pass
             let render_pass_desc = graphics_device::RenderPassDesc {
                 color_attachments: color_attachment_descs,
                 depth_stencil_attachment: depth_attachment_desc,
+                color_resolve_attachments: resolve_attachment_descs,
             };
             let render_pass = graphics_device.create_render_pass(&render_pass_desc)?;
 
@@ -445,6 +518,7 @@ impl RenderGraph {
                 render_pass: &render_pass,
                 color_attachments: color_targets,
                 depth_stencil_attachment: depth_target,
+                color_resolve_attachments: resolve_targets,
                 width: fb_width,
                 height: fb_height,
             };

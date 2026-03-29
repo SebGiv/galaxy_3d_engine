@@ -32,6 +32,7 @@ fn create_simple_texture(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_d
             format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
             usage: graphics_device::TextureUsage::Sampled,
             texture_type: graphics_device::TextureType::Tex2D,
+            sample_count: graphics_device::SampleCount::S1,
             array_layers: 1,
             data: Some(graphics_device::TextureData::Single(vec![255u8; 256 * 256 * 4])),
             mipmap: graphics_device::MipmapMode::None,
@@ -48,6 +49,7 @@ fn create_indexed_texture_with_regions(rm: &mut ResourceManager, gd: &Arc<Mutex<
             format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
             usage: graphics_device::TextureUsage::Sampled,
             texture_type: graphics_device::TextureType::Array2D,
+            sample_count: graphics_device::SampleCount::S1,
             array_layers: 4, data: None, mipmap: graphics_device::MipmapMode::None,
         },
         layers: vec![

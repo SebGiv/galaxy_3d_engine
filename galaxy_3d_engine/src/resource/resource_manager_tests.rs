@@ -40,6 +40,7 @@ fn create_test_texture_desc(
             data: Some(graphics_device::TextureData::Single(vec![255u8; (width * height * 4) as usize])),
             mipmap: graphics_device::MipmapMode::None,
             texture_type: graphics_device::TextureType::Tex2D,
+            sample_count: graphics_device::SampleCount::S1,
         },
         layers: vec![LayerDesc {
             name: "default".to_string(),
@@ -950,6 +951,7 @@ fn test_add_texture_layer() {
             data: None,
             mipmap: graphics_device::MipmapMode::None,
             texture_type: graphics_device::TextureType::Array2D,
+            sample_count: graphics_device::SampleCount::S1,
         },
         layers: vec![
             LayerDesc {
@@ -1764,6 +1766,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
             data: None,
             mipmap: graphics_device::MipmapMode::None,
             texture_type: graphics_device::TextureType::Array2D,
+            sample_count: graphics_device::SampleCount::S1,
         },
         layers: vec![
             LayerDesc { name: "grass".to_string(), layer_index: 0, data: None, regions: vec![] },

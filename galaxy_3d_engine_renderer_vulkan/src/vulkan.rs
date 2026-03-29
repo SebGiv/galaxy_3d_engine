@@ -1444,10 +1444,12 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 as *const crate::vulkan_render_pass::RenderPass;
             let vk_render_pass = &*vk_render_pass;
 
-            // Collect image views from attachments
+            // Collect image views from attachments.
+            // Order must match the render pass: color → depth → resolve
             let mut attachments = Vec::with_capacity(
                 desc.color_attachments.len()
-                    + if desc.depth_stencil_attachment.is_some() { 1 } else { 0 },
+                    + if desc.depth_stencil_attachment.is_some() { 1 } else { 0 }
+                    + desc.color_resolve_attachments.len(),
             );
 
             for color_rt in &desc.color_attachments {
@@ -1459,6 +1461,14 @@ impl GraphicsDevice for VulkanGraphicsDevice {
 
             if let Some(depth_rt) = &desc.depth_stencil_attachment {
                 let vk_rt = depth_rt.as_ref()
+                    as *const dyn RendererRenderTarget
+                    as *const crate::vulkan_render_target::RenderTarget;
+                attachments.push((*vk_rt).image_view);
+            }
+
+            // Resolve attachments (MSAA → 1x, appended after depth)
+            for resolve_rt in &desc.color_resolve_attachments {
+                let vk_rt = resolve_rt.as_ref()
                     as *const dyn RendererRenderTarget
                     as *const crate::vulkan_render_target::RenderTarget;
                 attachments.push((*vk_rt).image_view);
@@ -1491,13 +1501,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             for (i, color_attachment) in desc.color_attachments.iter().enumerate() {
                 attachments.push(vk::AttachmentDescription::default()
                     .format(self.format_to_vk(color_attachment.format))
-                    .samples(match color_attachment.samples {
-                        1 => vk::SampleCountFlags::TYPE_1,
-                        2 => vk::SampleCountFlags::TYPE_2,
-                        4 => vk::SampleCountFlags::TYPE_4,
-                        8 => vk::SampleCountFlags::TYPE_8,
-                        _ => vk::SampleCountFlags::TYPE_1,
-                    })
+                    .samples(self.sample_count_to_vk(color_attachment.samples))
                     .load_op(self.load_op_to_vk(color_attachment.load_op))
                     .store_op(self.store_op_to_vk(color_attachment.store_op))
                     .stencil_load_op(self.load_op_to_vk(color_attachment.stencil_load_op))
@@ -1514,13 +1518,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 let depth_index = attachments.len() as u32;
                 attachments.push(vk::AttachmentDescription::default()
                     .format(self.format_to_vk(depth_attachment.format))
-                    .samples(match depth_attachment.samples {
-                        1 => vk::SampleCountFlags::TYPE_1,
-                        2 => vk::SampleCountFlags::TYPE_2,
-                        4 => vk::SampleCountFlags::TYPE_4,
-                        8 => vk::SampleCountFlags::TYPE_8,
-                        _ => vk::SampleCountFlags::TYPE_1,
-                    })
+                    .samples(self.sample_count_to_vk(depth_attachment.samples))
                     .load_op(self.load_op_to_vk(depth_attachment.load_op))
                     .store_op(self.store_op_to_vk(depth_attachment.store_op))
                     .stencil_load_op(self.load_op_to_vk(depth_attachment.stencil_load_op))
@@ -1533,10 +1531,35 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                     .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
             }
 
+            // Add resolve attachments (appended after depth in the attachment list)
+            let mut resolve_attachment_refs = Vec::new();
+            if !desc.color_resolve_attachments.is_empty() {
+                for resolve_attachment in &desc.color_resolve_attachments {
+                    let resolve_index = attachments.len() as u32;
+                    attachments.push(vk::AttachmentDescription::default()
+                        .format(self.format_to_vk(resolve_attachment.format))
+                        .samples(vk::SampleCountFlags::TYPE_1)
+                        .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                        .initial_layout(vk::ImageLayout::UNDEFINED)
+                        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
+
+                    resolve_attachment_refs.push(vk::AttachmentReference::default()
+                        .attachment(resolve_index)
+                        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
+                }
+            }
+
             // Create subpass
             let mut subpass = vk::SubpassDescription::default()
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
                 .color_attachments(&color_attachment_refs);
+
+            if !resolve_attachment_refs.is_empty() {
+                subpass = subpass.resolve_attachments(&resolve_attachment_refs);
+            }
 
             if let Some(ref depth_ref) = depth_attachment_ref {
                 subpass = subpass.depth_stencil_attachment(depth_ref);
@@ -1758,6 +1781,13 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             // Calculate mip levels from MipmapMode
             let mip_levels = desc.mipmap.mip_levels(desc.width, desc.height);
 
+            // Multisampled textures cannot have mipmaps (Vulkan spec requirement)
+            if desc.sample_count != SampleCount::S1 && mip_levels > 1 {
+                engine_bail!("galaxy3d::vulkan",
+                    "Multisampled textures cannot have mipmaps (sample_count={:?}, mip_levels={})",
+                    desc.sample_count, mip_levels);
+            }
+
             // Determine image view type from texture type
             let view_type = match desc.texture_type {
                 TextureType::Array2D => vk::ImageViewType::TYPE_2D_ARRAY,
@@ -1809,7 +1839,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 })
                 .mip_levels(mip_levels)
                 .array_layers(array_layers)
-                .samples(vk::SampleCountFlags::TYPE_1)
+                .samples(self.sample_count_to_vk(desc.sample_count))
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(usage_flags)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -2451,6 +2481,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 array_layers,
                 mip_levels,
                 desc.texture_type,
+                desc.sample_count,
             );
 
             // Allocate bindless index and register in the bindless table
@@ -2566,10 +2597,12 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             let mut attachments = Vec::new();
             let mut color_attachment_refs = Vec::new();
 
+            let vk_sample_count = self.sample_count_to_vk(desc.multisample.sample_count);
+
             for (i, &format) in desc.color_formats.iter().enumerate() {
                 attachments.push(vk::AttachmentDescription::default()
                     .format(self.format_to_vk(format))
-                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .samples(vk_sample_count)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
                     .store_op(vk::AttachmentStoreOp::STORE)
                     .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -2591,7 +2624,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             if let Some(depth_format) = desc.depth_format {
                 attachments.push(vk::AttachmentDescription::default()
                     .format(self.format_to_vk(depth_format))
-                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .samples(vk_sample_count)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
                     .store_op(vk::AttachmentStoreOp::DONT_CARE)
                     .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)

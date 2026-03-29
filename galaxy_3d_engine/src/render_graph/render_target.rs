@@ -71,6 +71,13 @@ impl TargetOps {
     }
 }
 
+/// Resolve target for MSAA color attachments.
+/// Holds the 1x texture that receives the resolved result at the end of the render pass.
+pub(crate) struct ResolveTarget {
+    pub texture: Arc<resource::Texture>,
+    pub graphics_device_render_target: Arc<dyn graphics_device::RenderTarget>,
+}
+
 pub struct RenderTarget {
     /// The resource texture this target references
     texture: Arc<resource::Texture>,
@@ -82,6 +89,8 @@ pub struct RenderTarget {
     graphics_device_render_target: Arc<dyn graphics_device::RenderTarget>,
     /// Per-target load/store/clear configuration
     ops: TargetOps,
+    /// Optional resolve target for MSAA (None if sample_count == S1)
+    pub(crate) resolve: Option<ResolveTarget>,
 }
 
 impl RenderTarget {
@@ -110,6 +119,7 @@ impl RenderTarget {
             mip_level,
             graphics_device_render_target,
             ops,
+            resolve: None,
         })
     }
 

@@ -12,7 +12,7 @@ use winit::window::Window;
 use crate::graphics_device::{
     GraphicsDevice, Buffer, Texture, Shader, Pipeline, CommandList,
     RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
-    BufferDesc, TextureDesc, ShaderDesc, ShaderStage, PipelineDesc,
+    BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
     BindingResource,
     RenderPassDesc, FramebufferDesc, Viewport, Rect2D,
     ClearValue, IndexType, TextureInfo, TextureUsage, ImageAccess,
@@ -78,6 +78,7 @@ impl MockTexture {
                 array_layers,
                 mip_levels: 1,
                 texture_type,
+                sample_count: crate::graphics_device::SampleCount::S1,
             },
             name,
             bindless_index: NEXT_BINDLESS_INDEX.fetch_add(1, Ordering::Relaxed),

@@ -7,7 +7,7 @@
 
 use galaxy_3d_engine::galaxy3d::GraphicsDevice;
 use galaxy_3d_engine::galaxy3d::render::{
-    TextureDesc, TextureFormat, TextureUsage, TextureType, MipmapMode, TextureData,
+    TextureDesc, TextureFormat, TextureUsage, TextureType, MipmapMode, TextureData, SampleCount,
     BufferDesc, BufferUsage, ShaderDesc, ShaderStage,
     Config,
 };
@@ -45,6 +45,7 @@ fn test_vulkan_create_simple_texture() {
         array_layers: 1,
         mipmap: MipmapMode::None,
         texture_type: TextureType::Tex2D,
+        sample_count: SampleCount::S1,
         data: None,
     };
 
@@ -74,6 +75,7 @@ fn test_vulkan_create_texture_with_data() {
         array_layers: 1,
         mipmap: MipmapMode::None,
         texture_type: TextureType::Tex2D,
+        sample_count: SampleCount::S1,
         data: Some(TextureData::Single(data)),
     };
 
@@ -98,6 +100,7 @@ fn test_vulkan_create_texture_array() {
         array_layers: 4, // 4 layers
         mipmap: MipmapMode::None,
         texture_type: TextureType::Array2D,
+        sample_count: SampleCount::S1,
         data: None,
     };
 
@@ -121,6 +124,7 @@ fn test_vulkan_create_depth_texture() {
         array_layers: 1,
         mipmap: MipmapMode::None,
         texture_type: TextureType::Tex2D,
+        sample_count: SampleCount::S1,
         data: None,
     };
 

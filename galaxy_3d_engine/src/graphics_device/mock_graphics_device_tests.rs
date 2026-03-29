@@ -13,7 +13,7 @@ use crate::graphics_device::{
     Viewport, Rect2D, ClearValue,
     IndexType, VertexLayout, VertexBinding, VertexAttribute,
     BufferFormat, VertexInputRate, PrimitiveTopology,
-    TextureType, ShaderStageFlags,
+    TextureType, ShaderStageFlags, SampleCount,
 };
 use std::sync::{Arc, Mutex};
 
@@ -359,6 +359,7 @@ fn test_mock_graphics_device_create_texture() {
         mipmap: MipmapMode::None,
         data: None,
         texture_type: TextureType::Tex2D,
+        sample_count: SampleCount::S1,
     };
 
     let _texture = graphics_device.create_texture(desc).unwrap();
@@ -484,6 +485,7 @@ fn test_mock_graphics_device_create_render_pass() {
     let desc = RenderPassDesc {
         color_attachments: vec![],
         depth_stencil_attachment: None,
+        color_resolve_attachments: vec![],
     };
 
     let _render_pass = graphics_device.create_render_pass(&desc).unwrap();
@@ -504,6 +506,7 @@ fn test_mock_framebuffer_color_only() {
         render_pass: &render_pass,
         color_attachments: vec![color_rt],
         depth_stencil_attachment: None,
+        color_resolve_attachments: vec![],
         width: 800,
         height: 600,
     }).unwrap();
@@ -523,6 +526,7 @@ fn test_mock_framebuffer_color_and_depth_stencil() {
         render_pass: &render_pass,
         color_attachments: vec![color_rt],
         depth_stencil_attachment: Some(depth_rt),
+        color_resolve_attachments: vec![],
         width: 1920,
         height: 1080,
     }).unwrap();
@@ -544,6 +548,7 @@ fn test_mock_framebuffer_multiple_color_attachments() {
         render_pass: &render_pass,
         color_attachments: vec![color_rt0, color_rt1, color_rt2],
         depth_stencil_attachment: Some(depth_rt),
+        color_resolve_attachments: vec![],
         width: 1024,
         height: 1024,
     }).unwrap();
@@ -562,6 +567,7 @@ fn test_mock_begin_render_pass_with_framebuffer() {
         render_pass: &render_pass,
         color_attachments: vec![color_rt],
         depth_stencil_attachment: None,
+        color_resolve_attachments: vec![],
         width: 800,
         height: 600,
     }).unwrap();
@@ -653,6 +659,7 @@ fn test_mock_graphics_device_multiple_resources() {
             mipmap: MipmapMode::None,
             data: None,
             texture_type: TextureType::Tex2D,
+            sample_count: SampleCount::S1,
         };
         graphics_device.create_texture(texture_desc).unwrap();
     }

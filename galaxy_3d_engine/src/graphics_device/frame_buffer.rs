@@ -29,6 +29,9 @@ pub struct FramebufferDesc<'a> {
     pub color_attachments: Vec<Arc<dyn RenderTarget>>,
     /// Optional depth/stencil attachment
     pub depth_stencil_attachment: Option<Arc<dyn RenderTarget>>,
+    /// Resolve attachments for MSAA color targets (empty if no MSAA).
+    /// Must match `color_attachments` in length when present.
+    pub color_resolve_attachments: Vec<Arc<dyn RenderTarget>>,
     /// Width in pixels
     pub width: u32,
     /// Height in pixels
