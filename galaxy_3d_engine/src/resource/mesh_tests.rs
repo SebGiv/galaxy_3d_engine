@@ -11,6 +11,7 @@ use crate::resource::geometry::{
 };
 use crate::resource::pipeline::PipelineDesc;
 use crate::resource::material::{MaterialDesc, ParamValue};
+use crate::graphics_device::PolygonMode;
 use crate::resource::resource_manager::{ResourceManager, GeometryKey, MaterialKey, PipelineKey, ShaderKey};
 use crate::resource::shader::ShaderDesc;
 use rustc_hash::FxHashMap;
@@ -97,7 +98,7 @@ fn create_test_shaders(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_dev
     (vk, fk)
 }
 
-fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>, name: &str) -> PipelineKey {
+fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>, name: &str) -> (PipelineKey, ShaderKey) {
     let (vk, fk) = create_test_shaders(rm, gd);
     let vertex_layout = graphics_device::VertexLayout {
         bindings: vec![graphics_device::VertexBinding { binding: 0, stride: 8, input_rate: graphics_device::VertexInputRate::Vertex }],
@@ -109,12 +110,13 @@ fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_de
         rasterization: Default::default(), color_blend: Default::default(),
         multisample: Default::default(), color_formats: vec![], depth_format: None,
     };
-    rm.create_pipeline(name.to_string(), desc, &mut *gd.lock().unwrap()).unwrap()
+    let pk = rm.create_pipeline(name.to_string(), desc, &mut *gd.lock().unwrap()).unwrap();
+    (pk, fk)
 }
 
-fn create_test_material(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>, pipeline: PipelineKey, name: &str, value: f32) -> MaterialKey {
+fn create_test_material(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>, _pipeline: PipelineKey, fragment_shader: ShaderKey, name: &str, value: f32) -> MaterialKey {
     rm.create_material(name.to_string(), MaterialDesc {
-        pipeline, textures: vec![],
+        fragment_shader, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![("value".to_string(), ParamValue::Float(value))],
         render_state: None,
     }, &*gd.lock().unwrap()).unwrap()
@@ -131,8 +133,8 @@ fn material_value(rm: &ResourceManager, key: MaterialKey) -> f32 {
 #[test]
 fn test_create_mesh_single_lod_single_submesh() {
     let (geom_key, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
         geometry: geom_key, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
@@ -145,10 +147,10 @@ fn test_create_mesh_single_lod_single_submesh() {
 #[test]
 fn test_create_mesh_multi_lod() {
     let (geom_key, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, "armor", 2.0);
-    let pants = create_test_material(&mut rm, &gd, pk, "pants", 3.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
+    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
+    let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
     let mesh = Mesh::from_desc(MeshDesc {
         geometry: geom_key, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
         lods: vec![
@@ -175,8 +177,8 @@ fn test_create_mesh_multi_lod() {
 #[test]
 fn test_geometry_mesh_ref_by_name() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
@@ -187,8 +189,8 @@ fn test_geometry_mesh_ref_by_name() {
 #[test]
 fn test_geometry_mesh_ref_by_index() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Index(1),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Index(0), material: mk }] }],
@@ -199,8 +201,8 @@ fn test_geometry_mesh_ref_by_index() {
 #[test]
 fn test_geometry_mesh_ref_invalid_name() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("nonexistent".to_string()),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
@@ -210,8 +212,8 @@ fn test_geometry_mesh_ref_invalid_name() {
 #[test]
 fn test_geometry_mesh_ref_invalid_index() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Index(99),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Index(0), material: mk }] }],
@@ -225,8 +227,8 @@ fn test_geometry_mesh_ref_invalid_index() {
 #[test]
 fn test_submesh_ref_by_name() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
@@ -237,8 +239,8 @@ fn test_submesh_ref_by_name() {
 #[test]
 fn test_submesh_ref_by_index() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Index(0), material: mk }] }],
@@ -249,10 +251,10 @@ fn test_submesh_ref_by_index() {
 #[test]
 fn test_submesh_ref_invalid_name() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, "armor", 2.0);
-    let pants = create_test_material(&mut rm, &gd, pk, "pants", 3.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
+    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
+    let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
         lods: vec![
@@ -272,8 +274,8 @@ fn test_submesh_ref_invalid_name() {
 #[test]
 fn test_submesh_ref_invalid_index() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Index(99), material: mk }] }],
@@ -287,10 +289,10 @@ fn test_submesh_ref_invalid_index() {
 #[test]
 fn test_submesh_order_matches_geometry_lod() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, "armor", 2.0);
-    let pants = create_test_material(&mut rm, &gd, pk, "pants", 3.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
+    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
+    let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
 
     // Provide submeshes in REVERSE order
     let mesh = Mesh::from_desc(MeshDesc {
@@ -324,10 +326,10 @@ fn test_submesh_order_matches_geometry_lod() {
 #[test]
 fn test_lod_order_matches_geometry_mesh() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, "armor", 2.0);
-    let pants = create_test_material(&mut rm, &gd, pk, "pants", 3.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
+    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
+    let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
 
     // Provide LODs in REVERSE order (1, 0)
     let mesh = Mesh::from_desc(MeshDesc {
@@ -356,8 +358,8 @@ fn test_lod_order_matches_geometry_mesh() {
 #[test]
 fn test_duplicate_lod_index_fails() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![
@@ -370,10 +372,10 @@ fn test_duplicate_lod_index_fails() {
 #[test]
 fn test_incomplete_lod_coverage_fails() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, "armor", 2.0);
-    let pants = create_test_material(&mut rm, &gd, pk, "pants", 3.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
+    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
+    let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
     // "body" has 2 LODs but we only provide 1
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
@@ -388,8 +390,8 @@ fn test_incomplete_lod_coverage_fails() {
 #[test]
 fn test_lod_index_out_of_range_fails() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![MeshLODDesc { lod_index: 5, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
@@ -399,8 +401,8 @@ fn test_lod_index_out_of_range_fails() {
 #[test]
 fn test_duplicate_submesh_fails() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![
@@ -413,9 +415,9 @@ fn test_duplicate_submesh_fails() {
 #[test]
 fn test_incomplete_submesh_coverage_fails() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, "armor", 2.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
+    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
     assert!(Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
         lods: vec![
@@ -438,8 +440,8 @@ fn test_incomplete_submesh_coverage_fails() {
 #[test]
 fn test_mesh_accessors() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m42", 42.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m42", 42.0);
     let mesh = Mesh::from_desc(MeshDesc {
         geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
@@ -468,10 +470,10 @@ fn test_mesh_accessors() {
 #[test]
 fn test_mesh_desc_from_name_mapping() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, "armor", 2.0);
-    let pants = create_test_material(&mut rm, &gd, pk, "pants", 3.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
+    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
+    let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
 
     let mapping = FxHashMap::from_iter([
         ("head".to_string(), skin), ("torso".to_string(), armor),
@@ -488,8 +490,8 @@ fn test_mesh_desc_from_name_mapping() {
 #[test]
 fn test_mesh_desc_from_name_mapping_missing_material() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, "skin", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
     let mapping = FxHashMap::from_iter([("head".to_string(), skin)]);
     assert!(mesh_desc_from_name_mapping(gk, GeometryMeshRef::Name("body".to_string()), &mapping, &rm).is_err());
 }
@@ -504,8 +506,8 @@ fn test_mesh_desc_from_name_mapping_invalid_mesh_ref() {
 #[test]
 fn test_mesh_desc_from_name_mapping_by_index() {
     let (gk, mut rm, gd) = create_test_resources();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, "m", 1.0);
+    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mapping = FxHashMap::from_iter([("blade".to_string(), mk)]);
     let desc = mesh_desc_from_name_mapping(gk, GeometryMeshRef::Index(1), &mapping, &rm).unwrap();
     let mesh = Mesh::from_desc(desc, &rm).unwrap();

@@ -28,7 +28,7 @@ pub struct BufferDesc {
 ///
 /// Defines the data type and component count for buffer elements.
 /// Used for vertex attributes (position, normal, UV, etc.) and index types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(non_camel_case_types)]
 pub enum BufferFormat {
     // Float formats (vertex attributes)

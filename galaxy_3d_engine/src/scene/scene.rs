@@ -12,8 +12,7 @@ use crate::engine_err;
 use crate::graphics_device::{self, BindingGroup, BindingResource, SamplerType};
 use crate::resource::buffer::Buffer;
 use crate::resource::texture::Texture;
-use crate::resource::mesh::Mesh;
-use crate::resource::resource_manager::{ResourceManager, MeshKey};
+use crate::resource::resource_manager::{ResourceManager, MeshKey, ShaderKey};
 use crate::utils::{SlotAllocator, SwapSet};
 use super::render_instance::{
     RenderInstance, RenderInstanceKey, AABB,
@@ -122,21 +121,21 @@ impl Scene {
     /// * `mesh_key` - Key of the mesh resource in the ResourceManager
     /// * `world_matrix` - World transform matrix
     /// * `bounding_box` - AABB in local space
+    /// * `vertex_shader` - Vertex shader to use for pipeline resolution
     /// * `resource_manager` - ResourceManager for resolving keys
     pub fn create_render_instance(
         &mut self,
         mesh_key: MeshKey,
         world_matrix: Mat4,
         bounding_box: AABB,
+        vertex_shader: ShaderKey,
         resource_manager: &ResourceManager,
     ) -> Result<RenderInstanceKey> {
         let mesh = resource_manager.mesh(mesh_key)
             .ok_or_else(|| engine_err!("galaxy3d::Scene", "Mesh key not found in ResourceManager"))?;
 
-        self.ensure_global_binding_group(mesh, resource_manager)?;
-
         let instance = RenderInstance::from_mesh(
-            mesh, world_matrix, bounding_box,
+            mesh, world_matrix, bounding_box, vertex_shader,
             &mut self.draw_slot_allocator,
             resource_manager,
         )?;
@@ -167,6 +166,14 @@ impl Scene {
         key: RenderInstanceKey,
     ) -> Option<&RenderInstance> {
         self.render_instances.get(key)
+    }
+
+    /// Get a mutable reference to a render instance by key
+    pub fn render_instance_mut(
+        &mut self,
+        key: RenderInstanceKey,
+    ) -> Option<&mut RenderInstance> {
+        self.render_instances.get_mut(key)
     }
 
     /// Set the world matrix of a render instance. Returns false if key is invalid.
@@ -267,25 +274,18 @@ impl Scene {
         self.global_binding_group.as_ref()
     }
 
-    /// Lazily create the global binding group (Set 0) from the first pipeline encountered.
+    /// Lazily create the global binding group (Set 1) using the given pipeline.
     ///
     /// Builds the binding group from the user-declared global_bindings Vec.
-    /// Uses the first pipeline from the mesh to create the descriptor set.
-    fn ensure_global_binding_group(&mut self, mesh: &Mesh, resource_manager: &ResourceManager) -> Result<()> {
+    /// Called at draw time with the first resolved pipeline, since the pipeline
+    /// is no longer stored on the material.
+    pub fn ensure_global_binding_group_with_pipeline(
+        &mut self,
+        gd_pipeline: &Arc<dyn graphics_device::Pipeline>,
+    ) -> Result<()> {
         if self.global_binding_group.is_some() {
             return Ok(());
         }
-
-        let mesh_lod = mesh.lod(0)
-            .ok_or_else(|| engine_err!("galaxy3d::Scene", "Mesh has no LODs"))?;
-        let submesh = mesh_lod.submesh(0)
-            .ok_or_else(|| engine_err!("galaxy3d::Scene", "MeshLOD has no submeshes"))?;
-
-        let material = resource_manager.material(submesh.material())
-            .ok_or_else(|| engine_err!("galaxy3d::Scene", "Material key not found in ResourceManager"))?;
-        let pipeline = resource_manager.pipeline(material.pipeline())
-            .ok_or_else(|| engine_err!("galaxy3d::Scene", "Pipeline key not found in ResourceManager"))?;
-        let gd_pipeline = pipeline.graphics_device_pipeline();
 
         let resources: Vec<BindingResource> = self.global_bindings.iter()
             .map(|gb| match gb {

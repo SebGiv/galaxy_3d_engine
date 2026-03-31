@@ -15,8 +15,8 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
-use crate::resource::resource_manager::{ResourceManager, PipelineKey, TextureKey};
-use crate::graphics_device::{self, SamplerType, DynamicRenderState};
+use crate::resource::resource_manager::{ResourceManager, ShaderKey, TextureKey};
+use crate::graphics_device::{self, SamplerType, ColorBlendState, PolygonMode, DynamicRenderState};
 
 // ===== REFERENCE TYPES =====
 
@@ -106,20 +106,26 @@ pub struct MaterialTextureSlot {
 /// layer/region targeting), named parameters, and a DynamicRenderState.
 pub struct Material {
     slot_id: u32,
-    pipeline: PipelineKey,
+    fragment_shader: ShaderKey,
+    color_blend: ColorBlendState,
+    polygon_mode: PolygonMode,
     textures: Vec<MaterialTextureSlot>,
     texture_names: FxHashMap<String, usize>,
     params: Vec<MaterialParam>,
     param_names: FxHashMap<String, usize>,
     /// Dynamic render state for this material
     render_state: DynamicRenderState,
+    /// Generation counter for pipeline cache invalidation
+    generation: u64,
 }
 
 // ===== DESCRIPTORS =====
 
 /// Material creation descriptor
 pub struct MaterialDesc {
-    pub pipeline: PipelineKey,
+    pub fragment_shader: ShaderKey,
+    pub color_blend: ColorBlendState,
+    pub polygon_mode: PolygonMode,
     pub textures: Vec<MaterialTextureSlotDesc>,
     pub params: Vec<(String, ParamValue)>,
     /// Dynamic render state for this material.
@@ -141,19 +147,13 @@ pub struct MaterialTextureSlotDesc {
 impl Material {
     /// Create material from descriptor (internal use by ResourceManager)
     ///
-    /// Resolves PipelineKey and TextureKeys via the ResourceManager to build
-    /// binding groups, then stores only keys.
+    /// Resolves TextureKeys via the ResourceManager, then stores only keys.
     pub(crate) fn from_desc(
         slot_id: u32,
         desc: MaterialDesc,
         resource_manager: &ResourceManager,
         _graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
-
-        // ========== VALIDATE PIPELINE ==========
-        let _pipeline = resource_manager.pipeline(desc.pipeline)
-            .ok_or_else(|| engine_err!("galaxy3d::Material",
-                "Pipeline key not found in ResourceManager"))?;
 
         // ========== VALIDATION 1: No duplicate texture slot names ==========
         let mut seen_names = FxHashSet::default();
@@ -268,12 +268,15 @@ impl Material {
 
         Ok(Self {
             slot_id,
-            pipeline: desc.pipeline,
+            fragment_shader: desc.fragment_shader,
+            color_blend: desc.color_blend,
+            polygon_mode: desc.polygon_mode,
             textures,
             texture_names,
             params,
             param_names,
             render_state,
+            generation: 0,
         })
     }
 
@@ -284,11 +287,26 @@ impl Material {
         self.slot_id
     }
 
-    // ===== PIPELINE ACCESS =====
+    // ===== PIPELINE DATA =====
 
-    /// Get the pipeline key
-    pub fn pipeline(&self) -> PipelineKey {
-        self.pipeline
+    /// Get the fragment shader key
+    pub fn fragment_shader(&self) -> ShaderKey {
+        self.fragment_shader
+    }
+
+    /// Get the color blend state
+    pub fn color_blend(&self) -> &ColorBlendState {
+        &self.color_blend
+    }
+
+    /// Get the polygon mode
+    pub fn polygon_mode(&self) -> PolygonMode {
+        self.polygon_mode
+    }
+
+    /// Get the generation counter (for pipeline cache invalidation)
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     // ===== TEXTURE SLOT ACCESS =====

@@ -5,6 +5,7 @@
 
 use rustc_hash::FxHashMap;
 use slotmap::SlotMap;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::graphics_device;
@@ -48,6 +49,36 @@ slotmap::new_key_type! {
     pub struct MeshKey;
     /// Stable key for a Buffer in the ResourceManager.
     pub struct BufferKey;
+}
+
+// ===== PIPELINE CACHE KEY =====
+
+/// Composite key for the pipeline cache.
+///
+/// Contains all parameters that uniquely identify a Vulkan pipeline.
+/// Used as HashMap key — Rust's HashMap computes the hash internally
+/// and uses Eq for collision resolution.
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+pub struct PipelineCacheKey {
+    pub vertex_shader: ShaderKey,
+    pub fragment_shader: ShaderKey,
+    pub vertex_layout: graphics_device::VertexLayout,
+    pub topology: graphics_device::PrimitiveTopology,
+    pub color_blend: graphics_device::ColorBlendState,
+    pub polygon_mode: graphics_device::PolygonMode,
+    pub color_formats: Vec<graphics_device::TextureFormat>,
+    pub depth_format: Option<graphics_device::TextureFormat>,
+    pub sample_count: graphics_device::SampleCount,
+}
+
+/// Render pass target information needed for pipeline creation.
+///
+/// Built by the drawer from the current render pass when pipeline
+/// resolution is needed (stale generation or first draw).
+pub struct PassInfo {
+    pub color_formats: Vec<graphics_device::TextureFormat>,
+    pub depth_format: Option<graphics_device::TextureFormat>,
+    pub sample_count: graphics_device::SampleCount,
 }
 
 // ===== PRIVATE HELPERS =====
@@ -114,6 +145,11 @@ pub struct ResourceManager {
     buffer_names: FxHashMap<String, BufferKey>,
 
     material_slot_allocator: SlotAllocator,
+
+    /// Pipeline cache: maps composite pipeline parameters to an existing PipelineKey.
+    /// Pipelines created by the cache are stored in the same `pipelines` SlotMap
+    /// as manually created pipelines, with an auto-generated name.
+    pipeline_cache: HashMap<PipelineCacheKey, PipelineKey>,
 }
 
 impl ResourceManager {
@@ -137,6 +173,8 @@ impl ResourceManager {
             buffer_names: FxHashMap::default(),
 
             material_slot_allocator: SlotAllocator::new(),
+
+            pipeline_cache: HashMap::new(),
         }
     }
 
@@ -480,6 +518,76 @@ impl ResourceManager {
     /// Get the number of registered pipelines
     pub fn pipeline_count(&self) -> usize {
         self.pipelines.len()
+    }
+
+    // ===== PIPELINE CACHE =====
+
+    /// Resolve a pipeline from cache, or create it if not found.
+    ///
+    /// Builds a `PipelineCacheKey` from the provided parameters. If a pipeline
+    /// with this exact combination already exists in the cache, returns its key.
+    /// Otherwise, creates a new `resource::Pipeline` (stored in the same SlotMap
+    /// as manual pipelines) and caches the mapping.
+    pub fn resolve_pipeline(
+        &mut self,
+        vertex_shader: ShaderKey,
+        fragment_shader: ShaderKey,
+        vertex_layout: &graphics_device::VertexLayout,
+        topology: graphics_device::PrimitiveTopology,
+        color_blend: &graphics_device::ColorBlendState,
+        polygon_mode: graphics_device::PolygonMode,
+        pass_info: &PassInfo,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<PipelineKey> {
+        let cache_key = PipelineCacheKey {
+            vertex_shader,
+            fragment_shader,
+            vertex_layout: vertex_layout.clone(),
+            topology,
+            color_blend: *color_blend,
+            polygon_mode,
+            color_formats: pass_info.color_formats.clone(),
+            depth_format: pass_info.depth_format,
+            sample_count: pass_info.sample_count,
+        };
+
+        // Cache hit — pipeline already exists
+        if let Some(&pipeline_key) = self.pipeline_cache.get(&cache_key) {
+            return Ok(pipeline_key);
+        }
+
+        // Cache miss — create a new pipeline
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        cache_key.hash(&mut hasher);
+        let hash = hasher.finish();
+        let name = format!("_cache_{:016X}", hash);
+
+        let pipeline_key = self.create_pipeline(
+            name,
+            PipelineDesc {
+                vertex_shader,
+                fragment_shader: cache_key.fragment_shader,
+                vertex_layout: cache_key.vertex_layout.clone(),
+                topology: cache_key.topology,
+                rasterization: graphics_device::RasterizationState {
+                    polygon_mode: cache_key.polygon_mode,
+                    ..Default::default()
+                },
+                color_blend: cache_key.color_blend,
+                multisample: graphics_device::MultisampleState {
+                    sample_count: cache_key.sample_count,
+                    alpha_to_coverage_enable: false,
+                },
+                color_formats: cache_key.color_formats.clone(),
+                depth_format: cache_key.depth_format,
+            },
+            graphics_device,
+        )?;
+
+        self.pipeline_cache.insert(cache_key, pipeline_key);
+        Ok(pipeline_key)
     }
 
     // ===== MATERIAL CREATION =====

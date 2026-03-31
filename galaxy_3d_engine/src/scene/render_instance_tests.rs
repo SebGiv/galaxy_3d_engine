@@ -6,7 +6,7 @@ use crate::graphics_device::{
     PrimitiveTopology, BufferFormat, TextureFormat, TextureUsage,
     MipmapMode, TextureData, SamplerType, ShaderStage,
     VertexLayout, VertexBinding, VertexAttribute,
-    VertexInputRate, IndexType,
+    VertexInputRate, IndexType, PolygonMode,
 };
 use crate::resource::geometry::{
     GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
@@ -72,6 +72,9 @@ struct TestResources {
     gd: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>,
     geo_key: GeometryKey,
     pipeline_key: PipelineKey,
+    vertex_shader_key: ShaderKey,
+    #[allow(dead_code)]
+    fragment_shader_key: ShaderKey,
     material_key: MaterialKey,
 }
 
@@ -100,12 +103,12 @@ fn create_test_resources() -> TestResources {
     let (vk, fk) = create_test_shaders(&mut rm, &gd);
     let pipeline_key = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let material_key = rm.create_material("m".to_string(), MaterialDesc {
-        pipeline: pipeline_key, textures: vec![],
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))],
         render_state: None,
     }, &*gd.lock().unwrap()).unwrap();
 
-    TestResources { rm, gd, geo_key, pipeline_key, material_key }
+    TestResources { rm, gd, geo_key, pipeline_key, vertex_shader_key: vk, fragment_shader_key: fk, material_key }
 }
 
 fn create_simple_mesh_key(res: &mut TestResources) -> MeshKey {
@@ -142,7 +145,7 @@ fn create_non_indexed_resources() -> (TestResources, MeshKey) {
     let (vk, fk) = create_test_shaders(&mut rm, &gd);
     let pk = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let mk = rm.create_material("m".to_string(), MaterialDesc {
-        pipeline: pk, textures: vec![], params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))], render_state: None,
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![], params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))], render_state: None,
     }, &*gd.lock().unwrap()).unwrap();
 
     let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
@@ -150,13 +153,13 @@ fn create_non_indexed_resources() -> (TestResources, MeshKey) {
         lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("main".to_string()), material: mk }] }],
     }).unwrap();
 
-    (TestResources { rm, gd, geo_key, pipeline_key: pk, material_key: mk }, mesh_key)
+    (TestResources { rm, gd, geo_key, pipeline_key: pk, vertex_shader_key: vk, fragment_shader_key: fk, material_key: mk }, mesh_key)
 }
 
-fn create_test_render_instance(mesh_key: MeshKey, matrix: Mat4, aabb: AABB, rm: &ResourceManager) -> crate::error::Result<RenderInstance> {
+fn create_test_render_instance(mesh_key: MeshKey, matrix: Mat4, aabb: AABB, vertex_shader: ShaderKey, rm: &ResourceManager) -> crate::error::Result<RenderInstance> {
     let mesh = rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    RenderInstance::from_mesh(mesh, matrix, aabb, &mut alloc, rm)
+    RenderInstance::from_mesh(mesh, matrix, aabb, vertex_shader, &mut alloc, rm)
 }
 
 // ============================================================================
@@ -220,7 +223,7 @@ fn test_from_mesh_basic() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
     let matrix = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
-    let instance = create_test_render_instance(mk, matrix, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, matrix, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     assert_eq!(*instance.world_matrix(), matrix);
     assert!(instance.is_visible());
     assert_eq!(instance.flags(), FLAG_VISIBLE);
@@ -230,7 +233,7 @@ fn test_from_mesh_basic() {
 fn test_from_mesh_lod_count() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     assert_eq!(instance.lod_count(), 2);
     assert!(instance.lod(0).is_some());
     assert!(instance.lod(1).is_some());
@@ -241,7 +244,7 @@ fn test_from_mesh_lod_count() {
 fn test_from_mesh_submesh_count_per_lod() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     assert_eq!(instance.lod(0).unwrap().sub_mesh_count(), 2);
     assert_eq!(instance.lod(1).unwrap().sub_mesh_count(), 1);
 }
@@ -250,7 +253,7 @@ fn test_from_mesh_submesh_count_per_lod() {
 fn test_from_mesh_extracts_geometry_data() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
 
     let sm0 = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     assert_eq!(sm0.vertex_offset(), 0);
@@ -277,7 +280,7 @@ fn test_from_mesh_stores_material_key() {
     let mut res = create_test_resources();
     let mat_key = res.material_key;
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     assert_eq!(sm.material(), mat_key);
 }
@@ -285,14 +288,11 @@ fn test_from_mesh_stores_material_key() {
 #[test]
 fn test_from_mesh_material_pipeline_structure() {
     let mut res = create_test_resources();
-    let pk = res.pipeline_key;
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     let material = res.rm.material(sm.material()).unwrap();
-    assert_eq!(material.pipeline(), pk);
-    let pipeline = res.rm.pipeline(material.pipeline()).unwrap();
-    assert!(pipeline.graphics_device_pipeline().as_ref().reflection().binding_count() == 0);
+    assert_eq!(material.fragment_shader(), res.fragment_shader_key);
 }
 
 #[test]
@@ -331,7 +331,7 @@ fn test_from_mesh_material_with_texture() {
     let (vk, fk) = create_test_shaders(&mut rm, &gd);
     let pk = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let mk = rm.create_material("m".to_string(), MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "diffuse".to_string(), texture: tex_key, layer: None, region: None, sampler_type: SamplerType::LinearRepeat,
         }], params: vec![("roughness".to_string(), ParamValue::Float(0.8)), ("metallic".to_string(), ParamValue::Float(0.0))], render_state: None,
     }, &*gd.lock().unwrap()).unwrap();
@@ -349,7 +349,7 @@ fn test_from_mesh_material_with_texture() {
         ],
     }).unwrap();
 
-    let instance = create_test_render_instance(mesh_key, Mat4::IDENTITY, create_test_aabb(), &rm).unwrap();
+    let instance = create_test_render_instance(mesh_key, Mat4::IDENTITY, create_test_aabb(), vk, &rm).unwrap();
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     assert_eq!(sm.material(), mk);
     assert_eq!(rm.material(sm.material()).unwrap().texture_slot_count(), 1);
@@ -358,7 +358,7 @@ fn test_from_mesh_material_with_texture() {
 #[test]
 fn test_from_mesh_non_indexed_geometry() {
     let (res, mesh_key) = create_non_indexed_resources();
-    let instance = create_test_render_instance(mesh_key, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mesh_key, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     assert!(instance.index_buffer().is_none());
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     assert_eq!(sm.vertex_count(), 6);
@@ -369,7 +369,7 @@ fn test_from_mesh_non_indexed_geometry() {
 fn test_from_mesh_indexed_geometry_has_buffers() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     assert!(instance.index_buffer().is_some());
 }
 
@@ -377,7 +377,7 @@ fn test_from_mesh_indexed_geometry_has_buffers() {
 fn test_from_mesh_default_flags() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     assert_eq!(instance.flags(), FLAG_VISIBLE);
     assert!(instance.is_visible());
 }
@@ -387,7 +387,7 @@ fn test_from_mesh_stores_bounding_box() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
     let aabb = AABB { min: Vec3::new(-5.0, 0.0, -5.0), max: Vec3::new(5.0, 10.0, 5.0) };
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, aabb, &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, aabb, res.vertex_shader_key, &res.rm).unwrap();
     assert_eq!(instance.bounding_box().min, Vec3::new(-5.0, 0.0, -5.0));
     assert_eq!(instance.bounding_box().max, Vec3::new(5.0, 10.0, 5.0));
 }
@@ -400,7 +400,7 @@ fn test_from_mesh_stores_bounding_box() {
 fn test_set_world_matrix() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let mut instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let mut instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     assert_eq!(*instance.world_matrix(), Mat4::IDENTITY);
     let new_matrix = Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
     instance.set_world_matrix(new_matrix);
@@ -411,7 +411,7 @@ fn test_set_world_matrix() {
 fn test_set_flags() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let mut instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let mut instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let new_flags = FLAG_VISIBLE | FLAG_CAST_SHADOW | FLAG_RECEIVE_SHADOW;
     instance.set_flags(new_flags);
     assert_eq!(instance.flags(), new_flags);
@@ -421,7 +421,7 @@ fn test_set_flags() {
 fn test_set_visible_true() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let mut instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let mut instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     assert!(instance.is_visible());
     instance.set_visible(false);
     assert!(!instance.is_visible());
@@ -433,7 +433,7 @@ fn test_set_visible_true() {
 fn test_set_visible_preserves_other_flags() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let mut instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let mut instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     instance.set_flags(FLAG_VISIBLE | FLAG_CAST_SHADOW);
     instance.set_visible(false);
     assert!(!instance.is_visible());
@@ -451,7 +451,7 @@ fn test_set_visible_preserves_other_flags() {
 fn test_render_lod_sub_mesh_access() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let lod = instance.lod(0).unwrap();
     assert!(lod.sub_mesh(0).is_some());
     assert!(lod.sub_mesh(1).is_some());
@@ -466,7 +466,7 @@ fn test_render_lod_sub_mesh_access() {
 fn test_render_submesh_all_accessors() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), &res.rm).unwrap();
+    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     assert_eq!(sm.vertex_offset(), 0);
     assert_eq!(sm.vertex_count(), 4);
@@ -497,7 +497,7 @@ fn test_draw_slot_allocation() {
     let mesh_key = create_simple_mesh_key(&mut res);
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc, &res.rm).unwrap();
+    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
     assert_eq!(alloc.len(), 3);
     assert_eq!(alloc.high_water_mark(), 3);
     let slot0 = instance.lod(0).unwrap().sub_mesh(0).unwrap().draw_slot();
@@ -514,7 +514,7 @@ fn test_draw_slot_sequential_allocation() {
     let mesh_key = create_simple_mesh_key(&mut res);
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc, &res.rm).unwrap();
+    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
     assert_eq!(instance.lod(0).unwrap().sub_mesh(0).unwrap().draw_slot(), 0);
     assert_eq!(instance.lod(0).unwrap().sub_mesh(1).unwrap().draw_slot(), 1);
     assert_eq!(instance.lod(1).unwrap().sub_mesh(0).unwrap().draw_slot(), 2);
@@ -526,8 +526,8 @@ fn test_draw_slot_shared_allocator() {
     let mesh_key = create_simple_mesh_key(&mut res);
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    let inst1 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc, &res.rm).unwrap();
-    let inst2 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc, &res.rm).unwrap();
+    let inst1 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
+    let inst2 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
     assert_eq!(alloc.len(), 6);
     assert_eq!(inst1.lod(0).unwrap().sub_mesh(0).unwrap().draw_slot(), 0);
     assert_eq!(inst2.lod(0).unwrap().sub_mesh(0).unwrap().draw_slot(), 3);
@@ -539,7 +539,7 @@ fn test_free_draw_slots() {
     let mesh_key = create_simple_mesh_key(&mut res);
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), &mut alloc, &res.rm).unwrap();
+    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
     assert_eq!(alloc.len(), 3);
     instance.free_draw_slots(&mut alloc);
     assert_eq!(alloc.len(), 0);

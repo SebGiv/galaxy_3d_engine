@@ -5,7 +5,7 @@
 /// and error handling.
 
 use super::*;
-use crate::graphics_device::{self, SamplerType};
+use crate::graphics_device::{self, SamplerType, PolygonMode};
 use crate::resource::texture::{TextureDesc, LayerDesc, AtlasRegion, AtlasRegionDesc};
 use crate::resource::resource_manager::{ResourceManager, PipelineKey, TextureKey, ShaderKey};
 use crate::resource::pipeline::PipelineDesc;
@@ -72,18 +72,19 @@ fn create_test_shaders(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_dev
     (vk, fk)
 }
 
-fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>, name: &str) -> PipelineKey {
+fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>, name: &str) -> (PipelineKey, ShaderKey) {
     let (vk, fk) = create_test_shaders(rm, gd);
     let vertex_layout = graphics_device::VertexLayout {
         bindings: vec![graphics_device::VertexBinding { binding: 0, stride: 16, input_rate: graphics_device::VertexInputRate::Vertex }],
         attributes: vec![graphics_device::VertexAttribute { location: 0, binding: 0, format: graphics_device::BufferFormat::R32G32_SFLOAT, offset: 0 }],
     };
-    rm.create_pipeline(name.to_string(), PipelineDesc {
+    let pk = rm.create_pipeline(name.to_string(), PipelineDesc {
         vertex_shader: vk, fragment_shader: fk,
         vertex_layout, topology: graphics_device::PrimitiveTopology::TriangleList,
         rasterization: Default::default(), color_blend: Default::default(),
         multisample: Default::default(), color_formats: vec![], depth_format: None,
-    }, &mut *gd.lock().unwrap()).unwrap()
+    }, &mut *gd.lock().unwrap()).unwrap();
+    (pk, fk)
 }
 
 // ============================================================================
@@ -93,20 +94,19 @@ fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_de
 #[test]
 fn test_create_material_minimal() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
-    let mat = Material::from_desc(0, MaterialDesc { pipeline: pk, textures: vec![], params: vec![], render_state: None }, &rm, &*gd.lock().unwrap()).unwrap();
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
+    let mat = Material::from_desc(0, MaterialDesc { fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![], params: vec![], render_state: None }, &rm, &*gd.lock().unwrap()).unwrap();
     assert_eq!(mat.texture_slot_count(), 0);
     assert_eq!(mat.param_count(), 0);
-    assert_eq!(mat.pipeline(), pk);
 }
 
 #[test]
 fn test_create_material_with_simple_texture() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_simple_texture(&mut rm, &gd, "tex");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "albedo".to_string(), texture: tk, layer: None, region: None, sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
@@ -121,9 +121,9 @@ fn test_create_material_with_simple_texture() {
 #[test]
 fn test_create_material_with_params() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![],
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
             ("base_color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0])),
@@ -142,9 +142,9 @@ fn test_create_material_with_params() {
 #[test]
 fn test_create_material_with_all_param_types() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![],
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![
             ("f".to_string(), ParamValue::Float(1.0)),
             ("v2".to_string(), ParamValue::Vec2([1.0, 2.0])),
@@ -170,10 +170,10 @@ fn test_create_material_with_all_param_types() {
 #[test]
 fn test_layer_ref_by_index() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "d".to_string(), texture: tk, layer: Some(LayerRef::Index(1)), region: None, sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
@@ -183,10 +183,10 @@ fn test_layer_ref_by_index() {
 #[test]
 fn test_layer_ref_by_name() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "n".to_string(), texture: tk, layer: Some(LayerRef::Name("normal".to_string())), region: None, sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
@@ -196,10 +196,10 @@ fn test_layer_ref_by_name() {
 #[test]
 fn test_layer_ref_invalid_index() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     assert!(Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "x".to_string(), texture: tk, layer: Some(LayerRef::Index(99)), region: None, sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
     }, &rm, &*gd.lock().unwrap()).is_err());
@@ -208,10 +208,10 @@ fn test_layer_ref_invalid_index() {
 #[test]
 fn test_layer_ref_invalid_name() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     assert!(Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "x".to_string(), texture: tk, layer: Some(LayerRef::Name("nonexistent".to_string())), region: None, sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
     }, &rm, &*gd.lock().unwrap()).is_err());
@@ -224,10 +224,10 @@ fn test_layer_ref_invalid_name() {
 #[test]
 fn test_region_ref_by_index() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "t".to_string(), texture: tk, layer: Some(LayerRef::Name("diffuse".to_string())),
             region: Some(RegionRef::Index(0)), sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
@@ -240,10 +240,10 @@ fn test_region_ref_by_index() {
 #[test]
 fn test_region_ref_by_name() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "t".to_string(), texture: tk, layer: Some(LayerRef::Name("diffuse".to_string())),
             region: Some(RegionRef::Name("stone".to_string())), sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
@@ -256,10 +256,10 @@ fn test_region_ref_by_name() {
 #[test]
 fn test_region_ref_invalid_index() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     assert!(Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "x".to_string(), texture: tk, layer: Some(LayerRef::Index(0)),
             region: Some(RegionRef::Index(99)), sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
@@ -269,10 +269,10 @@ fn test_region_ref_invalid_index() {
 #[test]
 fn test_region_ref_invalid_name() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     assert!(Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "x".to_string(), texture: tk, layer: Some(LayerRef::Index(0)),
             region: Some(RegionRef::Name("nonexistent".to_string())), sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
@@ -282,10 +282,10 @@ fn test_region_ref_invalid_name() {
 #[test]
 fn test_region_without_layer_fails() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_indexed_texture_with_regions(&mut rm, &gd, "itex");
     assert!(Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "x".to_string(), texture: tk, layer: None,
             region: Some(RegionRef::Index(0)), sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
@@ -299,10 +299,10 @@ fn test_region_without_layer_fails() {
 #[test]
 fn test_duplicate_texture_slot_name_fails() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_simple_texture(&mut rm, &gd, "tex");
     assert!(Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![
             MaterialTextureSlotDesc { name: "albedo".to_string(), texture: tk, layer: None, region: None, sampler_type: SamplerType::LinearRepeat },
             MaterialTextureSlotDesc { name: "albedo".to_string(), texture: tk, layer: None, region: None, sampler_type: SamplerType::LinearRepeat },
         ], params: vec![], render_state: None,
@@ -312,9 +312,9 @@ fn test_duplicate_texture_slot_name_fails() {
 #[test]
 fn test_duplicate_param_name_fails() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     assert!(Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![],
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![("roughness".to_string(), ParamValue::Float(0.5)), ("roughness".to_string(), ParamValue::Float(0.8))],
         render_state: None,
     }, &rm, &*gd.lock().unwrap()).is_err());
@@ -327,11 +327,11 @@ fn test_duplicate_param_name_fails() {
 #[test]
 fn test_multiple_texture_slots() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk1 = create_simple_texture(&mut rm, &gd, "tex1");
     let tk2 = create_simple_texture(&mut rm, &gd, "tex2");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![
             MaterialTextureSlotDesc { name: "albedo".to_string(), texture: tk1, layer: None, region: None, sampler_type: SamplerType::LinearRepeat },
             MaterialTextureSlotDesc { name: "normal".to_string(), texture: tk2, layer: None, region: None, sampler_type: SamplerType::LinearRepeat },
         ], params: vec![], render_state: None,
@@ -349,13 +349,13 @@ fn test_multiple_texture_slots() {
 #[test]
 fn test_full_pbr_material() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "pbr");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "pbr");
     let albedo_k = create_simple_texture(&mut rm, &gd, "albedo_tex");
     let normal_k = create_simple_texture(&mut rm, &gd, "normal_tex");
     let indexed_k = create_indexed_texture_with_regions(&mut rm, &gd, "indexed_tex");
 
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![
             MaterialTextureSlotDesc { name: "albedo".to_string(), texture: albedo_k, layer: None, region: None, sampler_type: SamplerType::LinearRepeat },
             MaterialTextureSlotDesc { name: "normal".to_string(), texture: normal_k, layer: None, region: None, sampler_type: SamplerType::LinearRepeat },
             MaterialTextureSlotDesc { name: "detail".to_string(), texture: indexed_k,
@@ -370,7 +370,6 @@ fn test_full_pbr_material() {
         ], render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
 
-    assert_eq!(mat.pipeline(), pk);
     assert_eq!(mat.texture_slot_count(), 3);
     let detail = mat.texture_slot_by_name("detail").unwrap();
     assert_eq!(detail.layer(), Some(0));
@@ -387,9 +386,9 @@ fn test_full_pbr_material() {
 #[test]
 fn test_param_not_found() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![],
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![("roughness".to_string(), ParamValue::Float(0.5))],
         render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
@@ -400,9 +399,9 @@ fn test_param_not_found() {
 #[test]
 fn test_texture_slot_not_found() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![], params: vec![], render_state: None,
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![], params: vec![], render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
     assert!(mat.texture_slot_by_name("nonexistent").is_none());
     assert!(mat.texture_slot(0).is_none());
@@ -415,9 +414,9 @@ fn test_texture_slot_not_found() {
 #[test]
 fn test_typed_accessors_correct_type() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![],
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![("f".to_string(), ParamValue::Float(1.5)), ("v4".to_string(), ParamValue::Vec4([1.0,2.0,3.0,4.0]))],
         render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
@@ -436,10 +435,10 @@ fn test_typed_accessors_correct_type() {
 #[test]
 fn test_texture_slots_slice() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_simple_texture(&mut rm, &gd, "tex");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![
             MaterialTextureSlotDesc { name: "a".to_string(), texture: tk, layer: None, region: None, sampler_type: SamplerType::LinearRepeat },
             MaterialTextureSlotDesc { name: "b".to_string(), texture: tk, layer: None, region: None, sampler_type: SamplerType::LinearRepeat },
         ], params: vec![], render_state: None,
@@ -452,9 +451,9 @@ fn test_texture_slots_slice() {
 #[test]
 fn test_params_slice() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![],
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![("x".to_string(), ParamValue::Float(1.0)), ("y".to_string(), ParamValue::Int(42))],
         render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
@@ -470,9 +469,9 @@ fn test_params_slice() {
 #[test]
 fn test_param_id() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![],
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
         params: vec![("alpha".to_string(), ParamValue::Float(0.5)), ("beta".to_string(), ParamValue::Int(10))],
         render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
@@ -484,10 +483,10 @@ fn test_param_id() {
 #[test]
 fn test_texture_slot_id() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let tk = create_simple_texture(&mut rm, &gd, "tex");
     let mat = Material::from_desc(0, MaterialDesc {
-        pipeline: pk, textures: vec![MaterialTextureSlotDesc {
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
             name: "diffuse".to_string(), texture: tk, layer: None, region: None, sampler_type: SamplerType::LinearRepeat,
         }], params: vec![], render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
@@ -502,9 +501,9 @@ fn test_texture_slot_id() {
 #[test]
 fn test_slot_id() {
     let (mut rm, gd) = create_test_context();
-    let pk = create_test_pipeline(&mut rm, &gd, "p");
+    let (_pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mat = Material::from_desc(42, MaterialDesc {
-        pipeline: pk, textures: vec![], params: vec![], render_state: None,
+        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![], params: vec![], render_state: None,
     }, &rm, &*gd.lock().unwrap()).unwrap();
     assert_eq!(mat.slot_id(), 42);
 }

@@ -3,7 +3,7 @@
 /// These tests use MockGraphicsDevice to test ResourceManager logic without requiring a GPU.
 
 use super::*;
-use crate::graphics_device;
+use crate::graphics_device::{self, PolygonMode};
 use crate::resource::{
     AtlasRegion, AtlasRegionDesc, LayerDesc,
     MeshLODDesc, SubMeshDesc, GeometryMeshRef, GeometrySubMeshRef,
@@ -178,9 +178,11 @@ fn create_test_pipeline_desc(vertex_shader: ShaderKey, fragment_shader: ShaderKe
 }
 
 /// Create a simple material descriptor for testing (no textures, no params)
-fn create_test_material_desc(pipeline_key: PipelineKey) -> MaterialDesc {
+fn create_test_material_desc(fragment_shader: ShaderKey) -> MaterialDesc {
     MaterialDesc {
-        pipeline: pipeline_key,
+        fragment_shader,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![],
         params: vec![],
         render_state: None,
@@ -223,7 +225,7 @@ fn create_mesh_prerequisites(
     let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline_key = rm.create_pipeline(format!("pipe_{}", suffix), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(pipeline_key);
+    let mat_desc = create_test_material_desc(fk);
     let material_key = rm.create_material(format!("mat_{}", suffix), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
     (geometry_key, material_key)
@@ -592,10 +594,10 @@ fn test_create_material() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(pipeline);
+    let mat_desc = create_test_material_desc(fk);
     let mat_key = rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_count(), 1);
@@ -608,10 +610,10 @@ fn test_get_material() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(pipeline);
+    let mat_desc = create_test_material_desc(fk);
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
     let material = rm.material_by_name("body");
@@ -630,10 +632,10 @@ fn test_remove_material() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(pipeline);
+    let mat_desc = create_test_material_desc(fk);
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_count(), 1);
@@ -655,13 +657,13 @@ fn test_duplicate_material_fails() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc1 = create_test_material_desc(pipeline);
+    let mat_desc1 = create_test_material_desc(fk);
     rm.create_material("body".to_string(), mat_desc1, &*graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc2 = create_test_material_desc(pipeline);
+    let mat_desc2 = create_test_material_desc(fk);
     let result = rm.create_material("body".to_string(), mat_desc2, &*graphics_device.lock().unwrap());
 
     assert!(result.is_err());
@@ -673,16 +675,16 @@ fn test_material_count() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_count(), 0);
 
-    let mat_desc1 = create_test_material_desc(pipeline);
+    let mat_desc1 = create_test_material_desc(fk);
     rm.create_material("mat1".to_string(), mat_desc1, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_count(), 1);
 
-    let mat_desc2 = create_test_material_desc(pipeline);
+    let mat_desc2 = create_test_material_desc(fk);
     rm.create_material("mat2".to_string(), mat_desc2, &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_count(), 2);
 
@@ -809,13 +811,13 @@ fn test_mixed_resources() {
     // Create one of each resource type
     let texture_desc = create_test_texture_desc(graphics_device.clone(), "texture", 256, 256);
     let geom_desc = create_test_geometry_desc(graphics_device.clone(), "geom");
-    let pipeline_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipeline_desc = create_test_pipeline_desc(vk, fk);
 
     rm.create_texture("texture".to_string(), texture_desc).unwrap();
     let geometry_key = rm.create_geometry("geom".to_string(), geom_desc).unwrap();
     let pipeline_key = rm.create_pipeline("pipeline".to_string(), pipeline_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat_desc = create_test_material_desc(pipeline_key);
+    let mat_desc = create_test_material_desc(fk);
     let material_key = rm.create_material("material".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
     let mesh_desc = create_test_mesh_desc(geometry_key, material_key);
@@ -840,22 +842,25 @@ fn test_clear_all_resources() {
     let graphics_device = create_mock_graphics_device();
 
     // Create multiple base resources
+    let mut last_fk = None;
     for i in 0..3 {
         let texture_desc = create_test_texture_desc(graphics_device.clone(), &format!("texture{}", i), 256, 256);
         let geom_desc = create_test_geometry_desc(graphics_device.clone(), &format!("geom{}", i));
-        let pipeline_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+        let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipeline_desc = create_test_pipeline_desc(vk, fk);
+        last_fk = Some(fk);
 
         rm.create_texture(format!("texture{}", i), texture_desc).unwrap();
         rm.create_geometry(format!("geom{}", i), geom_desc).unwrap();
         rm.create_pipeline(format!("pipeline{}", i), pipeline_desc, &mut *graphics_device.lock().unwrap()).unwrap();
     }
+    let fk = last_fk.unwrap();
 
     // Create materials and meshes (need keys to existing resources)
     for i in 0..3 {
         let pipeline_key = rm.pipeline_key(&format!("pipeline{}", i)).unwrap();
         let geometry_key = rm.geometry_key(&format!("geom{}", i)).unwrap();
 
-        let mat_desc = create_test_material_desc(pipeline_key);
+        let mat_desc = create_test_material_desc(fk);
         let material_key = rm.create_material(format!("material{}", i), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
         let mesh_desc = create_test_mesh_desc(geometry_key, material_key);
@@ -1318,12 +1323,12 @@ fn test_material_slot_id_assigned() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
-    let mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
-    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
+    let mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
+    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material(mat0).unwrap().slot_id(), 0);
     assert_eq!(rm.material(mat1).unwrap().slot_id(), 1);
@@ -1335,11 +1340,11 @@ fn test_material_slot_recycled_after_remove() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
-    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
-    let _mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
+    let _mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material(mat0).unwrap().slot_id(), 0);
 
@@ -1347,7 +1352,7 @@ fn test_material_slot_recycled_after_remove() {
     rm.remove_material("mat0");
 
     // New material should reuse slot 0
-    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    let mat2 = rm.create_material("mat2".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material(mat2).unwrap().slot_id(), 0);
 }
 
@@ -1356,17 +1361,17 @@ fn test_material_slot_high_water_mark() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_slot_high_water_mark(), 0);
     assert_eq!(rm.material_slot_count(), 0);
 
-    rm.create_material("mat0".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    rm.create_material("mat0".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_slot_high_water_mark(), 1);
     assert_eq!(rm.material_slot_count(), 1);
 
-    rm.create_material("mat1".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    rm.create_material("mat1".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_slot_high_water_mark(), 2);
     assert_eq!(rm.material_slot_count(), 2);
 
@@ -1374,7 +1379,7 @@ fn test_material_slot_high_water_mark() {
     assert_eq!(rm.material_slot_high_water_mark(), 2); // doesn't shrink
     assert_eq!(rm.material_slot_count(), 1); // but count decreases
 
-    rm.create_material("mat2".to_string(), create_test_material_desc(pipeline), &*graphics_device.lock().unwrap()).unwrap();
+    rm.create_material("mat2".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
     assert_eq!(rm.material_slot_high_water_mark(), 2); // reused slot, no increase
     assert_eq!(rm.material_slot_count(), 2);
 }
@@ -1388,11 +1393,13 @@ fn test_sync_materials_basic() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![],
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
@@ -1421,12 +1428,14 @@ fn test_sync_materials_type_mismatch_skips() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material has "roughness" as Float
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![],
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
@@ -1455,12 +1464,14 @@ fn test_sync_materials_missing_field_skips() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material has "roughness" param
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![],
         params: vec![
             ("roughness".to_string(), ParamValue::Float(0.8)),
@@ -1489,12 +1500,14 @@ fn test_sync_materials_bool_to_uint() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material has Bool param
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![],
         params: vec![
             ("is_metallic".to_string(), ParamValue::Bool(true)),
@@ -1522,12 +1535,14 @@ fn test_sync_materials_vec3_padding() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material has Vec3 param (12 bytes raw, needs padding to 16)
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![],
         params: vec![
             ("normal".to_string(), ParamValue::Vec3([1.0, 0.0, 0.0])),
@@ -1557,13 +1572,15 @@ fn test_sync_materials_slot_exceeds_buffer() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Create 3 materials → slot ids 0, 1, 2
     for i in 0..3 {
         let mat_desc = MaterialDesc {
-            pipeline: pipeline,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
             textures: vec![],
             params: vec![
                 ("roughness".to_string(), ParamValue::Float(0.5)),
@@ -1777,11 +1794,13 @@ fn test_sync_materials_texture_slot_writes_layer() {
     let texture = rm.create_texture("atlas".to_string(), tex_desc).unwrap();
 
     // Pipeline + material with a texture slot targeting layer 2
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![MaterialTextureSlotDesc {
             name: "albedo".to_string(),
             texture: texture.clone(),
@@ -1818,12 +1837,14 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
     let tex_desc = create_test_texture_desc(graphics_device.clone(), "tex", 64, 64);
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material with texture slot but NO layer (layer = None → writes 0)
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![MaterialTextureSlotDesc {
             name: "albedo".to_string(),
             texture: texture.clone(),
@@ -1858,11 +1879,13 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
     let tex_desc = create_test_texture_desc(graphics_device.clone(), "tex", 64, 64);
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![MaterialTextureSlotDesc {
             name: "albedo".to_string(),
             texture: texture.clone(),
@@ -1896,11 +1919,13 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
     let tex_desc = create_test_texture_desc(graphics_device.clone(), "tex", 64, 64);
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
-    let pipe_desc = { let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); create_test_pipeline_desc(vk, fk) };
+    let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        pipeline: pipeline,
+        fragment_shader: fk,
+        color_blend: Default::default(),
+        polygon_mode: PolygonMode::Fill,
         textures: vec![MaterialTextureSlotDesc {
             name: "albedo".to_string(),
             texture: texture.clone(),

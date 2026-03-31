@@ -8,7 +8,7 @@ use super::pipeline::SampleCount;
 ///
 /// Defines pixel formats for textures, render targets, and depth buffers.
 /// For vertex attribute formats, see `BufferFormat` in buffer.rs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(non_camel_case_types)]
 pub enum TextureFormat {
     // Color texture formats (8-bit)

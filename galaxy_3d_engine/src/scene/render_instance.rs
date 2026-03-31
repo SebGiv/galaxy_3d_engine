@@ -15,7 +15,7 @@ use crate::graphics_device::{
     PrimitiveTopology,
 };
 use crate::resource::mesh::Mesh;
-use crate::resource::resource_manager::{ResourceManager, MaterialKey};
+use crate::resource::resource_manager::{ResourceManager, MaterialKey, ShaderKey, PipelineKey};
 use crate::utils::SlotAllocator;
 
 // ===== SLOT MAP KEY =====
@@ -163,6 +163,16 @@ pub struct RenderInstance {
     flags: u64,
     /// Axis-Aligned Bounding Box in local space
     bounding_box: AABB,
+    /// Vertex layout from Geometry (needed for pipeline resolution)
+    vertex_layout: graphics_device::VertexLayout,
+    /// Vertex shader used for pipeline resolution
+    vertex_shader: ShaderKey,
+    /// Cached pipeline key (resolved lazily at first draw)
+    cached_pipeline_key: Option<PipelineKey>,
+    /// RenderGraph generation at the time of pipeline resolution
+    cached_render_graph_gen: u64,
+    /// Material generation at the time of pipeline resolution
+    cached_material_gen: u64,
 }
 
 // ===== RENDER INSTANCE IMPLEMENTATION =====
@@ -176,6 +186,7 @@ impl RenderInstance {
         mesh: &Mesh,
         world_matrix: Mat4,
         bounding_box: AABB,
+        vertex_shader: ShaderKey,
         slot_allocator: &mut SlotAllocator,
         resource_manager: &ResourceManager,
     ) -> Result<Self> {
@@ -246,6 +257,11 @@ impl RenderInstance {
             world_matrix,
             flags: FLAG_VISIBLE,
             bounding_box,
+            vertex_layout: geometry.vertex_layout().clone(),
+            vertex_shader,
+            cached_pipeline_key: None,
+            cached_render_graph_gen: 0,
+            cached_material_gen: 0,
         })
     }
 
@@ -313,6 +329,37 @@ impl RenderInstance {
     /// Get the bounding box (local space)
     pub fn bounding_box(&self) -> &AABB {
         &self.bounding_box
+    }
+
+    // ===== PIPELINE CACHE =====
+
+    /// Get the vertex layout (from Geometry)
+    pub fn vertex_layout(&self) -> &graphics_device::VertexLayout {
+        &self.vertex_layout
+    }
+
+    /// Get the vertex shader key
+    pub fn vertex_shader(&self) -> ShaderKey {
+        self.vertex_shader
+    }
+
+    /// Get the cached pipeline key (None if not yet resolved)
+    pub fn cached_pipeline_key(&self) -> Option<PipelineKey> {
+        self.cached_pipeline_key
+    }
+
+    /// Check if the cached pipeline is still valid for the given generations
+    pub fn is_pipeline_valid(&self, render_graph_gen: u64, material_gen: u64) -> bool {
+        self.cached_pipeline_key.is_some()
+            && self.cached_render_graph_gen == render_graph_gen
+            && self.cached_material_gen == material_gen
+    }
+
+    /// Cache a resolved pipeline key with the current generation counters
+    pub fn set_cached_pipeline(&mut self, key: PipelineKey, render_graph_gen: u64, material_gen: u64) {
+        self.cached_pipeline_key = Some(key);
+        self.cached_render_graph_gen = render_graph_gen;
+        self.cached_material_gen = material_gen;
     }
 
     /// Release all draw slots back to the allocator.

@@ -41,6 +41,9 @@ pub struct RenderGraph {
     command_lists: Vec<Box<dyn graphics_device::CommandList>>,
     /// Current frame index (points to the active command list)
     current_frame: usize,
+    /// Generation counter, incremented on each compile().
+    /// Used by RenderInstance to detect stale cached pipelines.
+    generation: u64,
 }
 
 impl RenderGraph {
@@ -54,6 +57,7 @@ impl RenderGraph {
             execution_order: Vec::new(),
             command_lists: Vec::new(),
             current_frame: 0,
+            generation: 0,
         }
     }
 
@@ -407,6 +411,9 @@ impl RenderGraph {
             engine_bail!("galaxy3d::RenderGraph",
                 "frames_in_flight must be at least 1");
         }
+
+        // Increment generation (invalidates cached pipelines on instances)
+        self.generation += 1;
 
         // Topological sort
         self.execution_order = self.topological_sort()?;
@@ -766,5 +773,10 @@ impl RenderGraph {
     /// Get the number of targets in the graph
     pub fn target_count(&self) -> usize {
         self.targets.len()
+    }
+
+    /// Get the generation counter (incremented on each compile)
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 }

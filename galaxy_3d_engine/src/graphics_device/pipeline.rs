@@ -4,7 +4,7 @@ use rustc_hash::FxHashMap;
 use crate::graphics_device::{BufferFormat, ShaderStage, BindingType, ShaderStageFlags, TextureFormat};
 
 /// Primitive topology
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimitiveTopology {
     /// Triangle list
     TriangleList,
@@ -36,7 +36,7 @@ impl IndexType {
 }
 
 /// Vertex input rate
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VertexInputRate {
     /// Data is per-vertex
     Vertex,
@@ -45,7 +45,7 @@ pub enum VertexInputRate {
 }
 
 /// Vertex attribute description
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VertexAttribute {
     /// Attribute location in shader
     pub location: u32,
@@ -58,7 +58,7 @@ pub struct VertexAttribute {
 }
 
 /// Vertex binding description
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VertexBinding {
     /// Binding index
     pub binding: u32,
@@ -69,7 +69,7 @@ pub struct VertexBinding {
 }
 
 /// Vertex input layout
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VertexLayout {
     /// Vertex bindings
     pub bindings: Vec<VertexBinding>,
@@ -120,7 +120,7 @@ pub enum FrontFace {
 }
 
 /// Polygon rendering mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PolygonMode {
     /// Fill polygons
     Fill,
@@ -177,7 +177,7 @@ pub enum StencilOp {
 // ===== COLOR BLEND ENUMS =====
 
 /// Blend factor for color blending equations
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlendFactor {
     Zero,
     One,
@@ -195,7 +195,7 @@ pub enum BlendFactor {
 }
 
 /// Blend operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlendOp {
     /// result = src * srcFactor + dst * dstFactor
     Add,
@@ -212,7 +212,7 @@ pub enum BlendOp {
 // ===== MULTISAMPLE ENUMS =====
 
 /// Multisample count
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SampleCount {
     /// 1 sample (no multisampling)
     S1,
@@ -240,7 +240,7 @@ pub struct DepthBias {
 /// Rasterization fixed-function state
 ///
 /// Fields that moved to DynamicRenderState: cull_mode, front_face, depth_bias
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RasterizationState {
     /// Polygon rendering mode
     pub polygon_mode: PolygonMode,
@@ -300,7 +300,7 @@ impl Default for StencilOpState {
 // ===== COLOR BLEND STATE =====
 
 /// Color write mask
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ColorWriteMask {
     pub r: bool,
     pub g: bool,
@@ -325,7 +325,7 @@ impl Default for ColorWriteMask {
 ///
 /// Blend mode is baked into the pipeline because changing it dynamically
 /// causes shader recompilation on tile-based GPUs (ARM Mali, Adreno).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ColorBlendState {
     /// Enable blending
     pub blend_enable: bool,
@@ -366,7 +366,7 @@ impl Default for ColorBlendState {
 // ===== MULTISAMPLE STATE =====
 
 /// Multisampling state
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MultisampleState {
     /// Number of samples per pixel
     pub sample_count: SampleCount,
