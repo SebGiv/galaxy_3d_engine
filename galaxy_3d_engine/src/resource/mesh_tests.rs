@@ -10,7 +10,7 @@ use crate::resource::geometry::{
     GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
 use crate::resource::pipeline::PipelineDesc;
-use crate::resource::material::{MaterialDesc, ParamValue};
+use crate::resource::material::{MaterialDesc, MaterialPassDesc, ParamValue};
 use crate::graphics_device::PolygonMode;
 use crate::resource::resource_manager::{ResourceManager, GeometryKey, MaterialKey, PipelineKey, ShaderKey};
 use crate::resource::shader::ShaderDesc;
@@ -116,14 +116,17 @@ fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_de
 
 fn create_test_material(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_device::GraphicsDevice>>, _pipeline: PipelineKey, fragment_shader: ShaderKey, name: &str, value: f32) -> MaterialKey {
     rm.create_material(name.to_string(), MaterialDesc {
-        fragment_shader, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
-        params: vec![("value".to_string(), ParamValue::Float(value))],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
+            params: vec![("value".to_string(), ParamValue::Float(value))],
+            render_state: None,
+        }],
     }, &*gd.lock().unwrap()).unwrap()
 }
 
 fn material_value(rm: &ResourceManager, key: MaterialKey) -> f32 {
-    rm.material(key).unwrap().param_by_name("value").unwrap().as_float().unwrap()
+    rm.material(key).unwrap().pass(0).unwrap().param_by_name("value").unwrap().as_float().unwrap()
 }
 
 // ============================================================================

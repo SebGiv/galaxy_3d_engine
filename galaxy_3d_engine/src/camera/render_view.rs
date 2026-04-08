@@ -1,27 +1,29 @@
 /// RenderView — result of frustum culling.
 ///
 /// Created by `Scene::frustum_cull()`. Contains a snapshot of the camera
-/// at culling time and the list of visible instance keys.
+/// at culling time and the list of visible instances (with pre-computed
+/// view-space distances encoded as u16 sort keys).
 ///
 /// Ephemeral: lives for one frame. No Arc, no Mutex.
 /// Shareable: the caller can pass the same RenderView to multiple passes.
 
-use crate::scene::RenderInstanceKey;
+use crate::scene::VisibleInstanceList;
 use super::camera::Camera;
 
 /// Result of frustum culling. Ephemeral — lives for one frame.
 ///
 /// Created exclusively by `Scene::frustum_cull()`.
-/// Contains a camera snapshot and the keys of visible render instances.
+/// Contains a camera snapshot and the list of visible instances with their
+/// pre-computed sort distances.
 #[derive(Debug, Clone)]
 pub struct RenderView {
     camera: Camera,
-    visible_instances: Vec<RenderInstanceKey>,
+    visible_instances: VisibleInstanceList,
 }
 
 impl RenderView {
     /// Create a new RenderView (crate-internal: only Scene::frustum_cull creates these).
-    pub(crate) fn new(camera: Camera, visible_instances: Vec<RenderInstanceKey>) -> Self {
+    pub(crate) fn new(camera: Camera, visible_instances: VisibleInstanceList) -> Self {
         Self {
             camera,
             visible_instances,
@@ -33,8 +35,8 @@ impl RenderView {
         &self.camera
     }
 
-    /// Keys of visible RenderInstances in the Scene.
-    pub fn visible_instances(&self) -> &[RenderInstanceKey] {
+    /// Visible instances (with pre-computed u16 sort distances).
+    pub fn visible_instances(&self) -> &VisibleInstanceList {
         &self.visible_instances
     }
 

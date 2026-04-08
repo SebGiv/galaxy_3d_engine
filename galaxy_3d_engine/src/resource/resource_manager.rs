@@ -605,8 +605,8 @@ impl ResourceManager {
 
         let slot_id = self.material_slot_allocator.alloc();
         let material = Material::from_desc(slot_id, desc, &*self, graphics_device)?;
-        let texture_count = material.texture_slot_count();
-        let param_count = material.param_count();
+        let texture_count = material.total_texture_slot_count();
+        let param_count = material.total_param_count();
 
         let key = self.materials.insert(Arc::new(material));
         self.material_names.insert(name.clone(), key);
@@ -684,7 +684,7 @@ impl ResourceManager {
                 continue;
             }
 
-            for param in material.params() {
+            for param in material.iter_all_params() {
                 // 1. Find field by name
                 let field_index = match buffer.field_id(param.name()) {
                     Some(idx) => idx,
@@ -722,7 +722,7 @@ impl ResourceManager {
 
             // ===== TEXTURE SLOTS → BUFFER FIELDS (bindless index, sampler index, layer) =====
             // Convention: slot name "albedo" maps to fields "albedoTexture", "albedoSampler", "albedoLayer"
-            for slot in material.texture_slots() {
+            for slot in material.iter_all_texture_slots() {
                 let slot_name = slot.name();
 
                 // Write bindless texture index → "{name}Texture"

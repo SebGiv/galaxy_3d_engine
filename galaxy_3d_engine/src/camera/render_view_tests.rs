@@ -1,7 +1,7 @@
 use glam::Mat4;
 use crate::graphics_device::command_list::Viewport;
 use crate::camera::Frustum;
-use crate::scene::RenderInstanceKey;
+use crate::scene::VisibleInstanceList;
 use super::*;
 
 fn create_test_camera() -> Camera {
@@ -24,9 +24,9 @@ fn create_test_camera() -> Camera {
 #[test]
 fn test_render_view_new() {
     let camera = create_test_camera();
-    let keys: Vec<RenderInstanceKey> = Vec::new();
+    let visible = VisibleInstanceList::new();
 
-    let view = RenderView::new(camera, keys);
+    let view = RenderView::new(camera, visible);
 
     assert_eq!(view.visible_count(), 0);
     assert!(view.visible_instances().is_empty());
@@ -39,7 +39,7 @@ fn test_render_view_new() {
 #[test]
 fn test_render_view_camera_snapshot() {
     let camera = create_test_camera();
-    let view = RenderView::new(camera.clone(), Vec::new());
+    let view = RenderView::new(camera.clone(), VisibleInstanceList::new());
 
     assert_eq!(*view.camera().view_matrix(), Mat4::IDENTITY);
     assert_eq!(view.camera().viewport().width, 1920.0);
@@ -47,10 +47,8 @@ fn test_render_view_camera_snapshot() {
 
 #[test]
 fn test_render_view_visible_count() {
-    // We can't create real RenderInstanceKeys without a SlotMap,
-    // but we can test with an empty list
     let camera = create_test_camera();
-    let view = RenderView::new(camera, Vec::new());
+    let view = RenderView::new(camera, VisibleInstanceList::new());
 
     assert_eq!(view.visible_count(), 0);
 }
@@ -62,7 +60,7 @@ fn test_render_view_visible_count() {
 #[test]
 fn test_render_view_clone() {
     let camera = create_test_camera();
-    let view = RenderView::new(camera, Vec::new());
+    let view = RenderView::new(camera, VisibleInstanceList::new());
     let cloned = view.clone();
 
     assert_eq!(cloned.visible_count(), view.visible_count());

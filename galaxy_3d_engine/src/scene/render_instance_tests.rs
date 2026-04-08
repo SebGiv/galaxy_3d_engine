@@ -13,7 +13,7 @@ use crate::resource::geometry::{
 };
 use crate::resource::pipeline::PipelineDesc;
 use crate::resource::material::{
-    MaterialDesc, MaterialTextureSlotDesc, ParamValue,
+    MaterialDesc, MaterialPassDesc, MaterialTextureSlotDesc, ParamValue,
 };
 use crate::resource::texture::{TextureDesc, LayerDesc};
 use crate::resource::mesh::{
@@ -103,9 +103,12 @@ fn create_test_resources() -> TestResources {
     let (vk, fk) = create_test_shaders(&mut rm, &gd);
     let pipeline_key = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let material_key = rm.create_material("m".to_string(), MaterialDesc {
-        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
-        params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
+            params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))],
+            render_state: None,
+        }],
     }, &*gd.lock().unwrap()).unwrap();
 
     TestResources { rm, gd, geo_key, pipeline_key, vertex_shader_key: vk, fragment_shader_key: fk, material_key }
@@ -145,7 +148,10 @@ fn create_non_indexed_resources() -> (TestResources, MeshKey) {
     let (vk, fk) = create_test_shaders(&mut rm, &gd);
     let pk = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let mk = rm.create_material("m".to_string(), MaterialDesc {
-        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![], params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))], render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![], params: vec![("color".to_string(), ParamValue::Vec4([1.0, 0.5, 0.2, 1.0]))], render_state: None,
+        }],
     }, &*gd.lock().unwrap()).unwrap();
 
     let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
@@ -292,7 +298,7 @@ fn test_from_mesh_material_pipeline_structure() {
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     let material = res.rm.material(sm.material()).unwrap();
-    assert_eq!(material.fragment_shader(), res.fragment_shader_key);
+    assert_eq!(material.pass(0).unwrap().fragment_shader(), res.fragment_shader_key);
 }
 
 #[test]
@@ -331,9 +337,12 @@ fn test_from_mesh_material_with_texture() {
     let (vk, fk) = create_test_shaders(&mut rm, &gd);
     let pk = rm.create_pipeline("p".to_string(), create_test_pipeline_desc(vk, fk), &mut *gd.lock().unwrap()).unwrap();
     let mk = rm.create_material("m".to_string(), MaterialDesc {
-        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
-            name: "diffuse".to_string(), texture: tex_key, layer: None, region: None, sampler_type: SamplerType::LinearRepeat,
-        }], params: vec![("roughness".to_string(), ParamValue::Float(0.8)), ("metallic".to_string(), ParamValue::Float(0.0))], render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![MaterialTextureSlotDesc {
+                name: "diffuse".to_string(), texture: tex_key, layer: None, region: None, sampler_type: SamplerType::LinearRepeat,
+            }], params: vec![("roughness".to_string(), ParamValue::Float(0.8)), ("metallic".to_string(), ParamValue::Float(0.0))], render_state: None,
+        }],
     }, &*gd.lock().unwrap()).unwrap();
 
     let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
@@ -352,7 +361,7 @@ fn test_from_mesh_material_with_texture() {
     let instance = create_test_render_instance(mesh_key, Mat4::IDENTITY, create_test_aabb(), vk, &rm).unwrap();
     let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
     assert_eq!(sm.material(), mk);
-    assert_eq!(rm.material(sm.material()).unwrap().texture_slot_count(), 1);
+    assert_eq!(rm.material(sm.material()).unwrap().total_texture_slot_count(), 1);
 }
 
 #[test]

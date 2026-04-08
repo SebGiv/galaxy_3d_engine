@@ -31,8 +31,8 @@ pub use pipeline::{
     Pipeline, PipelineDesc,
 };
 pub use material::{
-    Material, MaterialTextureSlot, MaterialParam,
-    MaterialDesc, MaterialTextureSlotDesc,
+    Material, MaterialPass, MaterialTextureSlot, MaterialParam,
+    MaterialDesc, MaterialPassDesc, MaterialTextureSlotDesc,
     LayerRef, RegionRef, ParamValue,
 };
 pub use mesh::{

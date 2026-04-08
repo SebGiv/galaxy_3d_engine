@@ -8,7 +8,7 @@ use crate::resource::{
     AtlasRegion, AtlasRegionDesc, LayerDesc,
     MeshLODDesc, SubMeshDesc, GeometryMeshRef, GeometrySubMeshRef,
     BufferKind, FieldDesc,
-    MaterialTextureSlotDesc, LayerRef,
+    MaterialPassDesc, MaterialTextureSlotDesc, LayerRef,
     ShaderDesc,
 };
 use std::sync::{Arc, Mutex};
@@ -180,12 +180,15 @@ fn create_test_pipeline_desc(vertex_shader: ShaderKey, fragment_shader: ShaderKe
 /// Create a simple material descriptor for testing (no textures, no params)
 fn create_test_material_desc(fragment_shader: ShaderKey) -> MaterialDesc {
     MaterialDesc {
-        fragment_shader,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![],
-        params: vec![],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![],
+            params: vec![],
+            render_state: None,
+        }],
     }
 }
 
@@ -601,8 +604,8 @@ fn test_create_material() {
     let mat_key = rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_count(), 1);
-    assert_eq!(rm.material(mat_key).unwrap().texture_slot_count(), 0);
-    assert_eq!(rm.material(mat_key).unwrap().param_count(), 0);
+    assert_eq!(rm.material(mat_key).unwrap().total_texture_slot_count(), 0);
+    assert_eq!(rm.material(mat_key).unwrap().total_param_count(), 0);
 }
 
 #[test]
@@ -1397,15 +1400,18 @@ fn test_sync_materials_basic() {
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![],
-        params: vec![
-            ("roughness".to_string(), ParamValue::Float(0.8)),
-            ("color".to_string(), ParamValue::Vec4([1.0, 0.0, 0.0, 1.0])),
-        ],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![],
+            params: vec![
+                ("roughness".to_string(), ParamValue::Float(0.8)),
+                ("color".to_string(), ParamValue::Vec4([1.0, 0.0, 0.0, 1.0])),
+            ],
+            render_state: None,
+        }],
     };
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
@@ -1433,14 +1439,17 @@ fn test_sync_materials_type_mismatch_skips() {
 
     // Material has "roughness" as Float
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![],
-        params: vec![
-            ("roughness".to_string(), ParamValue::Float(0.8)),
-        ],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![],
+            params: vec![
+                ("roughness".to_string(), ParamValue::Float(0.8)),
+            ],
+            render_state: None,
+        }],
     };
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
@@ -1469,14 +1478,17 @@ fn test_sync_materials_missing_field_skips() {
 
     // Material has "roughness" param
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![],
-        params: vec![
-            ("roughness".to_string(), ParamValue::Float(0.8)),
-        ],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![],
+            params: vec![
+                ("roughness".to_string(), ParamValue::Float(0.8)),
+            ],
+            render_state: None,
+        }],
     };
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
@@ -1505,14 +1517,17 @@ fn test_sync_materials_bool_to_uint() {
 
     // Material has Bool param
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![],
-        params: vec![
-            ("is_metallic".to_string(), ParamValue::Bool(true)),
-        ],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![],
+            params: vec![
+                ("is_metallic".to_string(), ParamValue::Bool(true)),
+            ],
+            render_state: None,
+        }],
     };
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
@@ -1540,14 +1555,17 @@ fn test_sync_materials_vec3_padding() {
 
     // Material has Vec3 param (12 bytes raw, needs padding to 16)
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![],
-        params: vec![
-            ("normal".to_string(), ParamValue::Vec3([1.0, 0.0, 0.0])),
-        ],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![],
+            params: vec![
+                ("normal".to_string(), ParamValue::Vec3([1.0, 0.0, 0.0])),
+            ],
+            render_state: None,
+        }],
     };
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
@@ -1578,14 +1596,17 @@ fn test_sync_materials_slot_exceeds_buffer() {
     // Create 3 materials → slot ids 0, 1, 2
     for i in 0..3 {
         let mat_desc = MaterialDesc {
-            fragment_shader: fk,
-            color_blend: Default::default(),
-            polygon_mode: PolygonMode::Fill,
-            textures: vec![],
-            params: vec![
-                ("roughness".to_string(), ParamValue::Float(0.5)),
-            ],
-            render_state: None,
+            passes: vec![MaterialPassDesc {
+                pass_type: 0,
+                fragment_shader: fk,
+                color_blend: Default::default(),
+                polygon_mode: PolygonMode::Fill,
+                textures: vec![],
+                params: vec![
+                    ("roughness".to_string(), ParamValue::Float(0.5)),
+                ],
+                render_state: None,
+            }],
         };
         rm.create_material(format!("mat{}", i), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
     }
@@ -1798,18 +1819,21 @@ fn test_sync_materials_texture_slot_writes_layer() {
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![MaterialTextureSlotDesc {
-            name: "albedo".to_string(),
-            texture: texture.clone(),
-            layer: Some(LayerRef::Index(2)),
-            region: None,
-            sampler_type: graphics_device::SamplerType::LinearRepeat,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![MaterialTextureSlotDesc {
+                name: "albedo".to_string(),
+                texture: texture.clone(),
+                layer: Some(LayerRef::Index(2)),
+                region: None,
+                sampler_type: graphics_device::SamplerType::LinearRepeat,
+            }],
+            params: vec![],
+            render_state: None,
         }],
-        params: vec![],
-        render_state: None,
     };
     rm.create_material("ground".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
@@ -1842,18 +1866,21 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
 
     // Material with texture slot but NO layer (layer = None → writes 0)
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![MaterialTextureSlotDesc {
-            name: "albedo".to_string(),
-            texture: texture.clone(),
-            layer: None,
-            region: None,
-            sampler_type: graphics_device::SamplerType::LinearRepeat,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![MaterialTextureSlotDesc {
+                name: "albedo".to_string(),
+                texture: texture.clone(),
+                layer: None,
+                region: None,
+                sampler_type: graphics_device::SamplerType::LinearRepeat,
+            }],
+            params: vec![],
+            render_state: None,
         }],
-        params: vec![],
-        render_state: None,
     };
     rm.create_material("flat".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
@@ -1883,18 +1910,21 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![MaterialTextureSlotDesc {
-            name: "albedo".to_string(),
-            texture: texture.clone(),
-            layer: None,
-            region: None,
-            sampler_type: graphics_device::SamplerType::LinearRepeat,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![MaterialTextureSlotDesc {
+                name: "albedo".to_string(),
+                texture: texture.clone(),
+                layer: None,
+                region: None,
+                sampler_type: graphics_device::SamplerType::LinearRepeat,
+            }],
+            params: vec![],
+            render_state: None,
         }],
-        params: vec![],
-        render_state: None,
     };
     rm.create_material("mat".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 
@@ -1923,18 +1953,21 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
     let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
-        fragment_shader: fk,
-        color_blend: Default::default(),
-        polygon_mode: PolygonMode::Fill,
-        textures: vec![MaterialTextureSlotDesc {
-            name: "albedo".to_string(),
-            texture: texture.clone(),
-            layer: None,
-            region: None,
-            sampler_type: graphics_device::SamplerType::LinearRepeat,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk,
+            color_blend: Default::default(),
+            polygon_mode: PolygonMode::Fill,
+            textures: vec![MaterialTextureSlotDesc {
+                name: "albedo".to_string(),
+                texture: texture.clone(),
+                layer: None,
+                region: None,
+                sampler_type: graphics_device::SamplerType::LinearRepeat,
+            }],
+            params: vec![],
+            render_state: None,
         }],
-        params: vec![],
-        render_state: None,
     };
     rm.create_material("mat".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
 

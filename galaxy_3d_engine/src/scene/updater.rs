@@ -219,7 +219,8 @@ impl Updater for DefaultUpdater {
 
             if let Some(ref mut idx) = scene_index {
                 let world_aabb = instance.bounding_box().transformed(&world);
-                idx.insert(*key, &world_aabb);
+                let world_position = world.w_axis.truncate();
+                idx.insert(*key, world_position, &world_aabb);
             }
         }
 
@@ -253,7 +254,8 @@ impl Updater for DefaultUpdater {
 
             if let Some(ref mut idx) = scene_index {
                 let world_aabb = instance.bounding_box().transformed(&world);
-                idx.update(*key, &world_aabb);
+                let world_position = world.w_axis.truncate();
+                idx.update(*key, world_position, &world_aabb);
             }
         }
 
@@ -344,7 +346,8 @@ impl Updater for DefaultUpdater {
             // Write lightCount = 0 for all visible instances
             let zero_count = 0u32;
             let zero_indices = [0u32; 4];
-            for &inst_key in render_view.visible_instances() {
+            for vi in render_view.visible_instances().iter() {
+                let inst_key = vi.key;
                 let instance = match scene.render_instance(inst_key) {
                     Some(i) => i,
                     None => continue,
@@ -371,7 +374,8 @@ impl Updater for DefaultUpdater {
         // Reusable buffer for light candidates per instance
         let mut candidates: Vec<(u32, f32)> = Vec::new();
 
-        for &inst_key in render_view.visible_instances() {
+        for vi in render_view.visible_instances().iter() {
+            let inst_key = vi.key;
             let instance = match scene.render_instance(inst_key) {
                 Some(i) => i,
                 None => continue,

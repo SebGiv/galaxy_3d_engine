@@ -1,16 +1,21 @@
 /// Resource-level material type.
 ///
-/// A Material describes a surface's visual properties and owns its GPU texture bindings.
-/// It references a Pipeline (by key) and Textures (by key), and provides parameters.
+/// A Material describes a surface's visual properties as a list of MaterialPass.
+/// Each pass has its own pipeline state (fragment shader, blend, polygon mode,
+/// dynamic render state) and its own subset of texture slots and parameters.
 ///
-/// At creation time, the Material resolves keys via the ResourceManager singleton
-/// and builds BindingGroups for its textures against the referenced Pipeline.
+/// Cross-pass uniqueness:
+/// - `pass_type` must be unique across the passes of a Material.
+/// - Texture slot names must be globally unique across all passes of a Material
+///   (a given name appears in exactly one pass).
+/// - Parameter names must be globally unique across all passes of a Material.
 ///
-/// Architecture:
-/// - Pipeline key: which shader to use (resolved via ResourceManager)
-/// - Texture keys: named texture bindings with optional layer/region targeting
-/// - Texture bindings: pre-built BindingGroups organized by [set]
-/// - Parameters: named scalar/vector/matrix values (roughness, base_color, etc.)
+/// The same TextureKey may be referenced by two slots with different names in
+/// different passes — uniqueness applies to slot NAMES, not to underlying
+/// TextureKeys.
+///
+/// At creation time, the Material resolves keys via the ResourceManager and
+/// resolves layer/region references for each texture slot.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use crate::error::Result;
@@ -80,11 +85,9 @@ pub struct MaterialParam {
     value: ParamValue,
 }
 
-// ===== TEXTURE BINDING GROUPS =====
-
 // ===== MATERIAL TEXTURE SLOT =====
 
-/// A texture bound to a named slot in the material (resolved indices)
+/// A texture bound to a named slot in a material pass (resolved indices)
 ///
 /// After creation, layer and region references are resolved to u32 indices.
 /// The texture is stored as a key, resolved via the ResourceManager.
@@ -98,39 +101,57 @@ pub struct MaterialTextureSlot {
     sampler_type: SamplerType,
 }
 
-// ===== MATERIAL =====
+// ===== MATERIAL PASS =====
 
-/// Material resource: visual description of a surface
+/// A single rendering pass within a Material.
 ///
-/// References a Pipeline (by key) and provides textures (by key, with optional
-/// layer/region targeting), named parameters, and a DynamicRenderState.
-pub struct Material {
-    slot_id: u32,
+/// Each pass has its own pipeline state and its own subset of texture slots
+/// and parameters. Texture slot names and parameter names are globally unique
+/// across all passes of a Material — a given name appears in exactly one pass.
+pub struct MaterialPass {
+    pass_type: u64,
     fragment_shader: ShaderKey,
     color_blend: ColorBlendState,
     polygon_mode: PolygonMode,
+    render_state: DynamicRenderState,
     textures: Vec<MaterialTextureSlot>,
     texture_names: FxHashMap<String, usize>,
     params: Vec<MaterialParam>,
     param_names: FxHashMap<String, usize>,
-    /// Dynamic render state for this material
-    render_state: DynamicRenderState,
+}
+
+// ===== MATERIAL =====
+
+/// Material resource: visual description of a surface as a list of passes.
+///
+/// A Material owns a `Vec<MaterialPass>`. Each pass has its own pipeline state
+/// and its own subset of textures/params, with globally unique slot/param names
+/// across all passes of the Material.
+pub struct Material {
+    slot_id: u32,
+    passes: Vec<MaterialPass>,
     /// Generation counter for pipeline cache invalidation
     generation: u64,
 }
 
 // ===== DESCRIPTORS =====
 
-/// Material creation descriptor
-pub struct MaterialDesc {
+/// Material pass creation descriptor
+pub struct MaterialPassDesc {
+    pub pass_type: u64,
     pub fragment_shader: ShaderKey,
     pub color_blend: ColorBlendState,
     pub polygon_mode: PolygonMode,
     pub textures: Vec<MaterialTextureSlotDesc>,
     pub params: Vec<(String, ParamValue)>,
-    /// Dynamic render state for this material.
+    /// Dynamic render state for this pass.
     /// If None, uses DynamicRenderState::default().
     pub render_state: Option<DynamicRenderState>,
+}
+
+/// Material creation descriptor
+pub struct MaterialDesc {
+    pub passes: Vec<MaterialPassDesc>,
 }
 
 /// Texture slot descriptor (user-facing, accepts names or indices)
@@ -148,6 +169,8 @@ impl Material {
     /// Create material from descriptor (internal use by ResourceManager)
     ///
     /// Resolves TextureKeys via the ResourceManager, then stores only keys.
+    /// Validates pass_type uniqueness and global uniqueness of texture/param
+    /// slot names across all passes.
     pub(crate) fn from_desc(
         slot_id: u32,
         desc: MaterialDesc,
@@ -155,127 +178,176 @@ impl Material {
         _graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
 
-        // ========== VALIDATION 1: No duplicate texture slot names ==========
-        let mut seen_names = FxHashSet::default();
-        for slot_desc in &desc.textures {
-            if !seen_names.insert(&slot_desc.name) {
+        // ========== VALIDATION 1: At least one pass ==========
+        if desc.passes.is_empty() {
+            engine_bail!("galaxy3d::Material",
+                "Material must have at least one pass");
+        }
+
+        // ========== VALIDATION 2: Unique pass_type across passes ==========
+        let mut seen_pass_types: FxHashSet<u64> = FxHashSet::default();
+        for pass_desc in &desc.passes {
+            if !seen_pass_types.insert(pass_desc.pass_type) {
                 engine_bail!("galaxy3d::Material",
-                    "Duplicate texture slot name '{}'", slot_desc.name);
+                    "Duplicate pass_type {} in Material passes", pass_desc.pass_type);
             }
         }
 
-        // ========== VALIDATION 2: No duplicate param names ==========
-        let mut seen_param_names = FxHashSet::default();
-        for (param_name, _) in &desc.params {
-            if !seen_param_names.insert(param_name) {
-                engine_bail!("galaxy3d::Material",
-                    "Duplicate parameter name '{}'", param_name);
+        // ========== VALIDATION 3: Globally unique texture/param names across passes ==========
+        let mut global_texture_names: FxHashSet<String> = FxHashSet::default();
+        let mut global_param_names: FxHashSet<String> = FxHashSet::default();
+
+        let mut passes: Vec<MaterialPass> = Vec::with_capacity(desc.passes.len());
+
+        for pass_desc in desc.passes.into_iter() {
+            // ===== Local validation: no duplicate names within this pass =====
+            let mut local_texture_names: FxHashSet<&str> = FxHashSet::default();
+            for slot_desc in &pass_desc.textures {
+                if !local_texture_names.insert(slot_desc.name.as_str()) {
+                    engine_bail!("galaxy3d::Material",
+                        "Duplicate texture slot name '{}' within pass_type {}",
+                        slot_desc.name, pass_desc.pass_type);
+                }
             }
-        }
+            let mut local_param_names: FxHashSet<&str> = FxHashSet::default();
+            for (param_name, _) in &pass_desc.params {
+                if !local_param_names.insert(param_name.as_str()) {
+                    engine_bail!("galaxy3d::Material",
+                        "Duplicate parameter name '{}' within pass_type {}",
+                        param_name, pass_desc.pass_type);
+                }
+            }
 
-        // ========== RESOLVE TEXTURE SLOTS ==========
-        let mut textures = Vec::with_capacity(desc.textures.len());
-        let mut texture_names = FxHashMap::default();
+            // ===== Global validation: no name shared across passes =====
+            for slot_desc in &pass_desc.textures {
+                if !global_texture_names.insert(slot_desc.name.clone()) {
+                    engine_bail!("galaxy3d::Material",
+                        "Texture slot name '{}' is used in more than one pass \
+                         (slot names must be globally unique across all passes \
+                         of a Material)",
+                        slot_desc.name);
+                }
+            }
+            for (param_name, _) in &pass_desc.params {
+                if !global_param_names.insert(param_name.clone()) {
+                    engine_bail!("galaxy3d::Material",
+                        "Parameter name '{}' is used in more than one pass \
+                         (param names must be globally unique across all passes \
+                         of a Material)",
+                        param_name);
+                }
+            }
 
-        for (vec_index, slot_desc) in desc.textures.into_iter().enumerate() {
-            // Resolve texture key
-            let texture_arc = resource_manager.texture(slot_desc.texture)
-                .ok_or_else(|| engine_err!("galaxy3d::Material",
-                    "Texture slot '{}': texture key not found in ResourceManager",
-                    slot_desc.name))?;
+            // ===== Resolve texture slots for this pass =====
+            let pass_type = pass_desc.pass_type;
+            let mut textures = Vec::with_capacity(pass_desc.textures.len());
+            let mut texture_names = FxHashMap::default();
 
-            // Resolve layer reference
-            let resolved_layer = match slot_desc.layer {
-                None => None,
-                Some(LayerRef::Index(i)) => {
-                    if texture_arc.layer(i).is_none() {
-                        engine_bail!("galaxy3d::Material",
-                            "Texture slot '{}': layer index {} does not exist",
-                            slot_desc.name, i);
+            for (vec_index, slot_desc) in pass_desc.textures.into_iter().enumerate() {
+                // Resolve texture key
+                let texture_arc = resource_manager.texture(slot_desc.texture)
+                    .ok_or_else(|| engine_err!("galaxy3d::Material",
+                        "Texture slot '{}' (pass_type {}): texture key not found in ResourceManager",
+                        slot_desc.name, pass_type))?;
+
+                // Resolve layer reference
+                let resolved_layer = match slot_desc.layer {
+                    None => None,
+                    Some(LayerRef::Index(i)) => {
+                        if texture_arc.layer(i).is_none() {
+                            engine_bail!("galaxy3d::Material",
+                                "Texture slot '{}' (pass_type {}): layer index {} does not exist",
+                                slot_desc.name, pass_type, i);
+                        }
+                        Some(i)
                     }
-                    Some(i)
-                }
-                Some(LayerRef::Name(ref name)) => {
-                    let idx = texture_arc.layer_index_by_name(name)
-                        .ok_or_else(|| engine_err!("galaxy3d::Material",
-                            "Texture slot '{}': layer '{}' not found",
-                            slot_desc.name, name))?;
-                    Some(idx)
-                }
-            };
+                    Some(LayerRef::Name(ref name)) => {
+                        let idx = texture_arc.layer_index_by_name(name)
+                            .ok_or_else(|| engine_err!("galaxy3d::Material",
+                                "Texture slot '{}' (pass_type {}): layer '{}' not found",
+                                slot_desc.name, pass_type, name))?;
+                        Some(idx)
+                    }
+                };
 
-            // Resolve region reference (requires a resolved layer)
-            let resolved_region = match slot_desc.region {
-                None => None,
-                Some(region_ref) => {
-                    let layer_idx = resolved_layer
-                        .ok_or_else(|| engine_err!("galaxy3d::Material",
-                            "Texture slot '{}': region specified without a layer",
-                            slot_desc.name))?;
+                // Resolve region reference (requires a resolved layer)
+                let resolved_region = match slot_desc.region {
+                    None => None,
+                    Some(region_ref) => {
+                        let layer_idx = resolved_layer
+                            .ok_or_else(|| engine_err!("galaxy3d::Material",
+                                "Texture slot '{}' (pass_type {}): region specified without a layer",
+                                slot_desc.name, pass_type))?;
 
-                    let layer = texture_arc.layer(layer_idx)
-                        .ok_or_else(|| engine_err!("galaxy3d::Material",
-                            "Texture slot '{}': layer {} not found during region resolution",
-                            slot_desc.name, layer_idx))?;
+                        let layer = texture_arc.layer(layer_idx)
+                            .ok_or_else(|| engine_err!("galaxy3d::Material",
+                                "Texture slot '{}' (pass_type {}): layer {} not found during region resolution",
+                                slot_desc.name, pass_type, layer_idx))?;
 
-                    match region_ref {
-                        RegionRef::Index(i) => {
-                            if layer.region(i).is_none() {
-                                engine_bail!("galaxy3d::Material",
-                                    "Texture slot '{}': region index {} does not exist in layer {}",
-                                    slot_desc.name, i, layer_idx);
+                        match region_ref {
+                            RegionRef::Index(i) => {
+                                if layer.region(i).is_none() {
+                                    engine_bail!("galaxy3d::Material",
+                                        "Texture slot '{}' (pass_type {}): region index {} does not exist in layer {}",
+                                        slot_desc.name, pass_type, i, layer_idx);
+                                }
+                                Some(i)
                             }
-                            Some(i)
-                        }
-                        RegionRef::Name(ref name) => {
-                            let idx = layer.region_index_by_name(name)
-                                .ok_or_else(|| engine_err!("galaxy3d::Material",
-                                    "Texture slot '{}': region '{}' not found in layer {}",
-                                    slot_desc.name, name, layer_idx))?;
-                            Some(idx)
+                            RegionRef::Name(ref name) => {
+                                let idx = layer.region_index_by_name(name)
+                                    .ok_or_else(|| engine_err!("galaxy3d::Material",
+                                        "Texture slot '{}' (pass_type {}): region '{}' not found in layer {}",
+                                        slot_desc.name, pass_type, name, layer_idx))?;
+                                Some(idx)
+                            }
                         }
                     }
-                }
-            };
+                };
 
-            // Read bindless index from the GPU texture
-            let gd_texture = texture_arc.graphics_device_texture();
-            let bindless_index = gd_texture.bindless_index();
-            let sampler_index = slot_desc.sampler_type as u32;
+                // Read bindless index from the GPU texture
+                let gd_texture = texture_arc.graphics_device_texture();
+                let bindless_index = gd_texture.bindless_index();
+                let sampler_index = slot_desc.sampler_type as u32;
 
-            texture_names.insert(slot_desc.name.clone(), vec_index);
-            textures.push(MaterialTextureSlot {
-                name: slot_desc.name,
-                texture: slot_desc.texture,
-                bindless_index,
-                sampler_index,
-                layer: resolved_layer,
-                region: resolved_region,
-                sampler_type: slot_desc.sampler_type,
+                texture_names.insert(slot_desc.name.clone(), vec_index);
+                textures.push(MaterialTextureSlot {
+                    name: slot_desc.name,
+                    texture: slot_desc.texture,
+                    bindless_index,
+                    sampler_index,
+                    layer: resolved_layer,
+                    region: resolved_region,
+                    sampler_type: slot_desc.sampler_type,
+                });
+            }
+
+            // ===== Build params for this pass =====
+            let mut params = Vec::with_capacity(pass_desc.params.len());
+            let mut param_names = FxHashMap::default();
+
+            for (vec_index, (name, value)) in pass_desc.params.into_iter().enumerate() {
+                param_names.insert(name.clone(), vec_index);
+                params.push(MaterialParam { name, value });
+            }
+
+            let render_state = pass_desc.render_state.unwrap_or_default();
+
+            passes.push(MaterialPass {
+                pass_type,
+                fragment_shader: pass_desc.fragment_shader,
+                color_blend: pass_desc.color_blend,
+                polygon_mode: pass_desc.polygon_mode,
+                render_state,
+                textures,
+                texture_names,
+                params,
+                param_names,
             });
         }
 
-        // ========== BUILD PARAMS ==========
-        let mut params = Vec::with_capacity(desc.params.len());
-        let mut param_names = FxHashMap::default();
-
-        for (vec_index, (name, value)) in desc.params.into_iter().enumerate() {
-            param_names.insert(name.clone(), vec_index);
-            params.push(MaterialParam { name, value });
-        }
-
-        let render_state = desc.render_state.unwrap_or_default();
-
         Ok(Self {
             slot_id,
-            fragment_shader: desc.fragment_shader,
-            color_blend: desc.color_blend,
-            polygon_mode: desc.polygon_mode,
-            textures,
-            texture_names,
-            params,
-            param_names,
-            render_state,
+            passes,
             generation: 0,
         })
     }
@@ -287,7 +359,73 @@ impl Material {
         self.slot_id
     }
 
-    // ===== PIPELINE DATA =====
+    /// Get the generation counter (for pipeline cache invalidation)
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    // ===== PASS ACCESS =====
+
+    /// Get the number of passes in this material
+    pub fn pass_count(&self) -> usize {
+        self.passes.len()
+    }
+
+    /// Get a pass by index (primary access, hot path)
+    pub fn pass(&self, index: usize) -> Option<&MaterialPass> {
+        self.passes.get(index)
+    }
+
+    /// Get a pass by its pass_type value
+    pub fn pass_by_type(&self, pass_type: u64) -> Option<&MaterialPass> {
+        self.passes.iter().find(|p| p.pass_type == pass_type)
+    }
+
+    /// Get all passes as a slice
+    pub fn passes(&self) -> &[MaterialPass] {
+        &self.passes
+    }
+
+    // ===== GLOBAL ITERATION (for SSBO upload) =====
+
+    /// Iterate over ALL parameters across all passes (for SSBO upload).
+    ///
+    /// Order is: pass 0 params, then pass 1 params, etc. Since param names are
+    /// globally unique across passes, this iterator yields the union without
+    /// duplicates.
+    pub fn iter_all_params(&self) -> impl Iterator<Item = &MaterialParam> {
+        self.passes.iter().flat_map(|p| p.params.iter())
+    }
+
+    /// Iterate over ALL texture slots across all passes (for SSBO upload).
+    ///
+    /// Order is: pass 0 slots, then pass 1 slots, etc. Since slot names are
+    /// globally unique across passes, this iterator yields the union without
+    /// duplicates.
+    pub fn iter_all_texture_slots(&self) -> impl Iterator<Item = &MaterialTextureSlot> {
+        self.passes.iter().flat_map(|p| p.textures.iter())
+    }
+
+    /// Total number of parameters across all passes (= union since names are
+    /// globally unique).
+    pub fn total_param_count(&self) -> usize {
+        self.passes.iter().map(|p| p.params.len()).sum()
+    }
+
+    /// Total number of texture slots across all passes (= union since names are
+    /// globally unique).
+    pub fn total_texture_slot_count(&self) -> usize {
+        self.passes.iter().map(|p| p.textures.len()).sum()
+    }
+}
+
+// ===== MATERIAL PASS ACCESSORS =====
+
+impl MaterialPass {
+    /// Get the pass type identifier
+    pub fn pass_type(&self) -> u64 {
+        self.pass_type
+    }
 
     /// Get the fragment shader key
     pub fn fragment_shader(&self) -> ShaderKey {
@@ -304,70 +442,63 @@ impl Material {
         self.polygon_mode
     }
 
-    /// Get the generation counter (for pipeline cache invalidation)
-    pub fn generation(&self) -> u64 {
-        self.generation
+    /// Get the DynamicRenderState for this pass.
+    pub fn render_state(&self) -> &DynamicRenderState {
+        &self.render_state
     }
 
     // ===== TEXTURE SLOT ACCESS =====
 
-    /// Get texture slot by index
+    /// Get texture slot by index within this pass
     pub fn texture_slot(&self, index: usize) -> Option<&MaterialTextureSlot> {
         self.textures.get(index)
     }
 
-    /// Get texture slot by name
+    /// Get texture slot by name within this pass
     pub fn texture_slot_by_name(&self, name: &str) -> Option<&MaterialTextureSlot> {
         let idx = self.texture_names.get(name)?;
         self.textures.get(*idx)
     }
 
-    /// Get texture slot index from name
+    /// Get texture slot index from name within this pass
     pub fn texture_slot_id(&self, name: &str) -> Option<usize> {
         self.texture_names.get(name).copied()
     }
 
-    /// Get all texture slots as a slice
+    /// Get all texture slots of this pass as a slice
     pub fn texture_slots(&self) -> &[MaterialTextureSlot] {
         &self.textures
     }
 
-    /// Get number of texture slots
+    /// Get number of texture slots in this pass
     pub fn texture_slot_count(&self) -> usize {
         self.textures.len()
     }
 
-    // ===== RENDER STATE ACCESS =====
-
-    /// Get the DynamicRenderState for this material.
-    pub fn render_state(&self) -> &DynamicRenderState {
-        &self.render_state
-    }
-
     // ===== PARAM ACCESS =====
 
-    /// Get parameter by index
+    /// Get parameter by index within this pass
     pub fn param(&self, index: usize) -> Option<&MaterialParam> {
         self.params.get(index)
     }
 
-    /// Get parameter by name
+    /// Get parameter by name within this pass
     pub fn param_by_name(&self, name: &str) -> Option<&MaterialParam> {
         let idx = self.param_names.get(name)?;
         self.params.get(*idx)
     }
 
-    /// Get parameter index from name
+    /// Get parameter index from name within this pass
     pub fn param_id(&self, name: &str) -> Option<usize> {
         self.param_names.get(name).copied()
     }
 
-    /// Get all parameters as a slice
+    /// Get all parameters of this pass as a slice
     pub fn params(&self) -> &[MaterialParam] {
         &self.params
     }
 
-    /// Get number of parameters
+    /// Get number of parameters in this pass
     pub fn param_count(&self) -> usize {
         self.params.len()
     }

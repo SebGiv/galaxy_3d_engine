@@ -7,26 +7,44 @@
 /// Ownership: the caller creates and owns the SceneIndex.
 /// It is passed by reference to Updater and CameraCuller.
 
+use glam::Vec3;
 use crate::camera::Frustum;
 use super::render_instance::{RenderInstanceKey, AABB};
+use super::visible_instance_list::VisibleInstanceList;
 
 /// Trait for spatial indexing of scene instances.
 ///
 /// Used by CameraCuller (frustum queries) and Updater (instance placement).
 /// The caller owns the SceneIndex and passes it as a parameter.
 pub trait SceneIndex: Send + Sync {
-    /// Insert an instance with its world-space AABB.
-    fn insert(&mut self, key: RenderInstanceKey, world_aabb: &AABB);
+    /// Insert an instance with its world-space position and AABB.
+    ///
+    /// `world_position` is the instance's translation in world space (typically
+    /// `world_matrix.w_axis.truncate()`). It is stored alongside the AABB so
+    /// that `query_frustum` can compute camera-relative depth without a
+    /// separate scene lookup.
+    fn insert(&mut self, key: RenderInstanceKey, world_position: Vec3, world_aabb: &AABB);
 
     /// Remove an instance from the index.
     fn remove(&mut self, key: RenderInstanceKey);
 
-    /// Update an instance's world-space AABB (e.g. after transform change).
-    fn update(&mut self, key: RenderInstanceKey, world_aabb: &AABB);
+    /// Update an instance's world-space position and AABB (e.g. after transform change).
+    fn update(&mut self, key: RenderInstanceKey, world_position: Vec3, world_aabb: &AABB);
 
     /// Query all instances whose world AABB intersects the frustum.
-    /// Results are appended to `results`.
-    fn query_frustum(&self, frustum: &Frustum, results: &mut Vec<RenderInstanceKey>);
+    ///
+    /// For each visible instance, computes the view-space depth
+    /// `depth = dot(instance_pos - camera_pos, camera_forward)` and pushes
+    /// `(key, depth)` into `results` (depth is encoded to u16 by the list).
+    ///
+    /// Results are appended to `results` (the list is NOT cleared).
+    fn query_frustum(
+        &self,
+        frustum: &Frustum,
+        camera_pos: Vec3,
+        camera_forward: Vec3,
+        results: &mut VisibleInstanceList,
+    );
 
     /// Remove all instances from the index.
     fn clear(&mut self);

@@ -11,7 +11,7 @@ use crate::resource::geometry::{
     GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
 };
 use crate::resource::pipeline::PipelineDesc;
-use crate::resource::material::{MaterialDesc, ParamValue};
+use crate::resource::material::{MaterialDesc, MaterialPassDesc, ParamValue};
 use crate::resource::mesh::{
     MeshDesc, MeshLODDesc, SubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
@@ -103,9 +103,12 @@ fn setup_resources() -> TestSetup {
     }, &mut *gd.lock().unwrap()).unwrap();
 
     let mk = rm.create_material("m".to_string(), MaterialDesc {
-        fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
-        params: vec![("value".to_string(), ParamValue::Float(1.0))],
-        render_state: None,
+        passes: vec![MaterialPassDesc {
+            pass_type: 0,
+            fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
+            params: vec![("value".to_string(), ParamValue::Float(1.0))],
+            render_state: None,
+        }],
     }, &*gd.lock().unwrap()).unwrap();
 
     let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
@@ -412,9 +415,12 @@ fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey) {
         }, &mut *gd.lock().unwrap()).unwrap();
 
         let mk = rm.create_material("m".to_string(), MaterialDesc {
-            fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
-            params: vec![("value".to_string(), ParamValue::Float(1.0))],
-            render_state: None,
+            passes: vec![MaterialPassDesc {
+                pass_type: 0,
+                fragment_shader: fk, color_blend: Default::default(), polygon_mode: PolygonMode::Fill, textures: vec![],
+                params: vec![("value".to_string(), ParamValue::Float(1.0))],
+                render_state: None,
+            }],
         }, &*gd.lock().unwrap()).unwrap();
 
         let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
