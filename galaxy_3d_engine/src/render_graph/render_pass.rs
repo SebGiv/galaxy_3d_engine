@@ -10,12 +10,15 @@
 /// to determine execution order.
 ///
 /// After `RenderGraph::compile()`, each pass with attachment outputs
-/// holds a resolved `graphics_device::RenderPass` and `graphics_device::Framebuffer`.
+/// holds a resolved `graphics_device::RenderPass`, `graphics_device::Framebuffer`,
+/// and a `PassInfo` derived from the resolved attachment formats.
 
 use std::sync::Arc;
 use crate::graphics_device;
+use crate::resource::resource_manager::PassInfo;
 use super::access_type::ResourceAccess;
 use super::pass_action::PassAction;
+use super::render_target::RenderTarget;
 
 pub struct RenderPass {
     /// Resource accesses declared for this pass
@@ -26,6 +29,9 @@ pub struct RenderPass {
     graphics_device_framebuffer: Option<Arc<dyn graphics_device::Framebuffer>>,
     /// Action to execute during this pass
     action: Option<Box<dyn PassAction>>,
+    /// Attachment format info, derived at compile() from resolved targets.
+    /// Generation is incremented only when formats actually change.
+    pass_info: Option<PassInfo>,
 }
 
 impl RenderPass {
@@ -35,6 +41,7 @@ impl RenderPass {
             graphics_device_render_pass: None,
             graphics_device_framebuffer: None,
             action: None,
+            pass_info: None,
         }
     }
 
@@ -119,5 +126,71 @@ impl RenderPass {
     /// Set the action for this pass
     pub(crate) fn set_action(&mut self, action: Box<dyn PassAction>) {
         self.action = Some(action);
+    }
+
+    // ===== PASS INFO =====
+
+    /// Get the PassInfo (available after compile).
+    pub fn pass_info(&self) -> Option<&PassInfo> {
+        self.pass_info.as_ref()
+    }
+
+    /// Update the PassInfo from resolved attachment targets.
+    ///
+    /// Compares element by element against the existing PassInfo.
+    /// Zero allocation if nothing changed. Increments generation only
+    /// when formats or sample count actually change.
+    pub(crate) fn update_pass_info_from_targets(
+        &mut self,
+        color_targets: &[&RenderTarget],
+        depth_target: Option<&RenderTarget>,
+        sample_count: graphics_device::SampleCount,
+    ) {
+        let depth_format = depth_target
+            .map(|t| t.texture().graphics_device_texture().info().format);
+
+        if let Some(ref mut existing) = self.pass_info {
+            // Compare element by element — zero allocation
+            let same_colors = existing.color_formats.len() == color_targets.len()
+                && existing.color_formats.iter().zip(color_targets.iter())
+                    .all(|(fmt, target)| *fmt == target.texture().graphics_device_texture().info().format);
+
+            if same_colors
+                && existing.depth_format == depth_format
+                && existing.sample_count == sample_count
+            {
+                return; // nothing changed — no allocation, no generation bump
+            }
+
+            // Something changed — update in place, reuse Vec capacity
+            existing.color_formats.clear();
+            for t in color_targets {
+                existing.color_formats.push(t.texture().graphics_device_texture().info().format);
+            }
+            existing.depth_format = depth_format;
+            existing.sample_count = sample_count;
+            existing.increment_generation();
+        } else {
+            // First time — one allocation for the Vec
+            let color_formats = color_targets.iter()
+                .map(|t| t.texture().graphics_device_texture().info().format)
+                .collect();
+            self.pass_info = Some(PassInfo::new(color_formats, depth_format, sample_count));
+        }
+    }
+
+    /// Split borrow: get action (mut) and pass_info (ref) simultaneously.
+    ///
+    /// This avoids the borrow conflict between `action_mut()` and `pass_info()`,
+    /// which both borrow `&mut self` / `&self` on the same `RenderPass`.
+    /// Inside this method, Rust sees that `self.action` and `self.pass_info`
+    /// are disjoint fields and allows simultaneous borrows.
+    pub fn action_and_pass_info_mut(
+        &mut self,
+    ) -> (Option<&mut (dyn PassAction + 'static)>, Option<&PassInfo>) {
+        (
+            self.action.as_mut().map(|a| a.as_mut()),
+            self.pass_info.as_ref(),
+        )
     }
 }

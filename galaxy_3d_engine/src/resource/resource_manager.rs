@@ -71,14 +71,44 @@ pub struct PipelineCacheKey {
     pub sample_count: graphics_device::SampleCount,
 }
 
-/// Render pass target information needed for pipeline creation.
+/// Render pass attachment information needed for pipeline creation.
 ///
-/// Built by the drawer from the current render pass when pipeline
-/// resolution is needed (stale generation or first draw).
+/// Derived automatically by `RenderGraph::compile()` from the resolved
+/// render pass attachments. Carries a generation counter that is incremented
+/// only when the actual formats or sample count change.
+///
+/// Also accepted as a manual construction (e.g. in tests or demos)
+/// via `PassInfo::new()`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PassInfo {
     pub color_formats: Vec<graphics_device::TextureFormat>,
     pub depth_format: Option<graphics_device::TextureFormat>,
     pub sample_count: graphics_device::SampleCount,
+    /// Generation counter — incremented when any format field changes.
+    /// Used by RenderInstance pipeline cache for invalidation.
+    generation: u64,
+}
+
+impl PassInfo {
+    /// Create a new PassInfo with generation 1.
+    pub fn new(
+        color_formats: Vec<graphics_device::TextureFormat>,
+        depth_format: Option<graphics_device::TextureFormat>,
+        sample_count: graphics_device::SampleCount,
+    ) -> Self {
+        Self { color_formats, depth_format, sample_count, generation: 1 }
+    }
+
+    /// Get the generation counter.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Increment the generation counter (crate-internal, used by RenderPass
+    /// when attachment formats change).
+    pub(crate) fn increment_generation(&mut self) {
+        self.generation += 1;
+    }
 }
 
 // ===== PRIVATE HELPERS =====

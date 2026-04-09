@@ -169,8 +169,8 @@ pub struct RenderInstance {
     vertex_shader: ShaderKey,
     /// Cached pipeline key (resolved lazily at first draw)
     cached_pipeline_key: Option<PipelineKey>,
-    /// RenderGraph generation at the time of pipeline resolution
-    cached_render_graph_gen: u64,
+    /// PassInfo generation at the time of pipeline resolution
+    cached_pass_info_gen: u64,
     /// Material generation at the time of pipeline resolution
     cached_material_gen: u64,
 }
@@ -260,7 +260,7 @@ impl RenderInstance {
             vertex_layout: geometry.vertex_layout().clone(),
             vertex_shader,
             cached_pipeline_key: None,
-            cached_render_graph_gen: 0,
+            cached_pass_info_gen: 0,
             cached_material_gen: 0,
         })
     }
@@ -349,16 +349,16 @@ impl RenderInstance {
     }
 
     /// Check if the cached pipeline is still valid for the given generations
-    pub fn is_pipeline_valid(&self, render_graph_gen: u64, material_gen: u64) -> bool {
+    pub fn is_pipeline_valid(&self, pass_info_gen: u64, material_gen: u64) -> bool {
         self.cached_pipeline_key.is_some()
-            && self.cached_render_graph_gen == render_graph_gen
+            && self.cached_pass_info_gen == pass_info_gen
             && self.cached_material_gen == material_gen
     }
 
     /// Cache a resolved pipeline key with the current generation counters
-    pub fn set_cached_pipeline(&mut self, key: PipelineKey, render_graph_gen: u64, material_gen: u64) {
+    pub fn set_cached_pipeline(&mut self, key: PipelineKey, pass_info_gen: u64, material_gen: u64) {
         self.cached_pipeline_key = Some(key);
-        self.cached_render_graph_gen = render_graph_gen;
+        self.cached_pass_info_gen = pass_info_gen;
         self.cached_material_gen = material_gen;
     }
 

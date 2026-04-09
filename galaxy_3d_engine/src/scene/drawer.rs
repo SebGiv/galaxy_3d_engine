@@ -25,7 +25,6 @@ pub trait Drawer: Send + Sync {
         view: &RenderView,
         cmd: &mut dyn CommandList,
         pass_info: &PassInfo,
-        render_graph_gen: u64,
     ) -> Result<()>;
 }
 
@@ -48,8 +47,8 @@ impl Drawer for ForwardDrawer {
         view: &RenderView,
         cmd: &mut dyn CommandList,
         pass_info: &PassInfo,
-        render_graph_gen: u64,
     ) -> Result<()> {
+        let pass_info_gen = pass_info.generation();
         let camera = view.camera();
 
         // Dynamic state from camera
@@ -105,7 +104,7 @@ impl Drawer for ForwardDrawer {
                         sm.vertex_count(),
                         sm.index_offset(),
                         sm.index_count(),
-                        inst.is_pipeline_valid(render_graph_gen, mat_gen),
+                        inst.is_pipeline_valid(pass_info_gen, mat_gen),
                         mat_gen,
                     )
                 };
@@ -128,7 +127,7 @@ impl Drawer for ForwardDrawer {
 
                     // Cache on instance (mut on scene — no concurrent immut borrow at this point)
                     scene.render_instance_mut(*key).unwrap()
-                        .set_cached_pipeline(pipeline_key, render_graph_gen, mat_gen);
+                        .set_cached_pipeline(pipeline_key, pass_info_gen, mat_gen);
                 }
 
                 // ===== Phase 3: draw with cached pipeline =====

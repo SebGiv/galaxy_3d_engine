@@ -41,9 +41,6 @@ pub struct RenderGraph {
     command_lists: Vec<Box<dyn graphics_device::CommandList>>,
     /// Current frame index (points to the active command list)
     current_frame: usize,
-    /// Generation counter, incremented on each compile().
-    /// Used by RenderInstance to detect stale cached pipelines.
-    generation: u64,
 }
 
 impl RenderGraph {
@@ -57,7 +54,6 @@ impl RenderGraph {
             execution_order: Vec::new(),
             command_lists: Vec::new(),
             current_frame: 0,
-            generation: 0,
         }
     }
 
@@ -412,9 +408,6 @@ impl RenderGraph {
                 "frames_in_flight must be at least 1");
         }
 
-        // Increment generation (invalidates cached pipelines on instances)
-        self.generation += 1;
-
         // Topological sort
         self.execution_order = self.topological_sort()?;
 
@@ -533,6 +526,22 @@ impl RenderGraph {
 
             self.passes[pass_idx].set_graphics_device_render_pass(render_pass);
             self.passes[pass_idx].set_graphics_device_framebuffer(framebuffer);
+
+            // Derive PassInfo from resolved attachment targets.
+            // Zero allocation if formats haven't changed since last compile.
+            let color_target_refs: Vec<&RenderTarget> = attachments.iter()
+                .filter(|(tid, _)| matches!(self.targets[*tid].ops(), TargetOps::Color { .. }))
+                .map(|(tid, _)| &self.targets[*tid])
+                .collect();
+            let depth_target_ref = attachments.iter()
+                .find(|(tid, _)| matches!(self.targets[*tid].ops(), TargetOps::DepthStencil { .. }))
+                .map(|(tid, _)| &self.targets[*tid]);
+            let sample_count = pass_sample_count.unwrap_or(graphics_device::SampleCount::S1);
+            self.passes[pass_idx].update_pass_info_from_targets(
+                &color_target_refs,
+                depth_target_ref,
+                sample_count,
+            );
         }
 
         // Create command lists for double/triple buffering
@@ -662,8 +671,12 @@ impl RenderGraph {
 
                 self.command_lists[frame].begin_render_pass(&rp, &fb, &clear_values, &accesses)?;
 
-                if let Some(action) = self.passes[pass_idx].action_mut() {
-                    action.execute(&mut *self.command_lists[frame])?;
+                let (action, pass_info) = self.passes[pass_idx].action_and_pass_info_mut();
+                if let Some(action) = action {
+                    let pass_info = pass_info.expect(
+                        "PassInfo should be available after compile for passes with attachments"
+                    );
+                    action.execute(&mut *self.command_lists[frame], pass_info)?;
                 }
 
                 self.command_lists[frame].end_render_pass()?;
@@ -775,8 +788,4 @@ impl RenderGraph {
         self.targets.len()
     }
 
-    /// Get the generation counter (incremented on each compile)
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
 }
