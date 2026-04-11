@@ -8,12 +8,12 @@ use crate::graphics_device::{
     VertexInputRate, IndexType, PolygonMode,
 };
 use crate::resource::geometry::{
-    GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
+    GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
 };
 use crate::resource::pipeline::PipelineDesc;
 use crate::resource::material::{MaterialDesc, MaterialPassDesc, ParamValue};
 use crate::resource::mesh::{
-    MeshDesc, MeshLODDesc, SubMeshDesc,
+    MeshDesc, MeshSubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
 };
 use crate::resource::buffer::{Buffer, BufferDesc, BufferKind, FieldDesc, FieldType};
@@ -88,14 +88,19 @@ fn setup_resources() -> TestSetup {
         vertex_layout: create_vertex_layout(), index_type: IndexType::U16,
         meshes: vec![GeometryMeshDesc {
             name: "cube".to_string(),
-            lods: vec![GeometryLODDesc { lod_index: 0, submeshes: vec![
-                GeometrySubMeshDesc { name: "main".to_string(), vertex_offset: 0, vertex_count: 6, index_offset: 0, index_count: 6, topology: PrimitiveTopology::TriangleList },
-            ]}],
+            submeshes: vec![GeometrySubMeshDesc {
+                name: "main".to_string(),
+                lods: vec![GeometrySubMeshLODDesc {
+                    vertex_offset: 0, vertex_count: 6,
+                    index_offset: 0, index_count: 6,
+                    topology: PrimitiveTopology::TriangleList,
+                }],
+            }],
         }],
     }).unwrap();
 
     let (vk, fk) = create_test_shaders(&mut rm, &gd);
-    let pk = rm.create_pipeline("p".to_string(), PipelineDesc {
+    let _pk = rm.create_pipeline("p".to_string(), PipelineDesc {
         vertex_shader: vk, fragment_shader: fk,
         vertex_layout: create_vertex_layout(), topology: PrimitiveTopology::TriangleList,
         rasterization: Default::default(), color_blend: Default::default(),
@@ -112,10 +117,12 @@ fn setup_resources() -> TestSetup {
     }, &*gd.lock().unwrap()).unwrap();
 
     let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
-        geometry: _geo_key, geometry_mesh: GeometryMeshRef::Name("cube".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![
-            SubMeshDesc { submesh: GeometrySubMeshRef::Name("main".to_string()), material: mk },
-        ]}],
+        geometry: _geo_key,
+        geometry_mesh: GeometryMeshRef::Name("cube".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Name("main".to_string()),
+            material: mk,
+        }],
     }).unwrap();
 
     TestSetup { gd, rm, mesh_key, vertex_shader_key: vk, buffers }
@@ -400,14 +407,19 @@ fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey) {
             vertex_layout: create_vertex_layout(), index_type: IndexType::U16,
             meshes: vec![GeometryMeshDesc {
                 name: "cube".to_string(),
-                lods: vec![GeometryLODDesc { lod_index: 0, submeshes: vec![
-                    GeometrySubMeshDesc { name: "main".to_string(), vertex_offset: 0, vertex_count: 6, index_offset: 0, index_count: 6, topology: PrimitiveTopology::TriangleList },
-                ]}],
+                submeshes: vec![GeometrySubMeshDesc {
+                    name: "main".to_string(),
+                    lods: vec![GeometrySubMeshLODDesc {
+                        vertex_offset: 0, vertex_count: 6,
+                        index_offset: 0, index_count: 6,
+                        topology: PrimitiveTopology::TriangleList,
+                    }],
+                }],
             }],
         }).unwrap();
 
         let (vk, fk) = create_test_shaders(&mut rm, &gd);
-        let pk = rm.create_pipeline("p".to_string(), PipelineDesc {
+        let _pk = rm.create_pipeline("p".to_string(), PipelineDesc {
             vertex_shader: vk, fragment_shader: fk,
             vertex_layout: create_vertex_layout(), topology: PrimitiveTopology::TriangleList,
             rasterization: Default::default(), color_blend: Default::default(),
@@ -424,10 +436,12 @@ fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey) {
         }, &*gd.lock().unwrap()).unwrap();
 
         let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
-            geometry: geo_key, geometry_mesh: GeometryMeshRef::Name("cube".to_string()),
-            lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("main".to_string()), material: mk },
-            ]}],
+            geometry: geo_key,
+            geometry_mesh: GeometryMeshRef::Name("cube".to_string()),
+            submeshes: vec![MeshSubMeshDesc {
+                submesh: GeometrySubMeshRef::Name("main".to_string()),
+                material: mk,
+            }],
         }).unwrap();
 
         let buffers = create_test_buffers(&gd);
@@ -448,7 +462,8 @@ fn test_draw_empty_view() {
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
-    let view = culler.cull(&scene, &camera, None);
+    let mut view = crate::camera::RenderView::new_empty();
+    culler.cull_into(&scene, &camera, None, &mut view);
     let mut cmd = MockCommandList::new();
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
@@ -470,7 +485,8 @@ fn test_draw_single_instance() {
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
-    let view = culler.cull(&scene, &camera, None);
+    let mut view = crate::camera::RenderView::new_empty();
+    culler.cull_into(&scene, &camera, None, &mut view);
     let mut cmd = MockCommandList::new();
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
@@ -503,7 +519,8 @@ fn test_draw_skips_committed_removal() {
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
-    let view = culler.cull(&scene, &camera, None);
+    let mut view = crate::camera::RenderView::new_empty();
+    culler.cull_into(&scene, &camera, None, &mut view);
     let mut cmd = MockCommandList::new();
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
@@ -526,7 +543,8 @@ fn test_draw_multiple_instances() {
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
-    let view = culler.cull(&scene, &camera, None);
+    let mut view = crate::camera::RenderView::new_empty();
+    culler.cull_into(&scene, &camera, None, &mut view);
     let mut cmd = MockCommandList::new();
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,

@@ -1,4 +1,4 @@
-/// Tests for RenderInstance, RenderLOD, RenderSubMesh, and AABB
+/// Tests for RenderInstance, RenderSubMesh, and AABB
 
 use super::*;
 use crate::graphics_device::mock_graphics_device::MockGraphicsDevice;
@@ -9,7 +9,7 @@ use crate::graphics_device::{
     VertexInputRate, IndexType, PolygonMode,
 };
 use crate::resource::geometry::{
-    GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
+    GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
 };
 use crate::resource::pipeline::PipelineDesc;
 use crate::resource::material::{
@@ -17,7 +17,7 @@ use crate::resource::material::{
 };
 use crate::resource::texture::{TextureDesc, LayerDesc};
 use crate::resource::mesh::{
-    MeshDesc, MeshLODDesc, SubMeshDesc,
+    MeshDesc, MeshSubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
 };
 use crate::resource::shader::ShaderDesc;
@@ -66,11 +66,20 @@ fn create_test_aabb() -> AABB {
     AABB { min: Vec3::new(-1.0, -1.0, -1.0), max: Vec3::new(1.0, 1.0, 1.0) }
 }
 
+/// Convenience LOD desc
+fn lod(vertex_offset: u32, vertex_count: u32, index_offset: u32, index_count: u32) -> GeometrySubMeshLODDesc {
+    GeometrySubMeshLODDesc {
+        vertex_offset, vertex_count, index_offset, index_count,
+        topology: PrimitiveTopology::TriangleList,
+    }
+}
+
 struct TestResources {
     rm: ResourceManager,
     #[allow(dead_code)]
     gd: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>,
     geo_key: GeometryKey,
+    #[allow(dead_code)]
     pipeline_key: PipelineKey,
     vertex_shader_key: ShaderKey,
     #[allow(dead_code)]
@@ -82,20 +91,27 @@ fn create_test_resources() -> TestResources {
     let gd = create_mock_graphics_device();
     let mut rm = ResourceManager::new();
 
+    // 15 vertices (120/8), 18 indices (36/2 U16).
+    // Mesh "object" with 3 submeshes (body, head, legs), each with 1 LOD.
     let geo_key = rm.create_geometry("test_geo".to_string(), GeometryDesc {
         name: "test_geo".to_string(), graphics_device: gd.clone(),
         vertex_data: vec![0u8; 120], index_data: Some(vec![0u8; 36]),
         vertex_layout: create_vertex_layout(), index_type: IndexType::U16,
         meshes: vec![GeometryMeshDesc {
             name: "object".to_string(),
-            lods: vec![
-                GeometryLODDesc { lod_index: 0, submeshes: vec![
-                    GeometrySubMeshDesc { name: "body".to_string(), vertex_offset: 0, vertex_count: 4, index_offset: 0, index_count: 6, topology: PrimitiveTopology::TriangleList },
-                    GeometrySubMeshDesc { name: "head".to_string(), vertex_offset: 4, vertex_count: 4, index_offset: 6, index_count: 6, topology: PrimitiveTopology::TriangleList },
-                ]},
-                GeometryLODDesc { lod_index: 1, submeshes: vec![
-                    GeometrySubMeshDesc { name: "body_low".to_string(), vertex_offset: 8, vertex_count: 3, index_offset: 12, index_count: 3, topology: PrimitiveTopology::TriangleList },
-                ]},
+            submeshes: vec![
+                GeometrySubMeshDesc {
+                    name: "body".to_string(),
+                    lods: vec![lod(0, 4, 0, 6)],
+                },
+                GeometrySubMeshDesc {
+                    name: "head".to_string(),
+                    lods: vec![lod(4, 4, 6, 6)],
+                },
+                GeometrySubMeshDesc {
+                    name: "legs".to_string(),
+                    lods: vec![lod(8, 3, 12, 3)],
+                },
             ],
         }],
     }).unwrap();
@@ -116,15 +132,12 @@ fn create_test_resources() -> TestResources {
 
 fn create_simple_mesh_key(res: &mut TestResources) -> MeshKey {
     res.rm.create_mesh("mesh".to_string(), MeshDesc {
-        geometry: res.geo_key, geometry_mesh: GeometryMeshRef::Name("object".to_string()),
-        lods: vec![
-            MeshLODDesc { lod_index: 0, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: res.material_key },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: res.material_key },
-            ]},
-            MeshLODDesc { lod_index: 1, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body_low".to_string()), material: res.material_key },
-            ]},
+        geometry: res.geo_key,
+        geometry_mesh: GeometryMeshRef::Name("object".to_string()),
+        submeshes: vec![
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: res.material_key },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: res.material_key },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: res.material_key },
         ],
     }).unwrap()
 }
@@ -139,9 +152,10 @@ fn create_non_indexed_resources() -> (TestResources, MeshKey) {
         vertex_layout: create_vertex_layout(), index_type: IndexType::U16,
         meshes: vec![GeometryMeshDesc {
             name: "simple".to_string(),
-            lods: vec![GeometryLODDesc { lod_index: 0, submeshes: vec![
-                GeometrySubMeshDesc { name: "main".to_string(), vertex_offset: 0, vertex_count: 6, index_offset: 0, index_count: 0, topology: PrimitiveTopology::TriangleList },
-            ]}],
+            submeshes: vec![GeometrySubMeshDesc {
+                name: "main".to_string(),
+                lods: vec![lod(0, 6, 0, 0)],
+            }],
         }],
     }).unwrap();
 
@@ -155,8 +169,12 @@ fn create_non_indexed_resources() -> (TestResources, MeshKey) {
     }, &*gd.lock().unwrap()).unwrap();
 
     let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
-        geometry: geo_key, geometry_mesh: GeometryMeshRef::Name("simple".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("main".to_string()), material: mk }] }],
+        geometry: geo_key,
+        geometry_mesh: GeometryMeshRef::Name("simple".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Name("main".to_string()),
+            material: mk,
+        }],
     }).unwrap();
 
     (TestResources { rm, gd, geo_key, pipeline_key: pk, vertex_shader_key: vk, fragment_shader_key: fk, material_key: mk }, mesh_key)
@@ -236,23 +254,15 @@ fn test_from_mesh_basic() {
 }
 
 #[test]
-fn test_from_mesh_lod_count() {
+fn test_from_mesh_submesh_count() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
-    assert_eq!(instance.lod_count(), 2);
-    assert!(instance.lod(0).is_some());
-    assert!(instance.lod(1).is_some());
-    assert!(instance.lod(2).is_none());
-}
-
-#[test]
-fn test_from_mesh_submesh_count_per_lod() {
-    let mut res = create_test_resources();
-    let mk = create_simple_mesh_key(&mut res);
-    let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
-    assert_eq!(instance.lod(0).unwrap().sub_mesh_count(), 2);
-    assert_eq!(instance.lod(1).unwrap().sub_mesh_count(), 1);
+    assert_eq!(instance.sub_mesh_count(), 3);
+    assert!(instance.sub_mesh(0).is_some());
+    assert!(instance.sub_mesh(1).is_some());
+    assert!(instance.sub_mesh(2).is_some());
+    assert!(instance.sub_mesh(3).is_none());
 }
 
 #[test]
@@ -261,24 +271,32 @@ fn test_from_mesh_extracts_geometry_data() {
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
 
-    let sm0 = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm0.vertex_offset(), 0);
-    assert_eq!(sm0.vertex_count(), 4);
-    assert_eq!(sm0.index_offset(), 0);
-    assert_eq!(sm0.index_count(), 6);
-    assert_eq!(sm0.topology(), PrimitiveTopology::TriangleList);
+    // Geometry data is now read from the Geometry, not from RenderSubMesh.
+    // LOD 0 is queried via geo.submesh_lod(mesh_id, submesh_id, 0).
+    let geo = res.rm.geometry(instance.geometry()).unwrap();
+    let mesh_id = instance.geometry_mesh_id();
 
-    let sm1 = instance.lod(0).unwrap().sub_mesh(1).unwrap();
-    assert_eq!(sm1.vertex_offset(), 4);
-    assert_eq!(sm1.vertex_count(), 4);
-    assert_eq!(sm1.index_offset(), 6);
-    assert_eq!(sm1.index_count(), 6);
+    let sm0 = instance.sub_mesh(0).unwrap();
+    let geo_sm0 = geo.submesh_lod(mesh_id, sm0.geometry_submesh_id(), 0).unwrap();
+    assert_eq!(geo_sm0.vertex_offset(), 0);
+    assert_eq!(geo_sm0.vertex_count(), 4);
+    assert_eq!(geo_sm0.index_offset(), 0);
+    assert_eq!(geo_sm0.index_count(), 6);
+    assert_eq!(geo_sm0.topology(), PrimitiveTopology::TriangleList);
 
-    let sm_low = instance.lod(1).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm_low.vertex_offset(), 8);
-    assert_eq!(sm_low.vertex_count(), 3);
-    assert_eq!(sm_low.index_offset(), 12);
-    assert_eq!(sm_low.index_count(), 3);
+    let sm1 = instance.sub_mesh(1).unwrap();
+    let geo_sm1 = geo.submesh_lod(mesh_id, sm1.geometry_submesh_id(), 0).unwrap();
+    assert_eq!(geo_sm1.vertex_offset(), 4);
+    assert_eq!(geo_sm1.vertex_count(), 4);
+    assert_eq!(geo_sm1.index_offset(), 6);
+    assert_eq!(geo_sm1.index_count(), 6);
+
+    let sm2 = instance.sub_mesh(2).unwrap();
+    let geo_sm2 = geo.submesh_lod(mesh_id, sm2.geometry_submesh_id(), 0).unwrap();
+    assert_eq!(geo_sm2.vertex_offset(), 8);
+    assert_eq!(geo_sm2.vertex_count(), 3);
+    assert_eq!(geo_sm2.index_offset(), 12);
+    assert_eq!(geo_sm2.index_count(), 3);
 }
 
 #[test]
@@ -287,7 +305,7 @@ fn test_from_mesh_stores_material_key() {
     let mat_key = res.material_key;
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
-    let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
+    let sm = instance.sub_mesh(0).unwrap();
     assert_eq!(sm.material(), mat_key);
 }
 
@@ -296,7 +314,7 @@ fn test_from_mesh_material_pipeline_structure() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
-    let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
+    let sm = instance.sub_mesh(0).unwrap();
     let material = res.rm.material(sm.material()).unwrap();
     assert_eq!(material.pass(0).unwrap().fragment_shader(), res.fragment_shader_key);
 }
@@ -312,13 +330,16 @@ fn test_from_mesh_material_with_texture() {
         vertex_layout: create_vertex_layout(), index_type: IndexType::U16,
         meshes: vec![GeometryMeshDesc {
             name: "object".to_string(),
-            lods: vec![GeometryLODDesc { lod_index: 0, submeshes: vec![
-                GeometrySubMeshDesc { name: "body".to_string(), vertex_offset: 0, vertex_count: 4, index_offset: 0, index_count: 6, topology: PrimitiveTopology::TriangleList },
-                GeometrySubMeshDesc { name: "head".to_string(), vertex_offset: 4, vertex_count: 4, index_offset: 6, index_count: 6, topology: PrimitiveTopology::TriangleList },
-            ]},
-            GeometryLODDesc { lod_index: 1, submeshes: vec![
-                GeometrySubMeshDesc { name: "body_low".to_string(), vertex_offset: 8, vertex_count: 3, index_offset: 12, index_count: 3, topology: PrimitiveTopology::TriangleList },
-            ]}],
+            submeshes: vec![
+                GeometrySubMeshDesc {
+                    name: "body".to_string(),
+                    lods: vec![lod(0, 4, 0, 6)],
+                },
+                GeometrySubMeshDesc {
+                    name: "head".to_string(),
+                    lods: vec![lod(4, 4, 6, 6)],
+                },
+            ],
         }],
     }).unwrap();
 
@@ -346,32 +367,32 @@ fn test_from_mesh_material_with_texture() {
     }, &*gd.lock().unwrap()).unwrap();
 
     let mesh_key = rm.create_mesh("mesh".to_string(), MeshDesc {
-        geometry: geo_key, geometry_mesh: GeometryMeshRef::Name("object".to_string()),
-        lods: vec![
-            MeshLODDesc { lod_index: 0, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: mk },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: mk },
-            ]},
-            MeshLODDesc { lod_index: 1, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body_low".to_string()), material: mk },
-            ]},
+        geometry: geo_key,
+        geometry_mesh: GeometryMeshRef::Name("object".to_string()),
+        submeshes: vec![
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: mk },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: mk },
         ],
     }).unwrap();
 
     let instance = create_test_render_instance(mesh_key, Mat4::IDENTITY, create_test_aabb(), vk, &rm).unwrap();
-    let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
+    let sm = instance.sub_mesh(0).unwrap();
     assert_eq!(sm.material(), mk);
     assert_eq!(rm.material(sm.material()).unwrap().total_texture_slot_count(), 1);
+    let _ = pk;
 }
 
 #[test]
 fn test_from_mesh_non_indexed_geometry() {
     let (res, mesh_key) = create_non_indexed_resources();
     let instance = create_test_render_instance(mesh_key, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
-    assert!(instance.index_buffer().is_none());
-    let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.vertex_count(), 6);
-    assert_eq!(sm.index_count(), 0);
+    let geo = res.rm.geometry(instance.geometry()).unwrap();
+    assert!(geo.index_buffer().is_none());
+
+    let sm = instance.sub_mesh(0).unwrap();
+    let geo_sm = geo.submesh_lod(instance.geometry_mesh_id(), sm.geometry_submesh_id(), 0).unwrap();
+    assert_eq!(geo_sm.vertex_count(), 6);
+    assert_eq!(geo_sm.index_count(), 0);
 }
 
 #[test]
@@ -379,7 +400,8 @@ fn test_from_mesh_indexed_geometry_has_buffers() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
-    assert!(instance.index_buffer().is_some());
+    let geo = res.rm.geometry(instance.geometry()).unwrap();
+    assert!(geo.index_buffer().is_some());
 }
 
 #[test]
@@ -453,18 +475,18 @@ fn test_set_visible_preserves_other_flags() {
 }
 
 // ============================================================================
-// Tests: RenderLOD Accessors
+// Tests: RenderInstance SubMesh Access
 // ============================================================================
 
 #[test]
-fn test_render_lod_sub_mesh_access() {
+fn test_render_instance_sub_mesh_access() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
-    let lod = instance.lod(0).unwrap();
-    assert!(lod.sub_mesh(0).is_some());
-    assert!(lod.sub_mesh(1).is_some());
-    assert!(lod.sub_mesh(2).is_none());
+    assert!(instance.sub_mesh(0).is_some());
+    assert!(instance.sub_mesh(1).is_some());
+    assert!(instance.sub_mesh(2).is_some());
+    assert!(instance.sub_mesh(3).is_none());
 }
 
 // ============================================================================
@@ -476,13 +498,18 @@ fn test_render_submesh_all_accessors() {
     let mut res = create_test_resources();
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
-    let sm = instance.lod(0).unwrap().sub_mesh(0).unwrap();
-    assert_eq!(sm.vertex_offset(), 0);
-    assert_eq!(sm.vertex_count(), 4);
-    assert_eq!(sm.index_offset(), 0);
-    assert_eq!(sm.index_count(), 6);
-    assert_eq!(sm.topology(), PrimitiveTopology::TriangleList);
+    let sm = instance.sub_mesh(0).unwrap();
     assert_eq!(sm.material(), res.material_key);
+    assert_eq!(sm.geometry_submesh_id(), 0);
+
+    // Geometry data is read from the Geometry, not the RenderSubMesh
+    let geo = res.rm.geometry(instance.geometry()).unwrap();
+    let geo_sm = geo.submesh_lod(instance.geometry_mesh_id(), sm.geometry_submesh_id(), 0).unwrap();
+    assert_eq!(geo_sm.vertex_offset(), 0);
+    assert_eq!(geo_sm.vertex_count(), 4);
+    assert_eq!(geo_sm.index_offset(), 0);
+    assert_eq!(geo_sm.index_count(), 6);
+    assert_eq!(geo_sm.topology(), PrimitiveTopology::TriangleList);
 }
 
 // ============================================================================
@@ -509,9 +536,9 @@ fn test_draw_slot_allocation() {
     let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
     assert_eq!(alloc.len(), 3);
     assert_eq!(alloc.high_water_mark(), 3);
-    let slot0 = instance.lod(0).unwrap().sub_mesh(0).unwrap().draw_slot();
-    let slot1 = instance.lod(0).unwrap().sub_mesh(1).unwrap().draw_slot();
-    let slot2 = instance.lod(1).unwrap().sub_mesh(0).unwrap().draw_slot();
+    let slot0 = instance.sub_mesh(0).unwrap().draw_slot();
+    let slot1 = instance.sub_mesh(1).unwrap().draw_slot();
+    let slot2 = instance.sub_mesh(2).unwrap().draw_slot();
     assert_ne!(slot0, slot1);
     assert_ne!(slot0, slot2);
     assert_ne!(slot1, slot2);
@@ -524,9 +551,9 @@ fn test_draw_slot_sequential_allocation() {
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
     let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
-    assert_eq!(instance.lod(0).unwrap().sub_mesh(0).unwrap().draw_slot(), 0);
-    assert_eq!(instance.lod(0).unwrap().sub_mesh(1).unwrap().draw_slot(), 1);
-    assert_eq!(instance.lod(1).unwrap().sub_mesh(0).unwrap().draw_slot(), 2);
+    assert_eq!(instance.sub_mesh(0).unwrap().draw_slot(), 0);
+    assert_eq!(instance.sub_mesh(1).unwrap().draw_slot(), 1);
+    assert_eq!(instance.sub_mesh(2).unwrap().draw_slot(), 2);
 }
 
 #[test]
@@ -538,8 +565,8 @@ fn test_draw_slot_shared_allocator() {
     let inst1 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
     let inst2 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
     assert_eq!(alloc.len(), 6);
-    assert_eq!(inst1.lod(0).unwrap().sub_mesh(0).unwrap().draw_slot(), 0);
-    assert_eq!(inst2.lod(0).unwrap().sub_mesh(0).unwrap().draw_slot(), 3);
+    assert_eq!(inst1.sub_mesh(0).unwrap().draw_slot(), 0);
+    assert_eq!(inst2.sub_mesh(0).unwrap().draw_slot(), 3);
 }
 
 #[test]

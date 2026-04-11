@@ -279,7 +279,7 @@ impl OctreeSceneIndex {
                     if let Some((_, _, world_aabb)) = self.object_locations.get(&key) {
                         if frustum.intersects_aabb(world_aabb) {
                             let view_depth = (inst_pos - camera_pos).dot(camera_forward);
-                            results.push_with_depth(key, view_depth);
+                            results.push(key, view_depth);
                         }
                     }
                 }
@@ -319,7 +319,7 @@ impl OctreeSceneIndex {
         let node = &self.nodes[node_idx];
         for &(key, inst_pos) in &node.objects {
             let view_depth = (inst_pos - camera_pos).dot(camera_forward);
-            results.push_with_depth(key, view_depth);
+            results.push(key, view_depth);
         }
 
         if depth < self.max_depth {

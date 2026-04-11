@@ -1,16 +1,19 @@
 /// Resource-level mesh type.
 ///
 /// A Mesh is a renderable combination of geometry and materials.
-/// It associates a GeometryMesh from a Geometry resource with Materials
-/// for each submesh at each LOD level.
+/// It associates a GeometryMesh from a Geometry resource with a Material
+/// for each of its submeshes.
 ///
 /// Architecture:
-/// - References a specific GeometryMesh within a Geometry (by key)
-/// - Each LOD has material assignments (by key) for every submesh
-/// - No pipeline stored at Mesh level: each Material has its own Pipeline reference
-/// - SubMesh entries are ordered to match GeometryLOD submesh order (O(1) access)
+/// - References a specific GeometryMesh within a Geometry (by key + id)
+/// - One Material per submesh — all LOD variants of a given submesh share
+///   the same Material
+/// - LOD selection is geometric (handled by the GeometrySubMesh) and
+///   independent of the material
+/// - SubMesh entries are ordered to match the parent GeometryMesh submesh
+///   order (O(1) access)
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use crate::error::Result;
 use crate::{engine_bail, engine_err};
 use crate::resource::resource_manager::{ResourceManager, GeometryKey, MaterialKey};
@@ -35,37 +38,32 @@ pub enum GeometrySubMeshRef {
     Name(String),
 }
 
-// ===== SUBMESH =====
+// ===== MESH SUBMESH =====
 
-/// A submesh with its assigned material (resolved)
+/// A submesh with its assigned material (resolved).
 ///
-/// After creation, the submesh reference is resolved to a usize id.
-/// Entries are ordered to match the GeometryLOD submesh order.
-pub struct SubMesh {
+/// Maps a GeometrySubMesh (by id) to a Material. All LOD variants of the
+/// referenced GeometrySubMesh share this Material.
+///
+/// Entries in `Mesh::submeshes` are ordered to match the parent GeometryMesh
+/// submesh order.
+pub struct MeshSubMesh {
     submesh_id: usize,
     material: MaterialKey,
 }
 
-// ===== MESH LOD =====
-
-/// Material assignments for a specific LOD level (resolved)
-///
-/// Submeshes are ordered to match the corresponding GeometryLOD:
-/// `submeshes[i]` is the material for `geometry_lod.submesh(i)`.
-pub struct MeshLOD {
-    submeshes: Vec<SubMesh>,
-}
-
 // ===== MESH =====
 
-/// A renderable mesh: geometry + materials per submesh per LOD
+/// A renderable mesh: geometry + a material per submesh.
 ///
-/// Pure data resource. References a Geometry (by key, for shape) and Materials
-/// (by key, for appearance) at each submesh of each LOD level.
+/// Pure data resource. References a Geometry (by key, for shape) and a
+/// Material (by key, for appearance) for each submesh of the referenced
+/// GeometryMesh. The geometric LODs are owned by the Geometry — the Mesh
+/// does not store any LOD information.
 pub struct Mesh {
     geometry: GeometryKey,
     geometry_mesh_id: usize,
-    lods: Vec<MeshLOD>,
+    submeshes: Vec<MeshSubMesh>,
 }
 
 // ===== DESCRIPTORS =====
@@ -74,17 +72,11 @@ pub struct Mesh {
 pub struct MeshDesc {
     pub geometry: GeometryKey,
     pub geometry_mesh: GeometryMeshRef,
-    pub lods: Vec<MeshLODDesc>,
-}
-
-/// LOD descriptor for mesh creation
-pub struct MeshLODDesc {
-    pub lod_index: usize,
-    pub submeshes: Vec<SubMeshDesc>,
+    pub submeshes: Vec<MeshSubMeshDesc>,
 }
 
 /// SubMesh descriptor (user-facing, accepts names or indices)
-pub struct SubMeshDesc {
+pub struct MeshSubMeshDesc {
     pub submesh: GeometrySubMeshRef,
     pub material: MaterialKey,
 }
@@ -92,12 +84,12 @@ pub struct SubMeshDesc {
 // ===== MESH IMPLEMENTATION =====
 
 impl Mesh {
-    /// Create mesh from descriptor (internal use by ResourceManager)
+    /// Create mesh from descriptor (internal use by ResourceManager).
     ///
-    /// Resolves GeometryKey via the ResourceManager to validate LODs and submeshes.
-    /// Stores only keys.
+    /// Resolves the GeometryKey via the ResourceManager to validate the
+    /// referenced GeometryMesh and its submeshes. Stores only keys.
     pub(crate) fn from_desc(desc: MeshDesc, resource_manager: &ResourceManager) -> Result<Self> {
-        let MeshDesc { geometry, geometry_mesh, lods } = desc;
+        let MeshDesc { geometry, geometry_mesh, submeshes } = desc;
 
         // ========== RESOLVE GEOMETRY ==========
         let geometry_arc = resource_manager.geometry(geometry)
@@ -121,103 +113,60 @@ impl Mesh {
         };
 
         let geom_mesh = geometry_arc.mesh(geometry_mesh_id).unwrap();
-        let geom_lod_count = geom_mesh.lod_count();
+        let geom_submesh_count = geom_mesh.submesh_count();
 
-        // ========== VALIDATE LOD INDICES ==========
+        // ========== RESOLVE SUBMESHES ==========
 
-        // No duplicate lod_index
-        let mut seen_lod_indices = FxHashSet::default();
-        for lod_desc in &lods {
-            if !seen_lod_indices.insert(lod_desc.lod_index) {
-                engine_bail!("galaxy3d::Mesh",
-                    "Duplicate lod_index {}", lod_desc.lod_index);
-            }
-        }
+        // Resolve all submesh refs into a map: submesh_id → material key
+        let mut submesh_map: FxHashMap<usize, MaterialKey> = FxHashMap::default();
 
-        // Each lod_index must exist in GeometryMesh
-        for lod_desc in &lods {
-            if geom_mesh.lod(lod_desc.lod_index).is_none() {
-                engine_bail!("galaxy3d::Mesh",
-                    "LOD index {} does not exist in GeometryMesh", lod_desc.lod_index);
-            }
-        }
-
-        // Complete LOD coverage
-        if lods.len() != geom_lod_count {
-            engine_bail!("galaxy3d::Mesh",
-                "Incomplete LOD coverage: got {} LOD(s), GeometryMesh has {}",
-                lods.len(), geom_lod_count);
-        }
-
-        // ========== BUILD MESH LODs ==========
-
-        // Sort LOD descs by lod_index to match GeometryMesh order
-        let mut sorted_lods: Vec<_> = lods.into_iter().collect();
-        sorted_lods.sort_by_key(|d| d.lod_index);
-
-        let mut result_lods = Vec::with_capacity(geom_lod_count);
-
-        for lod_desc in sorted_lods {
-            let geom_lod = geom_mesh.lod(lod_desc.lod_index).unwrap();
-            let geom_submesh_count = geom_lod.submesh_count();
-
-            // Resolve all submesh refs into a map: submesh_id → material key
-            let mut submesh_map: FxHashMap<usize, MaterialKey> = FxHashMap::default();
-
-            for submesh_desc in lod_desc.submeshes {
-                let submesh_id = match &submesh_desc.submesh {
-                    GeometrySubMeshRef::Index(i) => {
-                        if geom_lod.submesh(*i).is_none() {
-                            engine_bail!("galaxy3d::Mesh",
-                                "LOD {}: GeometrySubMesh index {} does not exist",
-                                lod_desc.lod_index, i);
-                        }
-                        *i
+        for submesh_desc in submeshes {
+            let submesh_id = match &submesh_desc.submesh {
+                GeometrySubMeshRef::Index(i) => {
+                    if geom_mesh.submesh(*i).is_none() {
+                        engine_bail!("galaxy3d::Mesh",
+                            "GeometrySubMesh index {} does not exist", i);
                     }
-                    GeometrySubMeshRef::Name(name) => {
-                        geom_lod.submesh_id(name)
-                            .ok_or_else(|| engine_err!("galaxy3d::Mesh",
-                                "LOD {}: GeometrySubMesh '{}' not found",
-                                lod_desc.lod_index, name))?
-                    }
-                };
-
-                if submesh_map.contains_key(&submesh_id) {
-                    engine_bail!("galaxy3d::Mesh",
-                        "LOD {}: duplicate submesh assignment (resolved id {})",
-                        lod_desc.lod_index, submesh_id);
+                    *i
                 }
+                GeometrySubMeshRef::Name(name) => {
+                    geom_mesh.submesh_id(name)
+                        .ok_or_else(|| engine_err!("galaxy3d::Mesh",
+                            "GeometrySubMesh '{}' not found", name))?
+                }
+            };
 
-                submesh_map.insert(submesh_id, submesh_desc.material);
-            }
-
-            // Complete submesh coverage
-            if submesh_map.len() != geom_submesh_count {
+            if submesh_map.contains_key(&submesh_id) {
                 engine_bail!("galaxy3d::Mesh",
-                    "LOD {}: incomplete submesh coverage: got {}, GeometryLOD has {}",
-                    lod_desc.lod_index, submesh_map.len(), geom_submesh_count);
+                    "Duplicate submesh assignment (resolved id {})", submesh_id);
             }
 
-            // Build SubMesh vec in order matching GeometryLOD
-            let mut submeshes = Vec::with_capacity(geom_submesh_count);
-            for id in 0..geom_submesh_count {
-                let material = submesh_map.remove(&id)
-                    .ok_or_else(|| engine_err!("galaxy3d::Mesh",
-                        "LOD {}: submesh id {} has no material assigned",
-                        lod_desc.lod_index, id))?;
-                submeshes.push(SubMesh {
-                    submesh_id: id,
-                    material,
-                });
-            }
+            submesh_map.insert(submesh_id, submesh_desc.material);
+        }
 
-            result_lods.push(MeshLOD { submeshes });
+        // Complete submesh coverage
+        if submesh_map.len() != geom_submesh_count {
+            engine_bail!("galaxy3d::Mesh",
+                "Incomplete submesh coverage: got {}, GeometryMesh has {}",
+                submesh_map.len(), geom_submesh_count);
+        }
+
+        // Build SubMesh vec in order matching GeometryMesh
+        let mut result_submeshes = Vec::with_capacity(geom_submesh_count);
+        for id in 0..geom_submesh_count {
+            let material = submesh_map.remove(&id)
+                .ok_or_else(|| engine_err!("galaxy3d::Mesh",
+                    "Submesh id {} has no material assigned", id))?;
+            result_submeshes.push(MeshSubMesh {
+                submesh_id: id,
+                material,
+            });
         }
 
         Ok(Self {
             geometry,
             geometry_mesh_id,
-            lods: result_lods,
+            submeshes: result_submeshes,
         })
     }
 
@@ -233,22 +182,8 @@ impl Mesh {
         self.geometry_mesh_id
     }
 
-    /// Get a MeshLOD by index
-    pub fn lod(&self, index: usize) -> Option<&MeshLOD> {
-        self.lods.get(index)
-    }
-
-    /// Get the number of LOD levels
-    pub fn lod_count(&self) -> usize {
-        self.lods.len()
-    }
-}
-
-// ===== MESH LOD ACCESSORS =====
-
-impl MeshLOD {
-    /// Get a SubMesh by id (matches GeometryLOD submesh order)
-    pub fn submesh(&self, id: usize) -> Option<&SubMesh> {
+    /// Get a MeshSubMesh by id (matches the parent GeometryMesh submesh order)
+    pub fn submesh(&self, id: usize) -> Option<&MeshSubMesh> {
         self.submeshes.get(id)
     }
 
@@ -258,9 +193,9 @@ impl MeshLOD {
     }
 }
 
-// ===== SUBMESH ACCESSORS =====
+// ===== MESH SUBMESH ACCESSORS =====
 
-impl SubMesh {
+impl MeshSubMesh {
     /// Get the resolved GeometrySubMesh id
     pub fn submesh_id(&self) -> usize {
         self.submesh_id
@@ -276,9 +211,8 @@ impl SubMesh {
 
 /// Build a MeshDesc by mapping submesh names to materials.
 ///
-/// Iterates all LODs of the GeometryMesh and assigns materials
-/// based on submesh names. All submeshes across all LODs with
-/// the same name get the same material.
+/// Iterates the submeshes of the referenced GeometryMesh and assigns
+/// materials based on names.
 ///
 /// # Errors
 ///
@@ -296,7 +230,7 @@ pub fn mesh_desc_from_name_mapping(
         .ok_or_else(|| engine_err!("galaxy3d::Mesh",
             "mesh_desc_from_name_mapping: Geometry key not found in ResourceManager"))?;
 
-    // Resolve GeometryMeshRef to iterate LODs
+    // Resolve GeometryMeshRef
     let mesh_id = match &geometry_mesh {
         GeometryMeshRef::Index(i) => {
             if geometry_arc.mesh(*i).is_none() {
@@ -313,35 +247,24 @@ pub fn mesh_desc_from_name_mapping(
     };
 
     let geom_mesh = geometry_arc.mesh(mesh_id).unwrap();
-    let mut lods = Vec::with_capacity(geom_mesh.lod_count());
+    let names = geom_mesh.submesh_names();
+    let mut submeshes = Vec::with_capacity(names.len());
 
-    for lod_index in 0..geom_mesh.lod_count() {
-        let geom_lod = geom_mesh.lod(lod_index).unwrap();
-        let names = geom_lod.submesh_names();
-        let mut submeshes = Vec::with_capacity(names.len());
+    for name in names {
+        let material = name_to_material.get(name)
+            .ok_or_else(|| engine_err!("galaxy3d::Mesh",
+                "mesh_desc_from_name_mapping: no material for submesh '{}'", name))?;
 
-        for name in names {
-            let material = name_to_material.get(name)
-                .ok_or_else(|| engine_err!("galaxy3d::Mesh",
-                    "mesh_desc_from_name_mapping: LOD {}: no material for submesh '{}'",
-                    lod_index, name))?;
-
-            submeshes.push(SubMeshDesc {
-                submesh: GeometrySubMeshRef::Name(name.to_string()),
-                material: *material,
-            });
-        }
-
-        lods.push(MeshLODDesc {
-            lod_index,
-            submeshes,
+        submeshes.push(MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Name(name.to_string()),
+            material: *material,
         });
     }
 
     Ok(MeshDesc {
         geometry,
         geometry_mesh: GeometryMeshRef::Index(mesh_id),
-        lods,
+        submeshes,
     })
 }
 

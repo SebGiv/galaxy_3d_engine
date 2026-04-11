@@ -6,7 +6,8 @@ use super::*;
 use crate::graphics_device::{self, PolygonMode};
 use crate::resource::{
     AtlasRegion, AtlasRegionDesc, LayerDesc,
-    MeshLODDesc, SubMeshDesc, GeometryMeshRef, GeometrySubMeshRef,
+    MeshSubMeshDesc, GeometryMeshRef, GeometrySubMeshRef,
+    GeometrySubMeshDesc, GeometrySubMeshLODDesc,
     BufferKind, FieldDesc,
     MaterialPassDesc, MaterialTextureSlotDesc, LayerRef,
     ShaderDesc,
@@ -110,10 +111,9 @@ fn create_test_geometry_desc(
         index_type: graphics_device::IndexType::U16,
         meshes: vec![GeometryMeshDesc {
             name: name.to_string(),
-            lods: vec![GeometryLODDesc {
-                lod_index: 0,
-                submeshes: vec![GeometrySubMeshDesc {
-                    name: "default".to_string(),
+            submeshes: vec![GeometrySubMeshDesc {
+                name: "default".to_string(),
+                lods: vec![GeometrySubMeshLODDesc {
                     vertex_offset: 0,
                     vertex_count: 4,
                     index_offset: 0,
@@ -194,8 +194,7 @@ fn create_test_material_desc(fragment_shader: ShaderKey) -> MaterialDesc {
 
 /// Create a simple mesh descriptor for testing
 ///
-/// Requires a geometry with at least one mesh (index 0) with one LOD (index 0)
-/// and one submesh (index 0).
+/// Requires a geometry with at least one mesh (index 0) with one submesh (index 0).
 fn create_test_mesh_desc(
     geometry_key: GeometryKey,
     material_key: MaterialKey,
@@ -203,12 +202,9 @@ fn create_test_mesh_desc(
     MeshDesc {
         geometry: geometry_key,
         geometry_mesh: GeometryMeshRef::Index(0),
-        lods: vec![MeshLODDesc {
-            lod_index: 0,
-            submeshes: vec![SubMeshDesc {
-                submesh: GeometrySubMeshRef::Index(0),
-                material: material_key,
-            }],
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Index(0),
+            material: material_key,
         }],
     }
 }
@@ -226,7 +222,7 @@ fn create_mesh_prerequisites(
 
     let (vk, fk) = create_test_shaders(rm, graphics_device);
     let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline_key = rm.create_pipeline(format!("pipe_{}", suffix), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline_key = rm.create_pipeline(format!("pipe_{}", suffix), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = create_test_material_desc(fk);
     let material_key = rm.create_material(format!("mat_{}", suffix), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
@@ -598,7 +594,7 @@ fn test_create_material() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = create_test_material_desc(fk);
     let mat_key = rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
@@ -614,7 +610,7 @@ fn test_get_material() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = create_test_material_desc(fk);
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
@@ -636,7 +632,7 @@ fn test_remove_material() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = create_test_material_desc(fk);
     rm.create_material("body".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
@@ -661,7 +657,7 @@ fn test_duplicate_material_fails() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc1 = create_test_material_desc(fk);
     rm.create_material("body".to_string(), mat_desc1, &*graphics_device.lock().unwrap()).unwrap();
@@ -679,7 +675,7 @@ fn test_material_count() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_count(), 0);
 
@@ -713,7 +709,7 @@ fn test_create_mesh() {
     let mesh_key = rm.create_mesh("hero".to_string(), mesh_desc).unwrap();
 
     assert_eq!(rm.mesh_count(), 1);
-    assert_eq!(rm.mesh(mesh_key).unwrap().lod_count(), 1);
+    assert_eq!(rm.mesh(mesh_key).unwrap().submesh_count(), 1);
 }
 
 #[test]
@@ -818,7 +814,7 @@ fn test_mixed_resources() {
 
     rm.create_texture("texture".to_string(), texture_desc).unwrap();
     let geometry_key = rm.create_geometry("geom".to_string(), geom_desc).unwrap();
-    let pipeline_key = rm.create_pipeline("pipeline".to_string(), pipeline_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline_key = rm.create_pipeline("pipeline".to_string(), pipeline_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = create_test_material_desc(fk);
     let material_key = rm.create_material("material".to_string(), mat_desc, &*graphics_device.lock().unwrap()).unwrap();
@@ -860,7 +856,7 @@ fn test_clear_all_resources() {
 
     // Create materials and meshes (need keys to existing resources)
     for i in 0..3 {
-        let pipeline_key = rm.pipeline_key(&format!("pipeline{}", i)).unwrap();
+        let _pipeline_key = rm.pipeline_key(&format!("pipeline{}", i)).unwrap();
         let geometry_key = rm.geometry_key(&format!("geom{}", i)).unwrap();
 
         let mat_desc = create_test_material_desc(fk);
@@ -1106,19 +1102,16 @@ fn test_add_geometry_mesh_to_existing_geometry() {
     // Add a mesh
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
-        lods: vec![
-            GeometryLODDesc {
-                lod_index: 0,
-                submeshes: vec![
-                    GeometrySubMeshDesc {
-                        name: "body".to_string(),
-                        vertex_offset: 0,
-                        vertex_count: 4,
-                        index_offset: 0,
-                        index_count: 6,
-                        topology: graphics_device::PrimitiveTopology::TriangleList,
-                    }
-                ],
+        submeshes: vec![
+            GeometrySubMeshDesc {
+                name: "body".to_string(),
+                lods: vec![GeometrySubMeshLODDesc {
+                    vertex_offset: 0,
+                    vertex_count: 4,
+                    index_offset: 0,
+                    index_count: 6,
+                    topology: graphics_device::PrimitiveTopology::TriangleList,
+                }],
             }
         ],
     };
@@ -1137,7 +1130,7 @@ fn test_add_geometry_mesh_to_nonexistent_geometry() {
 
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
-        lods: vec![],
+        submeshes: vec![],
     };
 
     let result = rm.add_geometry_mesh(GeometryKey::default(), mesh_desc);
@@ -1145,11 +1138,11 @@ fn test_add_geometry_mesh_to_nonexistent_geometry() {
 }
 
 #[test]
-fn test_add_geometry_lod() {
+fn test_add_geometry_submesh_lod() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    // Create a geometry with one mesh
+    // Create a geometry with one mesh containing one submesh with one LOD
     let desc = GeometryDesc {
         name: "geom".to_string(),
         graphics_device: graphics_device.clone(),
@@ -1172,19 +1165,16 @@ fn test_add_geometry_lod() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 4,
-                                index_offset: 0,
-                                index_count: 6,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
-                        ],
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "body".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 0,
+                            vertex_count: 4,
+                            index_offset: 0,
+                            index_count: 6,
+                            topology: graphics_device::PrimitiveTopology::TriangleList,
+                        }],
                     }
                 ],
             }
@@ -1193,40 +1183,38 @@ fn test_add_geometry_lod() {
 
     let geom_key = rm.create_geometry("geom".to_string(), desc).unwrap();
 
-    // Add a LOD to the mesh
-    let lod = GeometryLODDesc {
-        lod_index: 1,
-        submeshes: vec![
-            GeometrySubMeshDesc {
-                name: "body_lod1".to_string(),
-                vertex_offset: 4,
-                vertex_count: 4,
-                index_offset: 6,
-                index_count: 6,
-                topology: graphics_device::PrimitiveTopology::TriangleList,
-            }
-        ],
+    // Add a new LOD variant to the existing submesh (mesh 0, submesh 0)
+    let lod = GeometrySubMeshLODDesc {
+        vertex_offset: 4,
+        vertex_count: 4,
+        index_offset: 6,
+        index_count: 6,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
-    let result = rm.add_geometry_lod(geom_key, 0, lod);
+    let result = rm.add_geometry_submesh_lod(geom_key, 0, 0, lod);
     assert!(result.is_ok());
 
     // Verify LOD was added
     let geom = rm.geometry_by_name("geom").unwrap();
     let mesh = geom.mesh(0).unwrap();
-    assert_eq!(mesh.lod_count(), 2);
+    let submesh = mesh.submesh(0).unwrap();
+    assert_eq!(submesh.lod_count(), 2);
 }
 
 #[test]
-fn test_add_geometry_lod_to_nonexistent_geometry() {
+fn test_add_geometry_submesh_lod_to_nonexistent_geometry() {
     let mut rm = ResourceManager::new();
 
-    let lod = GeometryLODDesc {
-        lod_index: 0,
-        submeshes: vec![],
+    let lod = GeometrySubMeshLODDesc {
+        vertex_offset: 0,
+        vertex_count: 0,
+        index_offset: 0,
+        index_count: 0,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
-    let result = rm.add_geometry_lod(GeometryKey::default(), 0, lod);
+    let result = rm.add_geometry_submesh_lod(GeometryKey::default(), 0, 0, lod);
     assert!(result.is_err());
 }
 
@@ -1235,7 +1223,7 @@ fn test_add_geometry_submesh() {
     let mut rm = ResourceManager::new();
     let graphics_device = create_mock_graphics_device();
 
-    // Create a geometry with one mesh and one LOD
+    // Create a geometry with one mesh containing one submesh
     let desc = GeometryDesc {
         name: "geom".to_string(),
         graphics_device: graphics_device.clone(),
@@ -1258,19 +1246,16 @@ fn test_add_geometry_submesh() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 4,
-                                index_offset: 0,
-                                index_count: 6,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
-                        ],
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "body".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 0,
+                            vertex_count: 4,
+                            index_offset: 0,
+                            index_count: 6,
+                            topology: graphics_device::PrimitiveTopology::TriangleList,
+                        }],
                     }
                 ],
             }
@@ -1279,24 +1264,25 @@ fn test_add_geometry_submesh() {
 
     let geom_key = rm.create_geometry("geom".to_string(), desc).unwrap();
 
-    // Add a submesh to the LOD
+    // Add a new submesh (with its own LOD chain) to the existing mesh
     let submesh = GeometrySubMeshDesc {
         name: "armor".to_string(),
-        vertex_offset: 4,
-        vertex_count: 4,
-        index_offset: 6,
-        index_count: 6,
-        topology: graphics_device::PrimitiveTopology::TriangleList,
+        lods: vec![GeometrySubMeshLODDesc {
+            vertex_offset: 4,
+            vertex_count: 4,
+            index_offset: 6,
+            index_count: 6,
+            topology: graphics_device::PrimitiveTopology::TriangleList,
+        }],
     };
 
-    let result = rm.add_geometry_submesh(geom_key, 0, 0, submesh);
+    let result = rm.add_geometry_submesh(geom_key, 0, submesh);
     assert!(result.is_ok());
 
     // Verify submesh was added
     let geom = rm.geometry_by_name("geom").unwrap();
     let mesh = geom.mesh(0).unwrap();
-    let lod = mesh.lod(0).unwrap();
-    assert_eq!(lod.submesh_count(), 2);
+    assert_eq!(mesh.submesh_count(), 2);
 }
 
 #[test]
@@ -1305,14 +1291,16 @@ fn test_add_geometry_submesh_to_nonexistent_geometry() {
 
     let submesh = GeometrySubMeshDesc {
         name: "submesh".to_string(),
-        vertex_offset: 0,
-        vertex_count: 4,
-        index_offset: 0,
-        index_count: 6,
-        topology: graphics_device::PrimitiveTopology::TriangleList,
+        lods: vec![GeometrySubMeshLODDesc {
+            vertex_offset: 0,
+            vertex_count: 4,
+            index_offset: 0,
+            index_count: 6,
+            topology: graphics_device::PrimitiveTopology::TriangleList,
+        }],
     };
 
-    let result = rm.add_geometry_submesh(GeometryKey::default(), 0, 0, submesh);
+    let result = rm.add_geometry_submesh(GeometryKey::default(), 0, submesh);
     assert!(result.is_err());
 }
 
@@ -1327,7 +1315,7 @@ fn test_material_slot_id_assigned() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
     let mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
@@ -1344,7 +1332,7 @@ fn test_material_slot_recycled_after_remove() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat0 = rm.create_material("mat0".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
     let _mat1 = rm.create_material("mat1".to_string(), create_test_material_desc(fk), &*graphics_device.lock().unwrap()).unwrap();
@@ -1365,7 +1353,7 @@ fn test_material_slot_high_water_mark() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     assert_eq!(rm.material_slot_high_water_mark(), 0);
     assert_eq!(rm.material_slot_count(), 0);
@@ -1397,7 +1385,7 @@ fn test_sync_materials_basic() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
         passes: vec![MaterialPassDesc {
@@ -1435,7 +1423,7 @@ fn test_sync_materials_type_mismatch_skips() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material has "roughness" as Float
     let mat_desc = MaterialDesc {
@@ -1474,7 +1462,7 @@ fn test_sync_materials_missing_field_skips() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material has "roughness" param
     let mat_desc = MaterialDesc {
@@ -1513,7 +1501,7 @@ fn test_sync_materials_bool_to_uint() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material has Bool param
     let mat_desc = MaterialDesc {
@@ -1551,7 +1539,7 @@ fn test_sync_materials_vec3_padding() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material has Vec3 param (12 bytes raw, needs padding to 16)
     let mat_desc = MaterialDesc {
@@ -1591,7 +1579,7 @@ fn test_sync_materials_slot_exceeds_buffer() {
     let graphics_device = create_mock_graphics_device();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Create 3 materials → slot ids 0, 1, 2
     for i in 0..3 {
@@ -1816,7 +1804,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
 
     // Pipeline + material with a texture slot targeting layer 2
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
         passes: vec![MaterialPassDesc {
@@ -1862,7 +1850,7 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     // Material with texture slot but NO layer (layer = None → writes 0)
     let mat_desc = MaterialDesc {
@@ -1907,7 +1895,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
         passes: vec![MaterialPassDesc {
@@ -1950,7 +1938,7 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
     let texture = rm.create_texture("tex".to_string(), tex_desc).unwrap();
 
     let (vk, fk) = create_test_shaders(&mut rm, &graphics_device); let pipe_desc = create_test_pipeline_desc(vk, fk);
-    let pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
+    let _pipeline = rm.create_pipeline("standard".to_string(), pipe_desc, &mut *graphics_device.lock().unwrap()).unwrap();
 
     let mat_desc = MaterialDesc {
         passes: vec![MaterialPassDesc {

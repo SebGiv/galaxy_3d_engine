@@ -8,23 +8,31 @@ use glam::Vec3;
 use crate::camera::{Camera, Frustum, RenderView};
 use super::scene::Scene;
 use super::scene_index::SceneIndex;
-use super::visible_instance_list::VisibleInstanceList;
 
 /// Strategy for determining visible instances from a camera.
 ///
-/// Called once per frame before drawing. The returned RenderView
-/// is ephemeral and consumed by a Drawer.
+/// Called once per frame before drawing. The caller owns the `RenderView` and
+/// passes it by mutable reference; the culler updates the camera snapshot and
+/// refills the visible instances buffer in place — no allocation in steady
+/// state.
 ///
 /// `&mut self` allows stateful implementations (e.g. caching)
 /// to maintain state across frames.
 pub trait CameraCuller: Send + Sync {
-    /// Cull the scene against the camera and return visible instances.
-    fn cull(
+    /// Cull the scene against the camera and write the result into `view`.
+    ///
+    /// The culler:
+    /// - calls `view.set_camera(camera.clone())` to snapshot the camera
+    /// - calls `view.visible_instances_mut().clear()` to reset the buffer
+    ///   (preserving capacity)
+    /// - pushes visible instances into the buffer
+    fn cull_into(
         &mut self,
         scene: &Scene,
         camera: &Camera,
         scene_index: Option<&dyn SceneIndex>,
-    ) -> RenderView;
+        view: &mut RenderView,
+    );
 }
 
 /// Extract the camera world-space position and forward direction from its
@@ -54,21 +62,23 @@ impl BruteForceCuller {
 }
 
 impl CameraCuller for BruteForceCuller {
-    fn cull(
+    fn cull_into(
         &mut self,
         scene: &Scene,
         camera: &Camera,
         _scene_index: Option<&dyn SceneIndex>,
-    ) -> RenderView {
-        let (camera_pos, camera_forward) = camera_pos_and_forward(camera);
+        view: &mut RenderView,
+    ) {
+        view.set_camera(camera.clone());
 
-        let mut visible = VisibleInstanceList::with_capacity(scene.render_instance_count());
+        let (camera_pos, camera_forward) = camera_pos_and_forward(camera);
+        let visible = view.visible_instances_mut();
+        visible.clear();
         for (key, instance) in scene.render_instances() {
             let inst_pos = instance.world_matrix().w_axis.truncate();
             let depth = (inst_pos - camera_pos).dot(camera_forward);
-            visible.push_with_depth(key, depth);
+            visible.push(key, depth);
         }
-        RenderView::new(camera.clone(), visible)
     }
 }
 
@@ -86,24 +96,28 @@ impl FrustumCuller {
 }
 
 impl CameraCuller for FrustumCuller {
-    fn cull(
+    fn cull_into(
         &mut self,
         scene: &Scene,
         camera: &Camera,
         scene_index: Option<&dyn SceneIndex>,
-    ) -> RenderView {
+        view: &mut RenderView,
+    ) {
+        view.set_camera(camera.clone());
+
         let frustum = Frustum::from_view_projection(
             &camera.view_projection_matrix(),
         );
         let (camera_pos, camera_forward) = camera_pos_and_forward(camera);
 
-        let mut visible = VisibleInstanceList::new();
+        let visible = view.visible_instances_mut();
+        visible.clear();
 
         match scene_index {
             Some(idx) => {
                 // Octree (or other spatial index) walks itself, computing
                 // distances during traversal.
-                idx.query_frustum(&frustum, camera_pos, camera_forward, &mut visible);
+                idx.query_frustum(&frustum, camera_pos, camera_forward, visible);
             }
             None => {
                 // Brute frustum loop over all instances
@@ -113,12 +127,10 @@ impl CameraCuller for FrustumCuller {
                     if frustum.intersects_aabb(&world_aabb) {
                         let inst_pos = instance.world_matrix().w_axis.truncate();
                         let depth = (inst_pos - camera_pos).dot(camera_forward);
-                        visible.push_with_depth(key, depth);
+                        visible.push(key, depth);
                     }
                 }
             }
         }
-
-        RenderView::new(camera.clone(), visible)
     }
 }

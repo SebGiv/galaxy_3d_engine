@@ -1,29 +1,27 @@
 //! Visible instance list — output of frustum culling.
 //!
-//! Each entry pairs a `RenderInstanceKey` with a pre-computed u16 distance
-//! from the camera, used as a sort key component for draw call sorting.
+//! Each entry pairs a `RenderInstanceKey` with the view-space depth (f32) of
+//! the instance, computed at culling time. The raw f32 depth is stored as-is;
+//! consumers (sort key construction, LOD selection, distance fade, ...) are
+//! free to convert it as they need.
 
 use super::render_instance::RenderInstanceKey;
 
-/// A visible instance with its pre-computed sort distance.
+/// A visible instance with its view-space depth.
 ///
-/// `distance` is the high-order 16 bits of the f32 view-space depth
-/// (i.e. `(depth_f32.to_bits() >> 16) as u16`). The IEEE 754 representation
-/// of positive floats preserves ordering through the bit shift, so this u16
-/// sorts equivalently to the original f32. It is intended to be combined
-/// with other 16-bit components into a u64 sort key.
-///
-/// Negative depths (instances behind the camera) encode to large u16 values
-/// (sign bit preserved at bit 15), so they sort after all positive depths.
+/// `distance` is the raw view-space depth in world units (positive in front
+/// of the camera, negative behind). It is intentionally kept as a `f32` so
+/// that multiple consumers — sort key encoding, LOD selection, distance
+/// fade, etc. — can interpret it as needed without precision loss.
 #[derive(Debug, Clone, Copy)]
 pub struct VisibleInstance {
     pub key: RenderInstanceKey,
-    pub distance: u16,
+    pub distance: f32,
 }
 
 /// Encapsulates the list of visible instances produced by frustum culling.
 ///
-/// Each entry pairs a `RenderInstanceKey` with a pre-computed u16 distance.
+/// Each entry pairs a `RenderInstanceKey` with the view-space depth.
 /// Created by `CameraCuller::cull` (and ultimately by `SceneIndex::query_frustum`
 /// when a spatial index is used).
 #[derive(Debug, Clone, Default)]
@@ -42,19 +40,9 @@ impl VisibleInstanceList {
         Self { instances: Vec::with_capacity(cap) }
     }
 
-    /// Push an instance with a pre-encoded u16 distance.
-    pub fn push(&mut self, key: RenderInstanceKey, distance: u16) {
+    /// Push an instance with its view-space depth.
+    pub fn push(&mut self, key: RenderInstanceKey, distance: f32) {
         self.instances.push(VisibleInstance { key, distance });
-    }
-
-    /// Push an instance, encoding the f32 view-space depth to its u16 sort form.
-    ///
-    /// Encoding: `(depth.to_bits() >> 16) as u16` — the high 16 bits of the f32
-    /// IEEE 754 representation. Sign-preserving: positive depths sort first
-    /// (front-to-back), negative depths sort last (sign bit set in bit 15).
-    pub fn push_with_depth(&mut self, key: RenderInstanceKey, depth: f32) {
-        let encoded = (depth.to_bits() >> 16) as u16;
-        self.instances.push(VisibleInstance { key, distance: encoded });
     }
 
     /// Number of visible instances.
@@ -105,53 +93,20 @@ mod tests {
     }
 
     #[test]
-    fn test_push_with_pre_encoded_distance() {
+    fn test_push_with_distance() {
         let mut list = VisibleInstanceList::new();
         let key = make_key(1);
-        list.push(key, 42);
+        list.push(key, 42.0);
         assert_eq!(list.len(), 1);
         assert_eq!(list.as_slice()[0].key, key);
-        assert_eq!(list.as_slice()[0].distance, 42);
-    }
-
-    #[test]
-    fn test_push_with_depth_encodes_high_bits() {
-        let mut list = VisibleInstanceList::new();
-        let key = make_key(1);
-        // 1.0_f32 → 0x3F800000 → high 16 bits = 0x3F80
-        list.push_with_depth(key, 1.0);
-        assert_eq!(list.as_slice()[0].distance, 0x3F80);
-    }
-
-    #[test]
-    fn test_push_with_depth_preserves_order_for_positive() {
-        let mut list = VisibleInstanceList::new();
-        list.push_with_depth(make_key(1), 1.0);
-        list.push_with_depth(make_key(2), 2.0);
-        list.push_with_depth(make_key(3), 10.0);
-        // Encoded distances should be strictly increasing (IEEE 754 sortable)
-        let s = list.as_slice();
-        assert!(s[0].distance < s[1].distance);
-        assert!(s[1].distance < s[2].distance);
-    }
-
-    #[test]
-    fn test_push_with_depth_negative_sorts_after_positive() {
-        let mut list = VisibleInstanceList::new();
-        list.push_with_depth(make_key(1), 5.0);   // positive
-        list.push_with_depth(make_key(2), -1.0);  // negative (behind camera)
-        // Negative float has bit 31 set → high 16 bits >= 0x8000 → > 32768
-        // Positive float < 65504 → high 16 bits < 0x8000
-        let s = list.as_slice();
-        assert!(s[0].distance < 0x8000);
-        assert!(s[1].distance >= 0x8000);
+        assert_eq!(list.as_slice()[0].distance, 42.0);
     }
 
     #[test]
     fn test_clear_preserves_capacity() {
         let mut list = VisibleInstanceList::with_capacity(64);
         for i in 1..=10 {
-            list.push(make_key(i), i as u16);
+            list.push(make_key(i), i as f32);
         }
         assert_eq!(list.len(), 10);
         list.clear();
@@ -161,9 +116,9 @@ mod tests {
     #[test]
     fn test_iter() {
         let mut list = VisibleInstanceList::new();
-        list.push(make_key(1), 100);
-        list.push(make_key(2), 200);
-        let collected: Vec<u16> = list.iter().map(|vi| vi.distance).collect();
-        assert_eq!(collected, vec![100, 200]);
+        list.push(make_key(1), 100.0);
+        list.push(make_key(2), 200.0);
+        let collected: Vec<f32> = list.iter().map(|vi| vi.distance).collect();
+        assert_eq!(collected, vec![100.0, 200.0]);
     }
 }

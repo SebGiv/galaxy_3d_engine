@@ -7,7 +7,7 @@
 use super::*;
 use crate::graphics_device;
 use crate::resource::geometry::{
-    GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
+    GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
 };
 use crate::resource::pipeline::PipelineDesc;
 use crate::resource::material::{MaterialDesc, MaterialPassDesc, ParamValue};
@@ -23,6 +23,17 @@ use std::sync::{Arc, Mutex};
 
 fn create_mock_graphics_device() -> Arc<Mutex<dyn graphics_device::GraphicsDevice>> {
     Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()))
+}
+
+/// Build a simple LOD desc with given offsets/counts.
+fn lod(vertex_offset: u32, vertex_count: u32, index_offset: u32, index_count: u32) -> GeometrySubMeshLODDesc {
+    GeometrySubMeshLODDesc {
+        vertex_offset,
+        vertex_count,
+        index_offset,
+        index_count,
+        topology: graphics_device::PrimitiveTopology::TriangleList,
+    }
 }
 
 fn create_test_resources() -> (
@@ -43,6 +54,7 @@ fn create_test_resources() -> (
         }],
     };
 
+    // 20 vertices (160 bytes / 8 stride), 24 indices (48 bytes / 2 bytes for U16)
     let desc = GeometryDesc {
         name: "characters".to_string(),
         graphics_device: graphics_device.clone(),
@@ -53,31 +65,39 @@ fn create_test_resources() -> (
         meshes: vec![
             GeometryMeshDesc {
                 name: "body".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc { name: "head".to_string(), vertex_offset: 0, vertex_count: 4, index_offset: 0, index_count: 6, topology: graphics_device::PrimitiveTopology::TriangleList },
-                            GeometrySubMeshDesc { name: "torso".to_string(), vertex_offset: 4, vertex_count: 4, index_offset: 6, index_count: 6, topology: graphics_device::PrimitiveTopology::TriangleList },
-                            GeometrySubMeshDesc { name: "legs".to_string(), vertex_offset: 8, vertex_count: 4, index_offset: 12, index_count: 6, topology: graphics_device::PrimitiveTopology::TriangleList },
+                // 3 submeshes — each with its own LOD chain.
+                // "head" has 2 LODs, "torso" has 2 LODs, "legs" has 1 LOD
+                // (illustrating per-submesh LOD count variability).
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "head".to_string(),
+                        lods: vec![
+                            lod(0, 4, 0, 6),
+                            lod(0, 4, 0, 6),
                         ],
                     },
-                    GeometryLODDesc {
-                        lod_index: 1,
-                        submeshes: vec![
-                            GeometrySubMeshDesc { name: "head".to_string(), vertex_offset: 0, vertex_count: 4, index_offset: 0, index_count: 6, topology: graphics_device::PrimitiveTopology::TriangleList },
-                            GeometrySubMeshDesc { name: "body".to_string(), vertex_offset: 4, vertex_count: 6, index_offset: 6, index_count: 12, topology: graphics_device::PrimitiveTopology::TriangleList },
+                    GeometrySubMeshDesc {
+                        name: "torso".to_string(),
+                        lods: vec![
+                            lod(4, 4, 6, 6),
+                            lod(4, 4, 6, 6),
+                        ],
+                    },
+                    GeometrySubMeshDesc {
+                        name: "legs".to_string(),
+                        lods: vec![
+                            lod(8, 4, 12, 6),
                         ],
                     },
                 ],
             },
             GeometryMeshDesc {
                 name: "weapon".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc { name: "blade".to_string(), vertex_offset: 12, vertex_count: 4, index_offset: 18, index_count: 6, topology: graphics_device::PrimitiveTopology::TriangleList },
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "blade".to_string(),
+                        lods: vec![
+                            lod(12, 4, 18, 6),
                         ],
                     },
                 ],
@@ -134,43 +154,42 @@ fn material_value(rm: &ResourceManager, key: MaterialKey) -> f32 {
 // ============================================================================
 
 #[test]
-fn test_create_mesh_single_lod_single_submesh() {
+fn test_create_mesh_single_submesh() {
     let (geom_key, mut rm, gd) = create_test_resources();
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
-        geometry: geom_key, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
+        geometry: geom_key,
+        geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Name("blade".to_string()),
+            material: mk,
+        }],
     }, &rm).unwrap();
-    assert_eq!(mesh.lod_count(), 1);
-    assert_eq!(mesh.lod(0).unwrap().submesh_count(), 1);
-    assert_eq!(mesh.lod(0).unwrap().submesh(0).unwrap().material(), mk);
+    assert_eq!(mesh.submesh_count(), 1);
+    assert_eq!(mesh.submesh(0).unwrap().material(), mk);
 }
 
 #[test]
-fn test_create_mesh_multi_lod() {
+fn test_create_mesh_multi_submesh() {
     let (geom_key, mut rm, gd) = create_test_resources();
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
     let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
     let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
     let mesh = Mesh::from_desc(MeshDesc {
-        geometry: geom_key, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
-        lods: vec![
-            MeshLODDesc { lod_index: 0, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("torso".to_string()), material: armor },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: pants },
-            ]},
-            MeshLODDesc { lod_index: 1, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: armor },
-            ]},
+        geometry: geom_key,
+        geometry_mesh: GeometryMeshRef::Name("body".to_string()),
+        submeshes: vec![
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("torso".to_string()), material: armor },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: pants },
         ],
     }, &rm).unwrap();
-    assert_eq!(mesh.lod_count(), 2);
-    assert_eq!(mesh.lod(0).unwrap().submesh_count(), 3);
-    assert_eq!(mesh.lod(1).unwrap().submesh_count(), 2);
+    assert_eq!(mesh.submesh_count(), 3);
+    assert_eq!(mesh.submesh(0).unwrap().material(), skin);
+    assert_eq!(mesh.submesh(1).unwrap().material(), armor);
+    assert_eq!(mesh.submesh(2).unwrap().material(), pants);
 }
 
 // ============================================================================
@@ -183,8 +202,12 @@ fn test_geometry_mesh_ref_by_name() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Name("blade".to_string()),
+            material: mk,
+        }],
     }, &rm).unwrap();
     assert_eq!(mesh.geometry_mesh_id(), 1);
 }
@@ -195,8 +218,12 @@ fn test_geometry_mesh_ref_by_index() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Index(1),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Index(0), material: mk }] }],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Index(1),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Index(0),
+            material: mk,
+        }],
     }, &rm).unwrap();
     assert_eq!(mesh.geometry_mesh_id(), 1);
 }
@@ -207,8 +234,12 @@ fn test_geometry_mesh_ref_invalid_name() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("nonexistent".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("nonexistent".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Name("blade".to_string()),
+            material: mk,
+        }],
     }, &rm).is_err());
 }
 
@@ -218,8 +249,12 @@ fn test_geometry_mesh_ref_invalid_index() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Index(99),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Index(0), material: mk }] }],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Index(99),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Index(0),
+            material: mk,
+        }],
     }, &rm).is_err());
 }
 
@@ -233,10 +268,14 @@ fn test_submesh_ref_by_name() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Name("blade".to_string()),
+            material: mk,
+        }],
     }, &rm).unwrap();
-    assert_eq!(mesh.lod(0).unwrap().submesh(0).unwrap().submesh_id(), 0);
+    assert_eq!(mesh.submesh(0).unwrap().submesh_id(), 0);
 }
 
 #[test]
@@ -245,10 +284,14 @@ fn test_submesh_ref_by_index() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     let mesh = Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Index(0), material: mk }] }],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Index(0),
+            material: mk,
+        }],
     }, &rm).unwrap();
-    assert_eq!(mesh.lod(0).unwrap().submesh(0).unwrap().submesh_id(), 0);
+    assert_eq!(mesh.submesh(0).unwrap().submesh_id(), 0);
 }
 
 #[test]
@@ -259,17 +302,12 @@ fn test_submesh_ref_invalid_name() {
     let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
     let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
     assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
-        lods: vec![
-            MeshLODDesc { lod_index: 0, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("nonexistent".to_string()), material: armor },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: pants },
-            ]},
-            MeshLODDesc { lod_index: 1, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: armor },
-            ]},
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("body".to_string()),
+        submeshes: vec![
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("nonexistent".to_string()), material: armor },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: pants },
         ],
     }, &rm).is_err());
 }
@@ -280,8 +318,12 @@ fn test_submesh_ref_invalid_index() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Index(99), material: mk }] }],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Index(99),
+            material: mk,
+        }],
     }, &rm).is_err());
 }
 
@@ -290,68 +332,31 @@ fn test_submesh_ref_invalid_index() {
 // ============================================================================
 
 #[test]
-fn test_submesh_order_matches_geometry_lod() {
+fn test_submesh_order_matches_geometry_mesh() {
     let (gk, mut rm, gd) = create_test_resources();
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
     let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
     let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
 
-    // Provide submeshes in REVERSE order
+    // Provide submeshes in REVERSE order — Mesh::from_desc must reorder
+    // them to match the parent GeometryMesh submesh order (head, torso, legs).
     let mesh = Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
-        lods: vec![
-            MeshLODDesc { lod_index: 0, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: pants },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("torso".to_string()), material: armor },
-            ]},
-            MeshLODDesc { lod_index: 1, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: armor },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-            ]},
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("body".to_string()),
+        submeshes: vec![
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: pants },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("torso".to_string()), material: armor },
         ],
     }, &rm).unwrap();
 
-    let lod0 = mesh.lod(0).unwrap();
-    assert_eq!(lod0.submesh(0).unwrap().submesh_id(), 0);
-    assert_eq!(lod0.submesh(1).unwrap().submesh_id(), 1);
-    assert_eq!(lod0.submesh(2).unwrap().submesh_id(), 2);
-    assert!((material_value(&rm, lod0.submesh(0).unwrap().material()) - 1.0).abs() < f32::EPSILON);
-    assert!((material_value(&rm, lod0.submesh(1).unwrap().material()) - 2.0).abs() < f32::EPSILON);
-    assert!((material_value(&rm, lod0.submesh(2).unwrap().material()) - 3.0).abs() < f32::EPSILON);
-
-    let lod1 = mesh.lod(1).unwrap();
-    assert!((material_value(&rm, lod1.submesh(0).unwrap().material()) - 1.0).abs() < f32::EPSILON);
-    assert!((material_value(&rm, lod1.submesh(1).unwrap().material()) - 2.0).abs() < f32::EPSILON);
-}
-
-#[test]
-fn test_lod_order_matches_geometry_mesh() {
-    let (gk, mut rm, gd) = create_test_resources();
-    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
-    let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
-
-    // Provide LODs in REVERSE order (1, 0)
-    let mesh = Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
-        lods: vec![
-            MeshLODDesc { lod_index: 1, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: armor },
-            ]},
-            MeshLODDesc { lod_index: 0, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("torso".to_string()), material: armor },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: pants },
-            ]},
-        ],
-    }, &rm).unwrap();
-
-    assert_eq!(mesh.lod(0).unwrap().submesh_count(), 3);
-    assert_eq!(mesh.lod(1).unwrap().submesh_count(), 2);
+    assert_eq!(mesh.submesh(0).unwrap().submesh_id(), 0);
+    assert_eq!(mesh.submesh(1).unwrap().submesh_id(), 1);
+    assert_eq!(mesh.submesh(2).unwrap().submesh_id(), 2);
+    assert!((material_value(&rm, mesh.submesh(0).unwrap().material()) - 1.0).abs() < f32::EPSILON);
+    assert!((material_value(&rm, mesh.submesh(1).unwrap().material()) - 2.0).abs() < f32::EPSILON);
+    assert!((material_value(&rm, mesh.submesh(2).unwrap().material()) - 3.0).abs() < f32::EPSILON);
 }
 
 // ============================================================================
@@ -359,59 +364,17 @@ fn test_lod_order_matches_geometry_mesh() {
 // ============================================================================
 
 #[test]
-fn test_duplicate_lod_index_fails() {
-    let (gk, mut rm, gd) = create_test_resources();
-    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
-    assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![
-            MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] },
-            MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] },
-        ],
-    }, &rm).is_err());
-}
-
-#[test]
-fn test_incomplete_lod_coverage_fails() {
-    let (gk, mut rm, gd) = create_test_resources();
-    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
-    let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
-    let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
-    let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
-    // "body" has 2 LODs but we only provide 1
-    assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![
-            SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-            SubMeshDesc { submesh: GeometrySubMeshRef::Name("torso".to_string()), material: armor },
-            SubMeshDesc { submesh: GeometrySubMeshRef::Name("legs".to_string()), material: pants },
-        ]}],
-    }, &rm).is_err());
-}
-
-#[test]
-fn test_lod_index_out_of_range_fails() {
-    let (gk, mut rm, gd) = create_test_resources();
-    let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
-    let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
-    assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 5, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
-    }, &rm).is_err());
-}
-
-#[test]
 fn test_duplicate_submesh_fails() {
     let (gk, mut rm, gd) = create_test_resources();
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m", 1.0);
     assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![
-            SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk },
-            SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk },
-        ]}],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
+        submeshes: vec![
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk },
+        ],
     }, &rm).is_err());
 }
 
@@ -421,17 +384,13 @@ fn test_incomplete_submesh_coverage_fails() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let skin = create_test_material(&mut rm, &gd, pk, fk, "skin", 1.0);
     let armor = create_test_material(&mut rm, &gd, pk, fk, "armor", 2.0);
+    // "body" has 3 submeshes but we only provide 2
     assert!(Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("body".to_string()),
-        lods: vec![
-            MeshLODDesc { lod_index: 0, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("torso".to_string()), material: armor },
-            ]},
-            MeshLODDesc { lod_index: 1, submeshes: vec![
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
-                SubMeshDesc { submesh: GeometrySubMeshRef::Name("body".to_string()), material: armor },
-            ]},
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("body".to_string()),
+        submeshes: vec![
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("head".to_string()), material: skin },
+            MeshSubMeshDesc { submesh: GeometrySubMeshRef::Name("torso".to_string()), material: armor },
         ],
     }, &rm).is_err());
 }
@@ -446,22 +405,21 @@ fn test_mesh_accessors() {
     let (pk, fk) = create_test_pipeline(&mut rm, &gd, "p");
     let mk = create_test_material(&mut rm, &gd, pk, fk, "m42", 42.0);
     let mesh = Mesh::from_desc(MeshDesc {
-        geometry: gk, geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
-        lods: vec![MeshLODDesc { lod_index: 0, submeshes: vec![SubMeshDesc { submesh: GeometrySubMeshRef::Name("blade".to_string()), material: mk }] }],
+        geometry: gk,
+        geometry_mesh: GeometryMeshRef::Name("weapon".to_string()),
+        submeshes: vec![MeshSubMeshDesc {
+            submesh: GeometrySubMeshRef::Name("blade".to_string()),
+            material: mk,
+        }],
     }, &rm).unwrap();
 
     assert_eq!(mesh.geometry(), gk);
     assert_eq!(mesh.geometry_mesh_id(), 1);
-    assert_eq!(mesh.lod_count(), 1);
-    assert!(mesh.lod(0).is_some());
-    assert!(mesh.lod(1).is_none());
+    assert_eq!(mesh.submesh_count(), 1);
+    assert!(mesh.submesh(0).is_some());
+    assert!(mesh.submesh(1).is_none());
 
-    let lod = mesh.lod(0).unwrap();
-    assert_eq!(lod.submesh_count(), 1);
-    assert!(lod.submesh(0).is_some());
-    assert!(lod.submesh(1).is_none());
-
-    let submesh = lod.submesh(0).unwrap();
+    let submesh = mesh.submesh(0).unwrap();
     assert_eq!(submesh.submesh_id(), 0);
     assert_eq!(submesh.material(), mk);
 }
@@ -479,15 +437,14 @@ fn test_mesh_desc_from_name_mapping() {
     let pants = create_test_material(&mut rm, &gd, pk, fk, "pants", 3.0);
 
     let mapping = FxHashMap::from_iter([
-        ("head".to_string(), skin), ("torso".to_string(), armor),
-        ("legs".to_string(), pants), ("body".to_string(), armor),
+        ("head".to_string(), skin),
+        ("torso".to_string(), armor),
+        ("legs".to_string(), pants),
     ]);
     let desc = mesh_desc_from_name_mapping(gk, GeometryMeshRef::Name("body".to_string()), &mapping, &rm).unwrap();
-    assert_eq!(desc.lods.len(), 2);
+    assert_eq!(desc.submeshes.len(), 3);
     let mesh = Mesh::from_desc(desc, &rm).unwrap();
-    assert_eq!(mesh.lod_count(), 2);
-    assert_eq!(mesh.lod(0).unwrap().submesh_count(), 3);
-    assert_eq!(mesh.lod(1).unwrap().submesh_count(), 2);
+    assert_eq!(mesh.submesh_count(), 3);
 }
 
 #[test]
@@ -514,6 +471,6 @@ fn test_mesh_desc_from_name_mapping_by_index() {
     let mapping = FxHashMap::from_iter([("blade".to_string(), mk)]);
     let desc = mesh_desc_from_name_mapping(gk, GeometryMeshRef::Index(1), &mapping, &rm).unwrap();
     let mesh = Mesh::from_desc(desc, &rm).unwrap();
-    assert_eq!(mesh.lod_count(), 1);
+    assert_eq!(mesh.submesh_count(), 1);
     assert_eq!(mesh.geometry_mesh_id(), 1);
 }

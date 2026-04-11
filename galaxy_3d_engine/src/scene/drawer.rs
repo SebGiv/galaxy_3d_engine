@@ -3,6 +3,7 @@
 /// A Drawer renders visible instances from a RenderView into a command list.
 /// Implementations range from simple forward rendering to sorted/instanced approaches.
 
+use std::sync::Arc;
 use crate::error::Result;
 use crate::engine::Engine;
 use crate::graphics_device::CommandList;
@@ -55,56 +56,71 @@ impl Drawer for ForwardDrawer {
         cmd.set_viewport(*camera.viewport())?;
         cmd.set_scissor(camera.effective_scissor())?;
 
-        // Snapshot visible instance keys into a local Vec to detach from
-        // `view` (which we no longer need to borrow during draw).
-        let visible_keys: Vec<_> = view.visible_instances().iter().map(|vi| vi.key).collect();
-
         // Acquire ResourceManager lock ONCE for the whole draw pass.
         // All draw calls share this lock — eliminates per-submesh lock/unlock
         // overhead and allows direct references to material data without cloning.
         let rm_arc = Engine::resource_manager()?;
         let mut rm = rm_arc.lock().unwrap();
 
-        for key in &visible_keys {
-            // Bind shared geometry buffers (per-instance)
+        // Iterate visible instances directly from the RenderView — no intermediate
+        // Vec clone. `view` is an independent parameter (not a field of `scene`),
+        // so holding an immutable iterator on it does not conflict with the mutable
+        // accesses on `scene` / `cmd` / `rm` inside the loop body.
+        for vi in view.visible_instances().iter() {
+            let key = vi.key;  // Copy — no further borrow on view after this point
+
+            // Bind shared geometry buffers (per-instance) — read from the Geometry
             {
-                let instance = match scene.render_instance(*key) {
+                let instance = match scene.render_instance(key) {
                     Some(inst) => inst,
                     None => continue,
                 };
-                cmd.bind_vertex_buffer(instance.vertex_buffer(), 0)?;
-                if let Some(ib) = instance.index_buffer() {
-                    cmd.bind_index_buffer(ib, 0, instance.index_type())?;
+                let geo = match rm.geometry(instance.geometry()) {
+                    Some(g) => g,
+                    None => continue,
+                };
+                cmd.bind_vertex_buffer(geo.vertex_buffer(), 0)?;
+                if let Some(ib) = geo.index_buffer() {
+                    cmd.bind_index_buffer(ib, 0, geo.index_type())?;
                 }
             }
 
-            // LOD 0 only (V1) — read sub_mesh count
-            let sub_mesh_count = match scene.render_instance(*key).and_then(|inst| inst.lod(0)) {
-                Some(lod) => lod.sub_mesh_count(),
+            // Read sub_mesh count from the RenderInstance directly
+            // (no LOD level on the instance — LOD selection is per-submesh on the Geometry)
+            let sub_mesh_count = match scene.render_instance(key) {
+                Some(inst) => inst.sub_mesh_count(),
                 None => continue,
             };
 
             for sm_idx in 0..sub_mesh_count {
                 // ===== Phase 1: read submesh + cache validity =====
-                let (vertex_shader, vertex_layout, topology, material_key, draw_slot,
+                // All borrows on rm/scene are scoped here so they release before
+                // the mut calls in Phase 2.
+                // LOD 0 hardcoded for all submeshes (V1) — to be replaced later
+                // by per-submesh dynamic LOD selection.
+                let (vertex_shader, vertex_layout_arc, topology, material_key, draw_slot,
                      vertex_offset, vertex_count, index_offset, index_count,
                      is_pipeline_valid, mat_gen) = {
-                    let inst = scene.render_instance(*key).unwrap();
-                    let lod = inst.lod(0).unwrap();
-                    let sm = lod.sub_mesh(sm_idx).unwrap();
-                    let mat = rm.material(sm.material()).unwrap();
+                    let inst = scene.render_instance(key).unwrap();
+                    let render_sm = inst.sub_mesh(sm_idx).unwrap();
+                    let geo = rm.geometry(inst.geometry()).unwrap();
+                    let geo_mesh = geo.mesh(inst.geometry_mesh_id()).unwrap();
+                    let geo_sm = geo_mesh.submesh(render_sm.geometry_submesh_id()).unwrap();
+                    let geo_sm_lod = geo_sm.lod(0).unwrap();
+                    let mat = rm.material(render_sm.material()).unwrap();
                     let mat_gen = mat.generation();
                     (
-                        inst.vertex_shader(),
-                        inst.vertex_layout().clone(),
-                        sm.topology(),
-                        sm.material(),
-                        sm.draw_slot(),
-                        sm.vertex_offset(),
-                        sm.vertex_count(),
-                        sm.index_offset(),
-                        sm.index_count(),
-                        inst.is_pipeline_valid(pass_info_gen, mat_gen),
+                        render_sm.vertex_shader(),
+                        // Arc::clone — single atomic increment, ZERO allocation.
+                        Arc::clone(geo.vertex_layout()),
+                        geo_sm_lod.topology(),
+                        render_sm.material(),
+                        render_sm.draw_slot(),
+                        geo_sm_lod.vertex_offset(),
+                        geo_sm_lod.vertex_count(),
+                        geo_sm_lod.index_offset(),
+                        geo_sm_lod.index_count(),
+                        render_sm.is_pipeline_valid(pass_info_gen, mat_gen),
                         mat_gen,
                     )
                 };
@@ -120,18 +136,21 @@ impl Drawer for ForwardDrawer {
                     let gd_arc = Engine::graphics_device("main")?;
                     let mut gd = gd_arc.lock().unwrap();
                     let pipeline_key = rm.resolve_pipeline(
-                        vertex_shader, frag_shader, &vertex_layout, topology,
+                        vertex_shader, frag_shader, vertex_layout_arc, topology,
                         &color_blend, polygon_mode, pass_info, &mut *gd,
                     )?;
                     drop(gd);
 
-                    // Cache on instance (mut on scene — no concurrent immut borrow at this point)
-                    scene.render_instance_mut(*key).unwrap()
+                    // Cache on the SUB_MESH (not the instance) — different
+                    // submeshes of the same instance can have different pipelines.
+                    scene.render_instance_mut(key).unwrap()
+                        .sub_mesh_mut(sm_idx).unwrap()
                         .set_cached_pipeline(pipeline_key, pass_info_gen, mat_gen);
                 }
 
                 // ===== Phase 3: draw with cached pipeline =====
-                let pipeline_key = scene.render_instance(*key).unwrap()
+                let pipeline_key = scene.render_instance(key).unwrap()
+                    .sub_mesh(sm_idx).unwrap()
                     .cached_pipeline_key().unwrap();
                 let pipeline = rm.pipeline(pipeline_key).unwrap();
                 let gd_pipeline = pipeline.graphics_device_pipeline().clone();

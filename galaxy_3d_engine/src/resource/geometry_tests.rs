@@ -1,7 +1,7 @@
 /// Unit tests for geometry.rs
 ///
-/// Tests the Geometry, GeometryMesh, GeometryLOD, and GeometrySubMesh hierarchy without requiring GPU.
-/// Uses MockGraphicsDevice for testing.
+/// Tests the Geometry, GeometryMesh, GeometrySubMesh, and GeometrySubMeshLOD
+/// hierarchy without requiring GPU. Uses MockGraphicsDevice for testing.
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use crate::graphics_device;
 #[cfg(test)]
 use crate::resource::{
-    Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc, GeometrySubMesh,
+    Geometry, GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
+    GeometrySubMesh,
 };
 
 // ============================================================================
@@ -28,7 +29,7 @@ fn create_simple_vertex_layout() -> graphics_device::VertexLayout {
         bindings: vec![
             graphics_device::VertexBinding {
                 binding: 0,
-                stride: 8, // 2 floats (x, y) = 8 bytes
+                stride: 8,
                 input_rate: graphics_device::VertexInputRate::Vertex,
             }
         ],
@@ -36,7 +37,7 @@ fn create_simple_vertex_layout() -> graphics_device::VertexLayout {
             graphics_device::VertexAttribute {
                 location: 0,
                 binding: 0,
-                format: graphics_device::BufferFormat::R32G32_SFLOAT, // vec2 of floats
+                format: graphics_device::BufferFormat::R32G32_SFLOAT,
                 offset: 0,
             }
         ],
@@ -45,40 +46,37 @@ fn create_simple_vertex_layout() -> graphics_device::VertexLayout {
 
 /// Create vertex data for 4 vertices (quad)
 fn create_quad_vertex_data() -> Vec<u8> {
-    // 4 vertices with 2 floats each (x, y)
-    // Vertex 0: (0.0, 0.0)
-    // Vertex 1: (1.0, 0.0)
-    // Vertex 2: (1.0, 1.0)
-    // Vertex 3: (0.0, 1.0)
     let vertices: Vec<f32> = vec![
         0.0, 0.0,
         1.0, 0.0,
         1.0, 1.0,
         0.0, 1.0,
     ];
-
-    vertices.iter()
-        .flat_map(|&f| f.to_le_bytes())
-        .collect()
+    vertices.iter().flat_map(|&f| f.to_le_bytes()).collect()
 }
 
 /// Create index data for quad (2 triangles)
 fn create_quad_index_data_u16() -> Vec<u8> {
     let indices: Vec<u16> = vec![0, 1, 2, 2, 3, 0];
-    indices.iter()
-        .flat_map(|&i| i.to_le_bytes())
-        .collect()
+    indices.iter().flat_map(|&i| i.to_le_bytes()).collect()
 }
 
-/// Create a simple submesh descriptor
-fn create_simple_submesh_desc() -> GeometrySubMeshDesc {
-    GeometrySubMeshDesc {
-        name: "quad".to_string(),
+/// Create a simple submesh LOD descriptor (covers all 4 vertices / 6 indices)
+fn make_quad_lod_desc() -> GeometrySubMeshLODDesc {
+    GeometrySubMeshLODDesc {
         vertex_offset: 0,
         vertex_count: 4,
         index_offset: 0,
         index_count: 6,
         topology: graphics_device::PrimitiveTopology::TriangleList,
+    }
+}
+
+/// Create a simple submesh descriptor with a single LOD
+fn make_quad_submesh_desc(name: &str) -> GeometrySubMeshDesc {
+    GeometrySubMeshDesc {
+        name: name.to_string(),
+        lods: vec![make_quad_lod_desc()],
     }
 }
 
@@ -115,7 +113,7 @@ fn test_create_geometry_non_indexed() {
         name: "test_geom".to_string(),
         graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
-        index_data: None, // Non-indexed
+        index_data: None,
         vertex_layout: create_simple_vertex_layout(),
         index_type: graphics_device::IndexType::U16,
         meshes: vec![],
@@ -143,12 +141,7 @@ fn test_create_geometry_with_mesh() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![create_simple_submesh_desc()],
-                    }
-                ],
+                submeshes: vec![make_quad_submesh_desc("quad")],
             }
         ],
     };
@@ -165,7 +158,7 @@ fn test_create_geometry_invalid_vertex_stride() {
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
         graphics_device: graphics_device.clone(),
-        vertex_data: vec![1, 2, 3], // 3 bytes, not divisible by stride 8
+        vertex_data: vec![1, 2, 3],
         index_data: None,
         vertex_layout: create_simple_vertex_layout(),
         index_type: graphics_device::IndexType::U16,
@@ -183,7 +176,7 @@ fn test_create_geometry_invalid_index_stride() {
         name: "test_geom".to_string(),
         graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
-        index_data: Some(vec![1, 2, 3]), // 3 bytes, not divisible by u16 size (2)
+        index_data: Some(vec![1, 2, 3]),
         vertex_layout: create_simple_vertex_layout(),
         index_type: graphics_device::IndexType::U16,
         meshes: vec![],
@@ -214,12 +207,7 @@ fn test_add_mesh() {
 
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
-        lods: vec![
-            GeometryLODDesc {
-                lod_index: 0,
-                submeshes: vec![create_simple_submesh_desc()],
-            }
-        ],
+        submeshes: vec![make_quad_submesh_desc("quad")],
     };
 
     let mesh_id = geom.add_mesh(mesh_desc).unwrap();
@@ -242,7 +230,7 @@ fn test_get_mesh_by_name() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![],
+                submeshes: vec![],
             }
         ],
     };
@@ -269,7 +257,7 @@ fn test_get_mesh_by_id() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![],
+                submeshes: vec![],
             }
         ],
     };
@@ -296,7 +284,7 @@ fn test_add_duplicate_mesh() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![],
+                submeshes: vec![],
             }
         ],
     };
@@ -304,8 +292,8 @@ fn test_add_duplicate_mesh() {
     let mut geom = Geometry::from_desc(desc).unwrap();
 
     let mesh_desc = GeometryMeshDesc {
-        name: "hero".to_string(), // Duplicate
-        lods: vec![],
+        name: "hero".to_string(),
+        submeshes: vec![],
     };
 
     let result = geom.add_mesh(mesh_desc);
@@ -313,11 +301,11 @@ fn test_add_duplicate_mesh() {
 }
 
 // ============================================================================
-// LOD TESTS
+// SUBMESH TESTS
 // ============================================================================
 
 #[test]
-fn test_add_lod() {
+fn test_add_submesh_to_mesh() {
     let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
@@ -329,29 +317,24 @@ fn test_add_lod() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![],
+                submeshes: vec![],
             }
         ],
     };
 
     let mut geom = Geometry::from_desc(desc).unwrap();
 
-    let lod_desc = GeometryLODDesc {
-        lod_index: 0,
-        submeshes: vec![create_simple_submesh_desc()],
-    };
-
     let mesh_id = geom.mesh_id("hero").unwrap();
-    let lod_index = geom.add_lod(mesh_id, lod_desc).unwrap();
-
-    assert_eq!(lod_index, 0);
+    let submesh_id = geom.add_submesh(mesh_id, make_quad_submesh_desc("body")).unwrap();
+    assert_eq!(submesh_id, 0);
 
     let mesh = geom.mesh(mesh_id).unwrap();
-    assert_eq!(mesh.lod_count(), 1);
+    assert_eq!(mesh.submesh_count(), 1);
+    assert!(mesh.submesh_by_name("body").is_some());
 }
 
 #[test]
-fn test_multiple_lods() {
+fn test_add_submesh_lod_to_existing_submesh() {
     let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
@@ -363,36 +346,28 @@ fn test_multiple_lods() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![create_simple_submesh_desc()],
-                    },
-                    GeometryLODDesc {
-                        lod_index: 1,
-                        submeshes: vec![create_simple_submesh_desc()],
-                    },
-                ],
+                submeshes: vec![make_quad_submesh_desc("body")],
             }
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc).unwrap();
 
-    let mesh = geom.mesh_by_name("hero").unwrap();
-    assert_eq!(mesh.lod_count(), 2);
-    assert!(mesh.lod(0).is_some());
-    assert!(mesh.lod(1).is_some());
+    let mesh_id = geom.mesh_id("hero").unwrap();
+    let submesh_id = geom.mesh(mesh_id).unwrap().submesh_id("body").unwrap();
+
+    // Initial: 1 LOD
+    assert_eq!(geom.mesh(mesh_id).unwrap().submesh(submesh_id).unwrap().lod_count(), 1);
+
+    // Add a second LOD
+    let new_lod_index = geom.add_submesh_lod(mesh_id, submesh_id, make_quad_lod_desc()).unwrap();
+    assert_eq!(new_lod_index, 1);
+    assert_eq!(geom.mesh(mesh_id).unwrap().submesh(submesh_id).unwrap().lod_count(), 2);
 }
 
-// ============================================================================
-// SUBMESH TESTS
-// ============================================================================
-
 #[test]
-fn test_submesh_accessors() {
-    let submesh_desc = GeometrySubMeshDesc {
-        name: "test".to_string(),
+fn test_submesh_lod_accessors() {
+    let lod_desc = GeometrySubMeshLODDesc {
         vertex_offset: 10,
         vertex_count: 20,
         index_offset: 5,
@@ -401,9 +376,8 @@ fn test_submesh_accessors() {
     };
 
     let graphics_device = create_mock_graphics_device();
-    // Create geometry with enough vertices/indices to accommodate submesh
-    let vertex_data = vec![0u8; 30 * 8]; // 30 vertices * 8 bytes stride
-    let index_data = vec![0u8; 35 * 2]; // 35 indices * 2 bytes (u16)
+    let vertex_data = vec![0u8; 30 * 8];
+    let index_data = vec![0u8; 35 * 2];
 
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
@@ -415,69 +389,24 @@ fn test_submesh_accessors() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![submesh_desc],
-                    }
-                ],
+                submeshes: vec![GeometrySubMeshDesc {
+                    name: "test".to_string(),
+                    lods: vec![lod_desc],
+                }],
             }
         ],
     };
 
     let geom = Geometry::from_desc(desc).unwrap();
 
-    let submesh = geom.submesh_by_name("hero", 0, "test").unwrap();
+    let submesh = geom.submesh_by_name("hero", "test").unwrap();
+    let lod0 = submesh.lod(0).unwrap();
 
-    assert_eq!(submesh.vertex_offset(), 10);
-    assert_eq!(submesh.vertex_count(), 20);
-    assert_eq!(submesh.index_offset(), 5);
-    assert_eq!(submesh.index_count(), 30);
-    assert_eq!(submesh.topology(), graphics_device::PrimitiveTopology::TriangleStrip);
-}
-
-#[test]
-fn test_add_submesh() {
-    let graphics_device = create_mock_graphics_device();
-    let desc = GeometryDesc {
-        name: "test_geom".to_string(),
-        graphics_device: graphics_device.clone(),
-        vertex_data: create_quad_vertex_data(),
-        index_data: Some(create_quad_index_data_u16()),
-        vertex_layout: create_simple_vertex_layout(),
-        index_type: graphics_device::IndexType::U16,
-        meshes: vec![
-            GeometryMeshDesc {
-                name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![],
-                    }
-                ],
-            }
-        ],
-    };
-
-    let mut geom = Geometry::from_desc(desc).unwrap();
-
-    let submesh_desc = GeometrySubMeshDesc {
-        name: "body".to_string(),
-        vertex_offset: 0,
-        vertex_count: 4,
-        index_offset: 0,
-        index_count: 6,
-        topology: graphics_device::PrimitiveTopology::TriangleList,
-    };
-
-    let mesh_id = geom.mesh_id("hero").unwrap();
-    let submesh_id = geom.add_submesh(mesh_id, 0, submesh_desc).unwrap();
-
-    assert_eq!(submesh_id, 0);
-
-    let mesh = geom.mesh(mesh_id).unwrap();
-    let lod = mesh.lod(0).unwrap();
-    assert_eq!(lod.submesh_count(), 1);
+    assert_eq!(lod0.vertex_offset(), 10);
+    assert_eq!(lod0.vertex_count(), 20);
+    assert_eq!(lod0.index_offset(), 5);
+    assert_eq!(lod0.index_count(), 30);
+    assert_eq!(lod0.topology(), graphics_device::PrimitiveTopology::TriangleStrip);
 }
 
 #[test]
@@ -486,7 +415,7 @@ fn test_submesh_validation_vertex_overflow() {
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
         graphics_device: graphics_device.clone(),
-        vertex_data: create_quad_vertex_data(), // 4 vertices
+        vertex_data: create_quad_vertex_data(),
         index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: graphics_device::IndexType::U16,
@@ -497,21 +426,16 @@ fn test_submesh_validation_vertex_overflow() {
 
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
-        lods: vec![
-            GeometryLODDesc {
-                lod_index: 0,
-                submeshes: vec![
-                    GeometrySubMeshDesc {
-                        name: "invalid".to_string(),
-                        vertex_offset: 0,
-                        vertex_count: 10, // Exceeds total_vertex_count (4)
-                        index_offset: 0,
-                        index_count: 6,
-                        topology: graphics_device::PrimitiveTopology::TriangleList,
-                    }
-                ],
-            }
-        ],
+        submeshes: vec![GeometrySubMeshDesc {
+            name: "invalid".to_string(),
+            lods: vec![GeometrySubMeshLODDesc {
+                vertex_offset: 0,
+                vertex_count: 10, // exceeds total_vertex_count (4)
+                index_offset: 0,
+                index_count: 6,
+                topology: graphics_device::PrimitiveTopology::TriangleList,
+            }],
+        }],
     };
 
     let result = geom.add_mesh(mesh_desc);
@@ -525,7 +449,7 @@ fn test_submesh_validation_index_overflow() {
         name: "test_geom".to_string(),
         graphics_device: graphics_device.clone(),
         vertex_data: create_quad_vertex_data(),
-        index_data: Some(create_quad_index_data_u16()), // 6 indices
+        index_data: Some(create_quad_index_data_u16()),
         vertex_layout: create_simple_vertex_layout(),
         index_type: graphics_device::IndexType::U16,
         meshes: vec![],
@@ -535,21 +459,16 @@ fn test_submesh_validation_index_overflow() {
 
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
-        lods: vec![
-            GeometryLODDesc {
-                lod_index: 0,
-                submeshes: vec![
-                    GeometrySubMeshDesc {
-                        name: "invalid".to_string(),
-                        vertex_offset: 0,
-                        vertex_count: 4,
-                        index_offset: 0,
-                        index_count: 20, // Exceeds total_index_count (6)
-                        topology: graphics_device::PrimitiveTopology::TriangleList,
-                    }
-                ],
-            }
-        ],
+        submeshes: vec![GeometrySubMeshDesc {
+            name: "invalid".to_string(),
+            lods: vec![GeometrySubMeshLODDesc {
+                vertex_offset: 0,
+                vertex_count: 4,
+                index_offset: 0,
+                index_count: 20, // exceeds total_index_count (6)
+                topology: graphics_device::PrimitiveTopology::TriangleList,
+            }],
+        }],
     };
 
     let result = geom.add_mesh(mesh_desc);
@@ -573,21 +492,7 @@ fn test_submesh_lookup_by_name() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 4,
-                                index_offset: 0,
-                                index_count: 6,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
-                        ],
-                    }
-                ],
+                submeshes: vec![make_quad_submesh_desc("body")],
             }
         ],
     };
@@ -595,20 +500,19 @@ fn test_submesh_lookup_by_name() {
     let geom = Geometry::from_desc(desc).unwrap();
 
     let mesh = geom.mesh_by_name("hero").unwrap();
-    let lod = mesh.lod(0).unwrap();
 
-    let submesh_id = lod.submesh_id("body");
+    let submesh_id = mesh.submesh_id("body");
     assert_eq!(submesh_id, Some(0));
 
-    let submesh = lod.submesh_by_name("body");
+    let submesh = mesh.submesh_by_name("body");
     assert!(submesh.is_some());
 
-    let submesh_names = lod.submesh_names();
+    let submesh_names = mesh.submesh_names();
     assert_eq!(submesh_names, vec!["body"]);
 }
 
 #[test]
-fn test_multiple_submeshes_in_lod() {
+fn test_multiple_submeshes() {
     let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
@@ -620,28 +524,23 @@ fn test_multiple_submeshes_in_lod() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 2,
-                                index_offset: 0,
-                                index_count: 3,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            },
-                            GeometrySubMeshDesc {
-                                name: "armor".to_string(),
-                                vertex_offset: 2,
-                                vertex_count: 2,
-                                index_offset: 3,
-                                index_count: 3,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
-                        ],
-                    }
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "body".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 0, vertex_count: 2,
+                            index_offset: 0, index_count: 3,
+                            topology: graphics_device::PrimitiveTopology::TriangleList,
+                        }],
+                    },
+                    GeometrySubMeshDesc {
+                        name: "armor".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 2, vertex_count: 2,
+                            index_offset: 3, index_count: 3,
+                            topology: graphics_device::PrimitiveTopology::TriangleList,
+                        }],
+                    },
                 ],
             }
         ],
@@ -650,11 +549,10 @@ fn test_multiple_submeshes_in_lod() {
     let geom = Geometry::from_desc(desc).unwrap();
 
     let mesh = geom.mesh_by_name("hero").unwrap();
-    let lod = mesh.lod(0).unwrap();
 
-    assert_eq!(lod.submesh_count(), 2);
-    assert!(lod.submesh_by_name("body").is_some());
-    assert!(lod.submesh_by_name("armor").is_some());
+    assert_eq!(mesh.submesh_count(), 2);
+    assert!(mesh.submesh_by_name("body").is_some());
+    assert!(mesh.submesh_by_name("armor").is_some());
 }
 
 // ============================================================================
@@ -665,9 +563,8 @@ fn test_multiple_submeshes_in_lod() {
 fn test_complex_geometry_hierarchy() {
     let graphics_device = create_mock_graphics_device();
 
-    // Create a large buffer to accommodate multiple meshes
-    let vertex_data = vec![0u8; 100 * 8]; // 100 vertices
-    let index_data = vec![0u8; 150 * 2]; // 150 indices
+    let vertex_data = vec![0u8; 100 * 8];
+    let index_data = vec![0u8; 150 * 2];
 
     let desc = GeometryDesc {
         name: "characters".to_string(),
@@ -679,58 +576,44 @@ fn test_complex_geometry_hierarchy() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 10,
-                                index_offset: 0,
-                                index_count: 15,
+                submeshes: vec![
+                    // body has 2 LODs
+                    GeometrySubMeshDesc {
+                        name: "body".to_string(),
+                        lods: vec![
+                            GeometrySubMeshLODDesc {
+                                vertex_offset: 0, vertex_count: 10,
+                                index_offset: 0, index_count: 15,
                                 topology: graphics_device::PrimitiveTopology::TriangleList,
                             },
-                            GeometrySubMeshDesc {
-                                name: "armor".to_string(),
-                                vertex_offset: 10,
-                                vertex_count: 5,
-                                index_offset: 15,
-                                index_count: 9,
+                            GeometrySubMeshLODDesc {
+                                vertex_offset: 0, vertex_count: 8,
+                                index_offset: 0, index_count: 12,
                                 topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
+                            },
                         ],
                     },
-                    GeometryLODDesc {
-                        lod_index: 1,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 8,
-                                index_offset: 0,
-                                index_count: 12,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
-                        ],
+                    // armor has only 1 LOD (disappears at lower LOD)
+                    GeometrySubMeshDesc {
+                        name: "armor".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 10, vertex_count: 5,
+                            index_offset: 15, index_count: 9,
+                            topology: graphics_device::PrimitiveTopology::TriangleList,
+                        }],
                     },
                 ],
             },
             GeometryMeshDesc {
                 name: "enemy".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 20,
-                                vertex_count: 12,
-                                index_offset: 30,
-                                index_count: 18,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
-                        ],
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "body".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 20, vertex_count: 12,
+                            index_offset: 30, index_count: 18,
+                            topology: graphics_device::PrimitiveTopology::TriangleList,
+                        }],
                     }
                 ],
             }
@@ -739,26 +622,19 @@ fn test_complex_geometry_hierarchy() {
 
     let geom = Geometry::from_desc(desc).unwrap();
 
-    // Verify geometry structure
     assert_eq!(geom.mesh_count(), 2);
     assert_eq!(geom.mesh_names().len(), 2);
 
-    // Verify hero mesh
+    // Hero
     let hero = geom.mesh_by_name("hero").unwrap();
-    assert_eq!(hero.lod_count(), 2);
+    assert_eq!(hero.submesh_count(), 2);
+    assert_eq!(hero.submesh_by_name("body").unwrap().lod_count(), 2);
+    assert_eq!(hero.submesh_by_name("armor").unwrap().lod_count(), 1);
 
-    let hero_lod0 = hero.lod(0).unwrap();
-    assert_eq!(hero_lod0.submesh_count(), 2);
-
-    let hero_lod1 = hero.lod(1).unwrap();
-    assert_eq!(hero_lod1.submesh_count(), 1);
-
-    // Verify enemy mesh
+    // Enemy
     let enemy = geom.mesh_by_name("enemy").unwrap();
-    assert_eq!(enemy.lod_count(), 1);
-
-    let enemy_lod0 = enemy.lod(0).unwrap();
-    assert_eq!(enemy_lod0.submesh_count(), 1);
+    assert_eq!(enemy.submesh_count(), 1);
+    assert_eq!(enemy.submesh_by_name("body").unwrap().lod_count(), 1);
 }
 
 // ============================================================================
@@ -780,27 +656,20 @@ fn test_geometry_getters() {
 
     let geom = Geometry::from_desc(desc).unwrap();
 
-    // Test graphics_device()
     assert!(Arc::ptr_eq(&geom.graphics_device(), &graphics_device));
-
-    // Test vertex_buffer()
     let vb = geom.vertex_buffer();
     assert!(Arc::strong_count(vb) >= 1);
 
-    // Test vertex_layout()
     let layout = geom.vertex_layout();
     assert_eq!(layout.bindings.len(), 1);
     assert_eq!(layout.bindings[0].stride, 8);
 
-    // Test total_vertex_count() - already tested but verify here
     assert_eq!(geom.total_vertex_count(), 4);
-
-    // Test total_index_count() - already tested but verify here
     assert_eq!(geom.total_index_count(), 6);
 }
 
 #[test]
-fn test_submesh_by_id() {
+fn test_submesh_by_id_path() {
     let graphics_device = create_mock_graphics_device();
     let desc = GeometryDesc {
         name: "test_geom".to_string(),
@@ -812,28 +681,23 @@ fn test_submesh_by_id() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 2,
-                                index_offset: 0,
-                                index_count: 3,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            },
-                            GeometrySubMeshDesc {
-                                name: "armor".to_string(),
-                                vertex_offset: 2,
-                                vertex_count: 2,
-                                index_offset: 3,
-                                index_count: 3,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
-                        ],
-                    }
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "body".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 0, vertex_count: 2,
+                            index_offset: 0, index_count: 3,
+                            topology: graphics_device::PrimitiveTopology::TriangleList,
+                        }],
+                    },
+                    GeometrySubMeshDesc {
+                        name: "armor".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 2, vertex_count: 2,
+                            index_offset: 3, index_count: 3,
+                            topology: graphics_device::PrimitiveTopology::TriangleList,
+                        }],
+                    },
                 ],
             }
         ],
@@ -841,30 +705,25 @@ fn test_submesh_by_id() {
 
     let geom = Geometry::from_desc(desc).unwrap();
 
-    // Get mesh id
     let mesh_id = geom.mesh_id("hero").unwrap();
     assert_eq!(mesh_id, 0);
 
-    // Test submesh() with ids (not by name)
-    let submesh0 = geom.submesh(mesh_id, 0, 0);
-    assert!(submesh0.is_some());
-    assert_eq!(submesh0.unwrap().vertex_offset(), 0);
-    assert_eq!(submesh0.unwrap().vertex_count(), 2);
+    // submesh(mesh_id, submesh_id)
+    let body = geom.submesh(mesh_id, 0).unwrap();
+    assert_eq!(body.lod_count(), 1);
+    assert_eq!(body.lod(0).unwrap().vertex_offset(), 0);
 
-    let submesh1 = geom.submesh(mesh_id, 0, 1);
-    assert!(submesh1.is_some());
-    assert_eq!(submesh1.unwrap().vertex_offset(), 2);
-    assert_eq!(submesh1.unwrap().vertex_count(), 2);
+    let armor = geom.submesh(mesh_id, 1).unwrap();
+    assert_eq!(armor.lod(0).unwrap().vertex_offset(), 2);
 
-    // Test invalid ids
-    let invalid_submesh = geom.submesh(mesh_id, 0, 99);
-    assert!(invalid_submesh.is_none());
+    // submesh_lod helper
+    let body_lod0 = geom.submesh_lod(mesh_id, 0, 0).unwrap();
+    assert_eq!(body_lod0.vertex_offset(), 0);
 
-    let invalid_lod = geom.submesh(mesh_id, 99, 0);
-    assert!(invalid_lod.is_none());
-
-    let invalid_mesh = geom.submesh(99, 0, 0);
-    assert!(invalid_mesh.is_none());
+    // Invalid ids
+    assert!(geom.submesh(mesh_id, 99).is_none());
+    assert!(geom.submesh(99, 0).is_none());
+    assert!(geom.submesh_lod(mesh_id, 0, 99).is_none());
 }
 
 #[test]
@@ -880,36 +739,10 @@ fn test_submeshes_iterator() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "hero".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 2,
-                                index_offset: 0,
-                                index_count: 3,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            },
-                            GeometrySubMeshDesc {
-                                name: "armor".to_string(),
-                                vertex_offset: 2,
-                                vertex_count: 2,
-                                index_offset: 3,
-                                index_count: 3,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            },
-                            GeometrySubMeshDesc {
-                                name: "weapon".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 4,
-                                index_offset: 0,
-                                index_count: 6,
-                                topology: graphics_device::PrimitiveTopology::TriangleList,
-                            }
-                        ],
-                    }
+                submeshes: vec![
+                    make_quad_submesh_desc("body"),
+                    make_quad_submesh_desc("armor"),
+                    make_quad_submesh_desc("weapon"),
                 ],
             }
         ],
@@ -918,35 +751,19 @@ fn test_submeshes_iterator() {
     let geom = Geometry::from_desc(desc).unwrap();
 
     let mesh = geom.mesh_by_name("hero").unwrap();
-    let lod = mesh.lod(0).unwrap();
 
-    // Test submeshes() iterator
-    let submesh_vec: Vec<(&str, &GeometrySubMesh)> = lod.submeshes().collect();
-
+    let submesh_vec: Vec<(&str, &GeometrySubMesh)> = mesh.submeshes().collect();
     assert_eq!(submesh_vec.len(), 3);
 
-    // Verify all submeshes are present (order not guaranteed by HashMap iterator)
     let names: Vec<&str> = submesh_vec.iter().map(|(name, _)| *name).collect();
     assert!(names.contains(&"body"));
     assert!(names.contains(&"armor"));
     assert!(names.contains(&"weapon"));
 
-    // Verify we can access submesh data through iterator
-    for (name, submesh) in lod.submeshes() {
-        match name {
-            "body" => {
-                assert_eq!(submesh.vertex_count(), 2);
-                assert_eq!(submesh.index_count(), 3);
-            }
-            "armor" => {
-                assert_eq!(submesh.vertex_count(), 2);
-                assert_eq!(submesh.index_count(), 3);
-            }
-            "weapon" => {
-                assert_eq!(submesh.vertex_count(), 4);
-                assert_eq!(submesh.index_count(), 6);
-            }
-            _ => panic!("Unexpected submesh name: {}", name),
-        }
+    for (name, submesh) in mesh.submeshes() {
+        assert!(matches!(name, "body" | "armor" | "weapon"));
+        let lod0 = submesh.lod(0).unwrap();
+        assert_eq!(lod0.vertex_count(), 4);
+        assert_eq!(lod0.index_count(), 6);
     }
 }

@@ -7,7 +7,7 @@ mod gpu_test_utils;
 
 use galaxy_3d_engine::galaxy3d::Engine;
 use galaxy_3d_engine::galaxy3d::resource::{TextureDesc, GeometryDesc};
-use galaxy_3d_engine::galaxy3d::resource::{LayerDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc};
+use galaxy_3d_engine::galaxy3d::resource::{LayerDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc};
 use galaxy_3d_engine::galaxy3d::render::{
     TextureDesc as RenderTextureDesc, TextureFormat, TextureType, TextureUsage, MipmapMode, SampleCount,
     BufferFormat, VertexLayout, VertexBinding, VertexAttribute, VertexInputRate,
@@ -125,19 +125,16 @@ fn test_integration_create_geometry_with_vulkan() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "quad".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "main".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 4,
-                                index_offset: 0,
-                                index_count: 6,
-                                topology: PrimitiveTopology::TriangleList,
-                            }
-                        ],
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "main".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 0,
+                            vertex_count: 4,
+                            index_offset: 0,
+                            index_count: 6,
+                            topology: PrimitiveTopology::TriangleList,
+                        }],
                     }
                 ],
             }
@@ -277,49 +274,37 @@ fn test_integration_geometry_with_multiple_lods() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "main_mesh".to_string(),
-                lods: vec![
-                    // LOD 0 (highest detail)
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "lod0".to_string(),
+                // Single submesh with 3 LOD variants (highest -> lowest detail)
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "main".to_string(),
+                        lods: vec![
+                            // LOD 0 (highest detail)
+                            GeometrySubMeshLODDesc {
                                 vertex_offset: 0,
                                 vertex_count: 12,
                                 index_offset: 0,
                                 index_count: 12,
                                 topology: PrimitiveTopology::TriangleList,
-                            }
-                        ],
-                    },
-                    // LOD 1 (medium detail)
-                    GeometryLODDesc {
-                        lod_index: 1,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "lod1".to_string(),
+                            },
+                            // LOD 1 (medium detail)
+                            GeometrySubMeshLODDesc {
                                 vertex_offset: 12,
                                 vertex_count: 8,
                                 index_offset: 12,
                                 index_count: 8,
                                 topology: PrimitiveTopology::TriangleList,
-                            }
-                        ],
-                    },
-                    // LOD 2 (lowest detail)
-                    GeometryLODDesc {
-                        lod_index: 2,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "lod2".to_string(),
+                            },
+                            // LOD 2 (lowest detail)
+                            GeometrySubMeshLODDesc {
                                 vertex_offset: 20,
                                 vertex_count: 4,
                                 index_offset: 20,
                                 index_count: 4,
                                 topology: PrimitiveTopology::TriangleList,
-                            }
+                            },
                         ],
-                    },
+                    }
                 ],
             }
         ],
@@ -333,12 +318,14 @@ fn test_integration_geometry_with_multiple_lods() {
     assert_eq!(geom_ref.mesh_count(), 1);
 
     let mesh = geom_ref.mesh(0).unwrap();
-    assert_eq!(mesh.lod_count(), 3);
+    assert_eq!(mesh.submesh_count(), 1);
 
-    // Verify each LOD
-    assert!(mesh.lod(0).is_some());
-    assert!(mesh.lod(1).is_some());
-    assert!(mesh.lod(2).is_some());
+    // Verify each LOD on the single submesh
+    let submesh = mesh.submesh(0).unwrap();
+    assert_eq!(submesh.lod_count(), 3);
+    assert!(submesh.lod(0).is_some());
+    assert!(submesh.lod(1).is_some());
+    assert!(submesh.lod(2).is_some());
 }
 
 #[test]
@@ -400,36 +387,37 @@ fn test_integration_geometry_with_multiple_submeshes() {
         meshes: vec![
             GeometryMeshDesc {
                 name: "character".to_string(),
-                lods: vec![
-                    GeometryLODDesc {
-                        lod_index: 0,
-                        submeshes: vec![
-                            GeometrySubMeshDesc {
-                                name: "head".to_string(),
-                                vertex_offset: 0,
-                                vertex_count: 4,
-                                index_offset: 0,
-                                index_count: 4,
-                                topology: PrimitiveTopology::TriangleList,
-                            },
-                            GeometrySubMeshDesc {
-                                name: "body".to_string(),
-                                vertex_offset: 4,
-                                vertex_count: 4,
-                                index_offset: 4,
-                                index_count: 4,
-                                topology: PrimitiveTopology::TriangleList,
-                            },
-                            GeometrySubMeshDesc {
-                                name: "legs".to_string(),
-                                vertex_offset: 8,
-                                vertex_count: 4,
-                                index_offset: 8,
-                                index_count: 4,
-                                topology: PrimitiveTopology::TriangleList,
-                            },
-                        ],
-                    }
+                submeshes: vec![
+                    GeometrySubMeshDesc {
+                        name: "head".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 0,
+                            vertex_count: 4,
+                            index_offset: 0,
+                            index_count: 4,
+                            topology: PrimitiveTopology::TriangleList,
+                        }],
+                    },
+                    GeometrySubMeshDesc {
+                        name: "body".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 4,
+                            vertex_count: 4,
+                            index_offset: 4,
+                            index_count: 4,
+                            topology: PrimitiveTopology::TriangleList,
+                        }],
+                    },
+                    GeometrySubMeshDesc {
+                        name: "legs".to_string(),
+                        lods: vec![GeometrySubMeshLODDesc {
+                            vertex_offset: 8,
+                            vertex_count: 4,
+                            index_offset: 8,
+                            index_count: 4,
+                            topology: PrimitiveTopology::TriangleList,
+                        }],
+                    },
                 ],
             }
         ],
@@ -441,12 +429,11 @@ fn test_integration_geometry_with_multiple_submeshes() {
     // Verify geometry structure
     let geom_ref = rm.geometry_by_name("character_geom").unwrap();
     let mesh = geom_ref.mesh(0).unwrap();
-    let lod = mesh.lod(0).unwrap();
 
-    assert_eq!(lod.submesh_count(), 3);
-    assert!(lod.submesh_by_name("head").is_some());
-    assert!(lod.submesh_by_name("body").is_some());
-    assert!(lod.submesh_by_name("legs").is_some());
+    assert_eq!(mesh.submesh_count(), 3);
+    assert!(mesh.submesh_by_name("head").is_some());
+    assert!(mesh.submesh_by_name("body").is_some());
+    assert!(mesh.submesh_by_name("legs").is_some());
 }
 
 #[test]
@@ -532,19 +519,16 @@ fn test_integration_many_resources_stress_test() {
             meshes: vec![
                 GeometryMeshDesc {
                     name: "quad".to_string(),
-                    lods: vec![
-                        GeometryLODDesc {
-                            lod_index: 0,
-                            submeshes: vec![
-                                GeometrySubMeshDesc {
-                                    name: "main".to_string(),
-                                    vertex_offset: 0,
-                                    vertex_count: 4,
-                                    index_offset: 0,
-                                    index_count: 6,
-                                    topology: PrimitiveTopology::TriangleList,
-                                }
-                            ],
+                    submeshes: vec![
+                        GeometrySubMeshDesc {
+                            name: "main".to_string(),
+                            lods: vec![GeometrySubMeshLODDesc {
+                                vertex_offset: 0,
+                                vertex_count: 4,
+                                index_offset: 0,
+                                index_count: 6,
+                                topology: PrimitiveTopology::TriangleList,
+                            }],
                         }
                     ],
                 }

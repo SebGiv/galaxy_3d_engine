@@ -15,7 +15,7 @@ mod updater;
 mod visible_instance_list;
 
 pub use render_instance::{
-    RenderInstance, RenderInstanceKey, RenderLOD, RenderSubMesh,
+    RenderInstance, RenderInstanceKey, RenderSubMesh,
     AABB, FLAG_VISIBLE, FLAG_CAST_SHADOW, FLAG_RECEIVE_SHADOW,
 };
 pub use visible_instance_list::{VisibleInstance, VisibleInstanceList};

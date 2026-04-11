@@ -18,7 +18,7 @@ use crate::graphics_device;
 use crate::resource::resource_manager::PassInfo;
 use super::access_type::ResourceAccess;
 use super::pass_action::PassAction;
-use super::render_target::RenderTarget;
+use super::render_target::{RenderTarget, TargetOps};
 
 pub struct RenderPass {
     /// Resource accesses declared for this pass
@@ -32,6 +32,14 @@ pub struct RenderPass {
     /// Attachment format info, derived at compile() from resolved targets.
     /// Generation is incremented only when formats actually change.
     pass_info: Option<PassInfo>,
+    /// Pre-computed clear values for begin_render_pass.
+    /// Refreshed at compile() via refresh_clear_values(). Reused via clear() +
+    /// repush — no allocation in steady state.
+    clear_values: Vec<graphics_device::ClearValue>,
+    /// Pre-computed image accesses for backend barrier tracking.
+    /// Refreshed at compile() via refresh_image_accesses(). Reused via clear() +
+    /// repush — no allocation in steady state.
+    image_accesses: Vec<graphics_device::ImageAccess>,
 }
 
 impl RenderPass {
@@ -42,6 +50,8 @@ impl RenderPass {
             graphics_device_framebuffer: None,
             action: None,
             pass_info: None,
+            clear_values: Vec::new(),
+            image_accesses: Vec::new(),
         }
     }
 
@@ -176,6 +186,67 @@ impl RenderPass {
                 .map(|t| t.texture().graphics_device_texture().info().format)
                 .collect();
             self.pass_info = Some(PassInfo::new(color_formats, depth_format, sample_count));
+        }
+    }
+
+    // ===== CLEAR VALUES =====
+
+    /// Get the pre-computed clear values (refreshed at compile()).
+    pub fn clear_values(&self) -> &[graphics_device::ClearValue] {
+        &self.clear_values
+    }
+
+    /// Refresh the clear values from the targets the pass writes/reads as
+    /// attachments. Reuses the existing Vec capacity (zero allocation in
+    /// steady state once the pass has been compiled at least once).
+    ///
+    /// Color attachments first (matching compile() order), then depth/stencil.
+    pub(crate) fn refresh_clear_values(&mut self, targets: &[RenderTarget]) {
+        self.clear_values.clear();
+
+        // Color attachments first
+        for access in &self.accesses {
+            if access.access_type.is_attachment() {
+                if let TargetOps::Color { clear_color, .. } = targets[access.target_id].ops() {
+                    self.clear_values.push(graphics_device::ClearValue::Color(*clear_color));
+                }
+            }
+        }
+
+        // Depth/stencil attachment last
+        for access in &self.accesses {
+            if access.access_type.is_attachment() {
+                if let TargetOps::DepthStencil { depth_clear, stencil_clear, .. } = targets[access.target_id].ops() {
+                    self.clear_values.push(graphics_device::ClearValue::DepthStencil {
+                        depth: *depth_clear,
+                        stencil: *stencil_clear,
+                    });
+                }
+            }
+        }
+    }
+
+    // ===== IMAGE ACCESSES =====
+
+    /// Get the pre-computed image accesses (refreshed at compile()).
+    pub fn image_accesses(&self) -> &[graphics_device::ImageAccess] {
+        &self.image_accesses
+    }
+
+    /// Refresh the image accesses from the resource access declarations.
+    /// Reuses the existing Vec capacity (zero allocation in steady state).
+    ///
+    /// Note: `previous_access_type` on each ResourceAccess must already be
+    /// resolved by the caller (via RenderGraph::resolve_previous_accesses()).
+    pub(crate) fn refresh_image_accesses(&mut self, targets: &[RenderTarget]) {
+        self.image_accesses.clear();
+        for access in &self.accesses {
+            let target = &targets[access.target_id];
+            self.image_accesses.push(graphics_device::ImageAccess {
+                texture: target.texture().graphics_device_texture().clone(),
+                access_type: access.access_type,
+                previous_access_type: access.previous_access_type,
+            });
         }
     }
 

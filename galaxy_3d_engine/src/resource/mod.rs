@@ -24,8 +24,8 @@ pub use texture::{
     TextureDesc, LayerDesc,
 };
 pub use geometry::{
-    Geometry, GeometryMesh, GeometryLOD, GeometrySubMesh,
-    GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
+    Geometry, GeometryMesh, GeometrySubMesh, GeometrySubMeshLOD,
+    GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
 };
 pub use pipeline::{
     Pipeline, PipelineDesc,
@@ -36,8 +36,8 @@ pub use material::{
     LayerRef, RegionRef, ParamValue,
 };
 pub use mesh::{
-    Mesh, MeshLOD, SubMesh,
-    MeshDesc, MeshLODDesc, SubMeshDesc,
+    Mesh, MeshSubMesh,
+    MeshDesc, MeshSubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
     mesh_desc_from_name_mapping,
 };

@@ -1,7 +1,6 @@
 use glam::Mat4;
 use crate::graphics_device::command_list::Viewport;
 use crate::camera::Frustum;
-use crate::scene::VisibleInstanceList;
 use super::*;
 
 fn create_test_camera() -> Camera {
@@ -18,18 +17,37 @@ fn create_test_camera() -> Camera {
 }
 
 // ============================================================================
-// Construction (via pub(crate) new)
+// Construction (via new_empty)
 // ============================================================================
 
 #[test]
-fn test_render_view_new() {
-    let camera = create_test_camera();
-    let visible = VisibleInstanceList::new();
-
-    let view = RenderView::new(camera, visible);
+fn test_render_view_new_empty() {
+    let view = RenderView::new_empty();
 
     assert_eq!(view.visible_count(), 0);
     assert!(view.visible_instances().is_empty());
+}
+
+// ============================================================================
+// Mutators (set_camera, visible_instances_mut)
+// ============================================================================
+
+#[test]
+fn test_render_view_set_camera() {
+    let mut view = RenderView::new_empty();
+    let camera = create_test_camera();
+    view.set_camera(camera);
+
+    assert_eq!(*view.camera().view_matrix(), Mat4::IDENTITY);
+    assert_eq!(view.camera().viewport().width, 1920.0);
+}
+
+#[test]
+fn test_render_view_visible_instances_mut() {
+    let mut view = RenderView::new_empty();
+    // visible_instances_mut allows the culler to refill the buffer in place
+    view.visible_instances_mut().clear();
+    assert_eq!(view.visible_count(), 0);
 }
 
 // ============================================================================
@@ -37,19 +55,8 @@ fn test_render_view_new() {
 // ============================================================================
 
 #[test]
-fn test_render_view_camera_snapshot() {
-    let camera = create_test_camera();
-    let view = RenderView::new(camera.clone(), VisibleInstanceList::new());
-
-    assert_eq!(*view.camera().view_matrix(), Mat4::IDENTITY);
-    assert_eq!(view.camera().viewport().width, 1920.0);
-}
-
-#[test]
 fn test_render_view_visible_count() {
-    let camera = create_test_camera();
-    let view = RenderView::new(camera, VisibleInstanceList::new());
-
+    let view = RenderView::new_empty();
     assert_eq!(view.visible_count(), 0);
 }
 
@@ -59,8 +66,8 @@ fn test_render_view_visible_count() {
 
 #[test]
 fn test_render_view_clone() {
-    let camera = create_test_camera();
-    let view = RenderView::new(camera, VisibleInstanceList::new());
+    let mut view = RenderView::new_empty();
+    view.set_camera(create_test_camera());
     let cloned = view.clone();
 
     assert_eq!(cloned.visible_count(), view.visible_count());

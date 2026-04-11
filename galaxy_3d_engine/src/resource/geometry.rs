@@ -6,8 +6,10 @@
 //!
 //! - **Geometry**: Container with shared vertex/index buffers and vertex layout
 //! - **GeometryMesh**: A named mesh (e.g., "hero", "enemy")
-//! - **GeometryLOD**: A level of detail (index 0 = most detailed)
-//! - **GeometrySubMesh**: A drawable region with topology and buffer offsets
+//! - **GeometrySubMesh**: A named drawable component (e.g., "body", "armor")
+//!   with one or more LOD variants
+//! - **GeometrySubMeshLOD**: A specific LOD variant of a submesh — actual
+//!   draw parameters (offsets, count, topology)
 //!
 //! # Example
 //!
@@ -17,9 +19,14 @@
 //! ├── index_buffer (shared, optional)
 //! └── meshes
 //!     ├── "hero" → GeometryMesh
-//!     │   └── lods[0] → GeometryLOD
-//!     │       ├── "body" → GeometrySubMesh
-//!     │       └── "armor" → GeometrySubMesh
+//!     │   ├── "body"  → GeometrySubMesh
+//!     │   │   ├── lod[0] → GeometrySubMeshLOD (most detailed)
+//!     │   │   ├── lod[1] → GeometrySubMeshLOD
+//!     │   │   └── lod[2] → GeometrySubMeshLOD (lowest)
+//!     │   ├── "armor" → GeometrySubMesh
+//!     │   │   └── lod[0..2] (3 LODs)
+//!     │   └── "cape"  → GeometrySubMesh
+//!     │       └── lod[0..1] (only 2 LODs — disappears at lowest LOD)
 //!     └── "enemy" → GeometryMesh
 //!         └── ...
 //! ```
@@ -31,16 +38,14 @@ use crate::{engine_bail, engine_err};
 use crate::graphics_device;
 
 // ============================================================================
-// GEOMETRY SUBMESH
+// GEOMETRY SUBMESH LOD
 // ============================================================================
 
-/// A drawable region within shared buffers.
+/// A specific LOD variant of a `GeometrySubMesh`.
 ///
-/// Represents the smallest unit of geometry that can be drawn.
-/// Contains all parameters needed for a draw call.
-///
-/// Note: The graphics_device is accessed via the parent `Geometry`, not stored here.
-pub struct GeometrySubMesh {
+/// Holds the actual draw parameters (vertex/index offsets and counts,
+/// primitive topology). LOD index 0 is the most detailed.
+pub struct GeometrySubMeshLOD {
     /// First vertex index (base vertex for indexed draw)
     vertex_offset: u32,
     /// Number of vertices
@@ -51,11 +56,11 @@ pub struct GeometrySubMesh {
     /// Number of indices (ignored if geometry is non-indexed)
     index_count: u32,
 
-    /// Primitive topology for this submesh
+    /// Primitive topology for this LOD
     topology: graphics_device::PrimitiveTopology,
 }
 
-impl GeometrySubMesh {
+impl GeometrySubMeshLOD {
     /// Get the vertex offset (base vertex)
     pub fn vertex_offset(&self) -> u32 {
         self.vertex_offset
@@ -83,22 +88,60 @@ impl GeometrySubMesh {
 }
 
 // ============================================================================
-// GEOMETRY LOD
+// GEOMETRY SUBMESH
 // ============================================================================
 
-/// A level of detail containing submeshes.
+/// A named drawable component of a `GeometryMesh` (e.g., "body", "armor").
 ///
-/// LOD index 0 is the most detailed, higher indices are less detailed.
-/// Different LODs may have different submeshes (e.g., cape removed in LOD2).
-pub struct GeometryLOD {
+/// Contains one or more LOD variants. The submesh identity is stable across
+/// LODs — only the geometric detail varies. A submesh may have fewer LODs
+/// than other submeshes in the same `GeometryMesh` (e.g., a cape that
+/// disappears at the lowest LOD).
+pub struct GeometrySubMesh {
+    /// LOD variants (index 0 = most detailed)
+    lods: Vec<GeometrySubMeshLOD>,
+}
+
+impl GeometrySubMesh {
+    /// Create a new empty submesh
+    fn new() -> Self {
+        Self { lods: Vec::new() }
+    }
+
+    /// Get a LOD variant by index (0 = most detailed)
+    pub fn lod(&self, index: usize) -> Option<&GeometrySubMeshLOD> {
+        self.lods.get(index)
+    }
+
+    /// Get the number of LOD variants
+    pub fn lod_count(&self) -> usize {
+        self.lods.len()
+    }
+
+    /// Iterate over all LOD variants of this submesh
+    pub fn lods(&self) -> impl Iterator<Item = &GeometrySubMeshLOD> {
+        self.lods.iter()
+    }
+}
+
+// ============================================================================
+// GEOMETRY MESH
+// ============================================================================
+
+/// A named mesh within a Geometry group.
+///
+/// Contains multiple submeshes (named drawable components), each with its
+/// own LOD chain. Submeshes are stable across LODs — the LOD selection
+/// happens per-submesh, not per-mesh.
+pub struct GeometryMesh {
     /// SubMeshes stored by index (id)
     submeshes: Vec<GeometrySubMesh>,
     /// Name to id (index) mapping
     submesh_names: FxHashMap<String, usize>,
 }
 
-impl GeometryLOD {
-    /// Create a new empty LOD
+impl GeometryMesh {
+    /// Create a new empty geometry mesh
     fn new() -> Self {
         Self {
             submeshes: Vec::new(),
@@ -150,46 +193,10 @@ impl GeometryLOD {
     fn contains_submesh(&self, name: &str) -> bool {
         self.submesh_names.contains_key(name)
     }
-}
 
-// ============================================================================
-// GEOMETRY MESH
-// ============================================================================
-
-/// A named mesh within a Geometry group.
-///
-/// Contains multiple LOD levels, each with potentially different submeshes.
-pub struct GeometryMesh {
-    /// LOD levels (index 0 = most detailed)
-    lods: Vec<GeometryLOD>,
-}
-
-impl GeometryMesh {
-    /// Create a new geometry mesh with empty LODs
-    fn new() -> Self {
-        Self { lods: Vec::new() }
-    }
-
-    /// Get a LOD by index (0 = most detailed)
-    pub fn lod(&self, index: usize) -> Option<&GeometryLOD> {
-        self.lods.get(index)
-    }
-
-    /// Get mutable LOD by index
-    fn lod_mut(&mut self, index: usize) -> Option<&mut GeometryLOD> {
-        self.lods.get_mut(index)
-    }
-
-    /// Get the number of LOD levels
-    pub fn lod_count(&self) -> usize {
-        self.lods.len()
-    }
-
-    /// Ensure LOD level exists, creating empty LODs if needed
-    fn ensure_lod(&mut self, lod_index: usize) {
-        while self.lods.len() <= lod_index {
-            self.lods.push(GeometryLOD::new());
-        }
+    /// Get a mutable submesh by id (internal)
+    fn submesh_mut(&mut self, id: usize) -> Option<&mut GeometrySubMesh> {
+        self.submeshes.get_mut(id)
     }
 }
 
@@ -208,8 +215,8 @@ impl GeometryMesh {
 /// ├── vertex_layout (shared)
 /// └── meshes
 ///     ├── 0: "hero" → GeometryMesh
-///     │   └── lods[0..N] → GeometryLOD
-///     │       └── submeshes[0..M] → GeometrySubMesh
+///     │   └── submeshes[0..M] → GeometrySubMesh
+///     │       └── lods[0..N] → GeometrySubMeshLOD
 ///     └── 1: "enemy" → GeometryMesh
 ///         └── ...
 /// ```
@@ -228,8 +235,10 @@ pub struct Geometry {
     /// Shared index buffer (None for non-indexed geometries)
     index_buffer: Option<Arc<dyn graphics_device::Buffer>>,
 
-    /// Vertex layout description (shared by all submeshes)
-    vertex_layout: graphics_device::VertexLayout,
+    /// Vertex layout description (shared by all submeshes).
+    /// Wrapped in Arc so the drawer can clone the reference (zero allocation)
+    /// when passing to resolve_pipeline.
+    vertex_layout: Arc<graphics_device::VertexLayout>,
 
     /// Index type (U16 or U32), ignored if no index buffer
     index_type: graphics_device::IndexType,
@@ -264,7 +273,7 @@ impl Geometry {
             graphics_device,
             vertex_buffer,
             index_buffer,
-            vertex_layout,
+            vertex_layout: Arc::new(vertex_layout),
             index_type,
             total_vertex_count,
             total_index_count,
@@ -379,8 +388,11 @@ impl Geometry {
         self.index_buffer.is_some()
     }
 
-    /// Get the vertex layout
-    pub fn vertex_layout(&self) -> &graphics_device::VertexLayout {
+    /// Get the vertex layout (Arc-wrapped for cheap cloning).
+    ///
+    /// Returns `&Arc<VertexLayout>` so callers can `Arc::clone(...)` to extend
+    /// the lifetime without deep-copying the underlying Vec.
+    pub fn vertex_layout(&self) -> &Arc<graphics_device::VertexLayout> {
         &self.vertex_layout
     }
 
@@ -430,34 +442,40 @@ impl Geometry {
         self.meshes.len()
     }
 
-    /// Get a submesh by full path: mesh_id -> lod_index -> submesh_id
-    pub fn submesh(&self, mesh_id: usize, lod: usize, submesh_id: usize) -> Option<&GeometrySubMesh> {
+    /// Get a submesh by full path: mesh_id -> submesh_id
+    pub fn submesh(&self, mesh_id: usize, submesh_id: usize) -> Option<&GeometrySubMesh> {
         self.meshes.get(mesh_id)?
-            .lod(lod)?
             .submesh(submesh_id)
     }
 
-    /// Get a submesh by names: mesh_name -> lod_index -> submesh_name
-    pub fn submesh_by_name(&self, mesh_name: &str, lod: usize, submesh_name: &str) -> Option<&GeometrySubMesh> {
+    /// Get a submesh by names: mesh_name -> submesh_name
+    pub fn submesh_by_name(&self, mesh_name: &str, submesh_name: &str) -> Option<&GeometrySubMesh> {
         self.mesh_by_name(mesh_name)?
-            .lod(lod)?
             .submesh_by_name(submesh_name)
+    }
+
+    /// Get a specific LOD of a submesh by full path: mesh_id -> submesh_id -> lod_index
+    pub fn submesh_lod(&self, mesh_id: usize, submesh_id: usize, lod_index: usize) -> Option<&GeometrySubMeshLOD> {
+        self.submesh(mesh_id, submesh_id)?
+            .lod(lod_index)
     }
 
     // ===== MODIFICATION =====
 
-    /// Add a mesh, returns its id (index)
+    /// Add a mesh, returns its id (index).
     ///
-    /// Validates all submesh offsets against buffer sizes.
+    /// Validates all submesh LOD offsets against buffer sizes.
     pub fn add_mesh(&mut self, desc: GeometryMeshDesc) -> Result<usize> {
         if self.mesh_names.contains_key(&desc.name) {
-            engine_bail!("galaxy3d::Geometry", "GeometryMesh '{}' already exists in Geometry '{}'", desc.name, self.name);
+            engine_bail!("galaxy3d::Geometry",
+                "GeometryMesh '{}' already exists in Geometry '{}'",
+                desc.name, self.name);
         }
 
         let mut mesh = GeometryMesh::new();
 
-        for lod_desc in desc.lods {
-            self.add_lod_to_mesh(&mut mesh, lod_desc)?;
+        for submesh_desc in desc.submeshes {
+            self.add_submesh_to_mesh(&mut mesh, submesh_desc)?;
         }
 
         let id = self.meshes.len();
@@ -466,129 +484,132 @@ impl Geometry {
         Ok(id)
     }
 
-    /// Add a LOD to an existing mesh, returns the lod index
-    pub fn add_lod(&mut self, mesh_id: usize, desc: GeometryLODDesc) -> Result<usize> {
-        // Validate all submeshes first (before borrowing meshes mutably)
-        for submesh_desc in &desc.submeshes {
-            self.validate_submesh_desc(submesh_desc)?;
-        }
-
-        let mesh = self.meshes.get_mut(mesh_id)
-            .ok_or_else(|| engine_err!("galaxy3d::Geometry", "GeometryMesh id {} not found in Geometry '{}'", mesh_id, self.name))?;
-
-        mesh.ensure_lod(desc.lod_index);
-
-        let lod = mesh.lod_mut(desc.lod_index)
-            .expect("LOD should exist after ensure_lod");
-
-        for submesh_desc in desc.submeshes {
-            if lod.contains_submesh(&submesh_desc.name) {
-                engine_bail!("galaxy3d::Geometry", "GeometrySubMesh '{}' already exists in LOD {}", submesh_desc.name, desc.lod_index);
-            }
-
-            let submesh = GeometrySubMesh {
-                vertex_offset: submesh_desc.vertex_offset,
-                vertex_count: submesh_desc.vertex_count,
-                index_offset: submesh_desc.index_offset,
-                index_count: submesh_desc.index_count,
-                topology: submesh_desc.topology,
-            };
-
-            lod.add_submesh_internal(submesh_desc.name, submesh);
-        }
-
-        Ok(desc.lod_index)
-    }
-
-    /// Add a submesh to an existing LOD, returns the submesh id (index)
+    /// Add a submesh (with all its LODs) to an existing mesh, returns the submesh id.
     pub fn add_submesh(
         &mut self,
         mesh_id: usize,
-        lod_index: usize,
         desc: GeometrySubMeshDesc,
     ) -> Result<usize> {
-        // Validate offsets
-        self.validate_submesh_desc(&desc)?;
-
-        let mesh = self.meshes.get_mut(mesh_id)
-            .ok_or_else(|| engine_err!("galaxy3d::Geometry", "GeometryMesh id {} not found in Geometry '{}'", mesh_id, self.name))?;
-
-        mesh.ensure_lod(lod_index);
-
-        let lod = mesh.lod_mut(lod_index)
-            .ok_or_else(|| engine_err!("galaxy3d::Geometry", "LOD {} not found in GeometryMesh id {}", lod_index, mesh_id))?;
-
-        if lod.contains_submesh(&desc.name) {
-            engine_bail!("galaxy3d::Geometry", "GeometrySubMesh '{}' already exists in LOD {} of GeometryMesh id {}",
-                desc.name, lod_index, mesh_id);
+        // Validate all LOD offsets first (before borrowing mesh mutably)
+        for lod_desc in &desc.lods {
+            self.validate_submesh_lod_desc(&desc.name, lod_desc)?;
         }
 
-        let submesh = GeometrySubMesh {
+        let mesh = self.meshes.get_mut(mesh_id)
+            .ok_or_else(|| engine_err!("galaxy3d::Geometry",
+                "GeometryMesh id {} not found in Geometry '{}'",
+                mesh_id, self.name))?;
+
+        if mesh.contains_submesh(&desc.name) {
+            engine_bail!("galaxy3d::Geometry",
+                "GeometrySubMesh '{}' already exists in GeometryMesh id {}",
+                desc.name, mesh_id);
+        }
+
+        let mut submesh = GeometrySubMesh::new();
+        for lod_desc in desc.lods {
+            submesh.lods.push(GeometrySubMeshLOD {
+                vertex_offset: lod_desc.vertex_offset,
+                vertex_count: lod_desc.vertex_count,
+                index_offset: lod_desc.index_offset,
+                index_count: lod_desc.index_count,
+                topology: lod_desc.topology,
+            });
+        }
+
+        let submesh_id = mesh.add_submesh_internal(desc.name, submesh);
+        Ok(submesh_id)
+    }
+
+    /// Add a single LOD variant to an existing submesh, returns the new lod index.
+    pub fn add_submesh_lod(
+        &mut self,
+        mesh_id: usize,
+        submesh_id: usize,
+        desc: GeometrySubMeshLODDesc,
+    ) -> Result<usize> {
+        // Validate the LOD offsets first
+        self.validate_submesh_lod_desc("<submesh_id>", &desc)?;
+
+        let mesh = self.meshes.get_mut(mesh_id)
+            .ok_or_else(|| engine_err!("galaxy3d::Geometry",
+                "GeometryMesh id {} not found in Geometry '{}'",
+                mesh_id, self.name))?;
+
+        let submesh = mesh.submesh_mut(submesh_id)
+            .ok_or_else(|| engine_err!("galaxy3d::Geometry",
+                "GeometrySubMesh id {} not found in GeometryMesh id {}",
+                submesh_id, mesh_id))?;
+
+        let lod_index = submesh.lods.len();
+        submesh.lods.push(GeometrySubMeshLOD {
             vertex_offset: desc.vertex_offset,
             vertex_count: desc.vertex_count,
             index_offset: desc.index_offset,
             index_count: desc.index_count,
             topology: desc.topology,
-        };
+        });
 
-        let submesh_id = lod.add_submesh_internal(desc.name, submesh);
-        Ok(submesh_id)
+        Ok(lod_index)
     }
 
     // ===== INTERNAL HELPERS =====
 
-    /// Validate submesh descriptor against buffer sizes
-    fn validate_submesh_desc(&self, desc: &GeometrySubMeshDesc) -> Result<()> {
+    /// Validate a submesh LOD descriptor against buffer sizes
+    fn validate_submesh_lod_desc(&self, submesh_name: &str, desc: &GeometrySubMeshLODDesc) -> Result<()> {
         // Validate vertex range
         let vertex_end = desc.vertex_offset
             .checked_add(desc.vertex_count)
-            .ok_or_else(|| engine_err!("galaxy3d::Geometry", "Vertex range overflow in submesh '{}'", desc.name))?;
+            .ok_or_else(|| engine_err!("galaxy3d::Geometry",
+                "Vertex range overflow in submesh '{}'", submesh_name))?;
 
         if vertex_end > self.total_vertex_count {
-            engine_bail!("galaxy3d::Geometry", "GeometrySubMesh '{}' vertex range [{}, {}) exceeds total_vertex_count {}",
-                desc.name, desc.vertex_offset, vertex_end, self.total_vertex_count);
+            engine_bail!("galaxy3d::Geometry",
+                "GeometrySubMesh '{}' LOD vertex range [{}, {}) exceeds total_vertex_count {}",
+                submesh_name, desc.vertex_offset, vertex_end, self.total_vertex_count);
         }
 
         // Validate index range (if indexed)
         if self.is_indexed() {
             let index_end = desc.index_offset
                 .checked_add(desc.index_count)
-                .ok_or_else(|| engine_err!("galaxy3d::Geometry", "Index range overflow in submesh '{}'", desc.name))?;
+                .ok_or_else(|| engine_err!("galaxy3d::Geometry",
+                    "Index range overflow in submesh '{}'", submesh_name))?;
 
             if index_end > self.total_index_count {
-                engine_bail!("galaxy3d::Geometry", "GeometrySubMesh '{}' index range [{}, {}) exceeds total_index_count {}",
-                    desc.name, desc.index_offset, index_end, self.total_index_count);
+                engine_bail!("galaxy3d::Geometry",
+                    "GeometrySubMesh '{}' LOD index range [{}, {}) exceeds total_index_count {}",
+                    submesh_name, desc.index_offset, index_end, self.total_index_count);
             }
         }
 
         Ok(())
     }
 
-    /// Add LOD to mesh (used during initial creation)
-    fn add_lod_to_mesh(&self, mesh: &mut GeometryMesh, desc: GeometryLODDesc) -> Result<()> {
-        mesh.ensure_lod(desc.lod_index);
-
-        let lod = mesh.lod_mut(desc.lod_index)
-            .expect("LOD should exist after ensure_lod");
-
-        for submesh_desc in desc.submeshes {
-            self.validate_submesh_desc(&submesh_desc)?;
-
-            if lod.contains_submesh(&submesh_desc.name) {
-                engine_bail!("galaxy3d::Geometry", "GeometrySubMesh '{}' already exists in LOD {}", submesh_desc.name, desc.lod_index);
-            }
-
-            let submesh = GeometrySubMesh {
-                vertex_offset: submesh_desc.vertex_offset,
-                vertex_count: submesh_desc.vertex_count,
-                index_offset: submesh_desc.index_offset,
-                index_count: submesh_desc.index_count,
-                topology: submesh_desc.topology,
-            };
-
-            lod.add_submesh_internal(submesh_desc.name, submesh);
+    /// Add submesh to mesh (used during initial creation, before mesh is in self.meshes)
+    fn add_submesh_to_mesh(&self, mesh: &mut GeometryMesh, desc: GeometrySubMeshDesc) -> Result<()> {
+        if mesh.contains_submesh(&desc.name) {
+            engine_bail!("galaxy3d::Geometry",
+                "GeometrySubMesh '{}' already exists in GeometryMesh", desc.name);
         }
 
+        // Validate all LOD offsets
+        for lod_desc in &desc.lods {
+            self.validate_submesh_lod_desc(&desc.name, lod_desc)?;
+        }
+
+        let mut submesh = GeometrySubMesh::new();
+        for lod_desc in desc.lods {
+            submesh.lods.push(GeometrySubMeshLOD {
+                vertex_offset: lod_desc.vertex_offset,
+                vertex_count: lod_desc.vertex_count,
+                index_offset: lod_desc.index_offset,
+                index_count: lod_desc.index_count,
+                topology: lod_desc.topology,
+            });
+        }
+
+        mesh.add_submesh_internal(desc.name, submesh);
         Ok(())
     }
 }
@@ -597,11 +618,9 @@ impl Geometry {
 // DESCRIPTORS
 // ============================================================================
 
-/// Descriptor for creating a GeometrySubMesh
+/// Descriptor for creating a single LOD variant of a GeometrySubMesh.
 #[derive(Debug, Clone)]
-pub struct GeometrySubMeshDesc {
-    /// SubMesh name (unique within its LOD)
-    pub name: String,
+pub struct GeometrySubMeshLODDesc {
     /// First vertex offset
     pub vertex_offset: u32,
     /// Number of vertices
@@ -614,13 +633,14 @@ pub struct GeometrySubMeshDesc {
     pub topology: graphics_device::PrimitiveTopology,
 }
 
-/// Descriptor for creating a GeometryLOD
+/// Descriptor for creating a GeometrySubMesh (with all its LOD variants).
 #[derive(Debug, Clone)]
-pub struct GeometryLODDesc {
-    /// LOD index (0 = most detailed)
-    pub lod_index: usize,
-    /// SubMeshes at this LOD level
-    pub submeshes: Vec<GeometrySubMeshDesc>,
+pub struct GeometrySubMeshDesc {
+    /// SubMesh name (unique within its parent GeometryMesh)
+    pub name: String,
+    /// LOD variants (index 0 = most detailed). Submeshes may have different
+    /// LOD counts (e.g., a cape may have fewer LODs than the body).
+    pub lods: Vec<GeometrySubMeshLODDesc>,
 }
 
 /// Descriptor for creating a GeometryMesh
@@ -628,8 +648,8 @@ pub struct GeometryLODDesc {
 pub struct GeometryMeshDesc {
     /// Mesh name (unique within the group)
     pub name: String,
-    /// LOD levels
-    pub lods: Vec<GeometryLODDesc>,
+    /// SubMeshes (each with its own LOD chain)
+    pub submeshes: Vec<GeometrySubMeshDesc>,
 }
 
 /// Descriptor for creating a Geometry resource

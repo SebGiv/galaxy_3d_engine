@@ -14,7 +14,7 @@ use crate::resource::texture::{
     TextureDesc, LayerDesc, AtlasRegionDesc,
 };
 use crate::resource::geometry::{
-    Geometry, GeometryDesc, GeometryMeshDesc, GeometryLODDesc, GeometrySubMeshDesc,
+    Geometry, GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
 };
 use crate::resource::shader::Shader;
 use crate::resource::pipeline::{
@@ -62,7 +62,10 @@ slotmap::new_key_type! {
 pub struct PipelineCacheKey {
     pub vertex_shader: ShaderKey,
     pub fragment_shader: ShaderKey,
-    pub vertex_layout: graphics_device::VertexLayout,
+    /// Arc-wrapped vertex layout: Hash and Eq delegate to the inner content,
+    /// so two Arcs pointing to identical layouts compare equal and hash the same.
+    /// Cloning the Arc is a single atomic increment (zero allocation).
+    pub vertex_layout: Arc<graphics_device::VertexLayout>,
     pub topology: graphics_device::PrimitiveTopology,
     pub color_blend: graphics_device::ColorBlendState,
     pub polygon_mode: graphics_device::PolygonMode,
@@ -382,28 +385,11 @@ impl ResourceManager {
         geometry.add_mesh(desc)
     }
 
-    /// Add a LOD to an existing mesh
-    pub fn add_geometry_lod(
-        &mut self,
-        geom_key: GeometryKey,
-        mesh_id: usize,
-        desc: GeometryLODDesc,
-    ) -> Result<usize> {
-        let arc = self.geometries.get_mut(geom_key)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry not found"))?;
-
-        let geometry = Arc::get_mut(arc)
-            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry: other references exist"))?;
-
-        geometry.add_lod(mesh_id, desc)
-    }
-
-    /// Add a submesh to an existing LOD
+    /// Add a submesh (with all its LOD variants) to an existing GeometryMesh
     pub fn add_geometry_submesh(
         &mut self,
         geom_key: GeometryKey,
         mesh_id: usize,
-        lod_index: usize,
         desc: GeometrySubMeshDesc,
     ) -> Result<usize> {
         let arc = self.geometries.get_mut(geom_key)
@@ -412,7 +398,24 @@ impl ResourceManager {
         let geometry = Arc::get_mut(arc)
             .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry: other references exist"))?;
 
-        geometry.add_submesh(mesh_id, lod_index, desc)
+        geometry.add_submesh(mesh_id, desc)
+    }
+
+    /// Add a single LOD variant to an existing submesh
+    pub fn add_geometry_submesh_lod(
+        &mut self,
+        geom_key: GeometryKey,
+        mesh_id: usize,
+        submesh_id: usize,
+        desc: GeometrySubMeshLODDesc,
+    ) -> Result<usize> {
+        let arc = self.geometries.get_mut(geom_key)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry not found"))?;
+
+        let geometry = Arc::get_mut(arc)
+            .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry: other references exist"))?;
+
+        geometry.add_submesh_lod(mesh_id, submesh_id, desc)
     }
 
     // ===== SHADER CREATION =====
@@ -562,7 +565,7 @@ impl ResourceManager {
         &mut self,
         vertex_shader: ShaderKey,
         fragment_shader: ShaderKey,
-        vertex_layout: &graphics_device::VertexLayout,
+        vertex_layout: Arc<graphics_device::VertexLayout>,
         topology: graphics_device::PrimitiveTopology,
         color_blend: &graphics_device::ColorBlendState,
         polygon_mode: graphics_device::PolygonMode,
@@ -572,7 +575,7 @@ impl ResourceManager {
         let cache_key = PipelineCacheKey {
             vertex_shader,
             fragment_shader,
-            vertex_layout: vertex_layout.clone(),
+            vertex_layout,
             topology,
             color_blend: *color_blend,
             polygon_mode,
@@ -599,7 +602,9 @@ impl ResourceManager {
             PipelineDesc {
                 vertex_shader,
                 fragment_shader: cache_key.fragment_shader,
-                vertex_layout: cache_key.vertex_layout.clone(),
+                // Cache miss path: deep-clone the inner VertexLayout for the
+                // pipeline descriptor (only happens at cache miss, not in hot path).
+                vertex_layout: (*cache_key.vertex_layout).clone(),
                 topology: cache_key.topology,
                 rasterization: graphics_device::RasterizationState {
                     polygon_mode: cache_key.polygon_mode,
@@ -789,14 +794,14 @@ impl ResourceManager {
         }
 
         let mesh = Mesh::from_desc(desc, &*self)?;
-        let lod_count = mesh.lod_count();
+        let submesh_count = mesh.submesh_count();
 
         let key = self.meshes.insert(Arc::new(mesh));
         self.mesh_names.insert(name.clone(), key);
 
         crate::engine_info!("galaxy3d::ResourceManager",
-            "Created Mesh resource '{}' ({} LOD{})",
-            name, lod_count, if lod_count != 1 { "s" } else { "" });
+            "Created Mesh resource '{}' ({} submesh{})",
+            name, submesh_count, if submesh_count != 1 { "es" } else { "" });
 
         Ok(key)
     }

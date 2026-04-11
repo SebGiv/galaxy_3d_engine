@@ -10,7 +10,7 @@ use crate::camera::{Camera, RenderView};
 use super::scene::Scene;
 use super::scene_index::SceneIndex;
 use super::render_instance::AABB;
-use super::light::LightType;
+use super::light::{LightType, LightKey};
 
 /// Strategy for synchronizing scene data to GPU buffers.
 ///
@@ -100,7 +100,17 @@ impl Updater for NoOpUpdater {
 /// `ResourceManager::create_default_instance_buffer()` whose layout is:
 ///   0: world (Mat4), 1: previousWorld (Mat4), 2: inverseWorld (Mat4),
 ///   3: materialSlotId (UInt), 4: flags (UInt), 5: lightCount (UInt), ...
-pub struct DefaultUpdater;
+pub struct DefaultUpdater {
+    /// Pre-allocated buffer for the keys of currently enabled lights.
+    /// Reused across frames via clear() + repush — zero allocation in steady
+    /// state once the high-water mark of enabled lights has been reached.
+    enabled_light_keys: Vec<LightKey>,
+    /// Pre-allocated buffer for the per-instance light scoring candidates
+    /// `(light_slot, score)`. Reused across frames AND across visible
+    /// instances within a frame via clear() + repush — zero allocation in
+    /// steady state.
+    candidates: Vec<(u32, f32)>,
+}
 
 impl DefaultUpdater {
     /// Default global binding indices (set 0)
@@ -136,7 +146,10 @@ impl DefaultUpdater {
     const LIGHT_FIELD_ATTENUATION: usize      = 4;
 
     pub fn new() -> Self {
-        Self
+        Self {
+            enabled_light_keys: Vec::new(),
+            candidates: Vec::new(),
+        }
     }
 }
 
@@ -181,46 +194,53 @@ impl Updater for DefaultUpdater {
             }
         }
 
-        // Phase 1: new instances — write ALL GPU fields + insert into SceneIndex
+        // Phase 1: new instances — write ALL GPU fields + insert into SceneIndex.
+        // Lock the ResourceManager once for the whole new-instances loop, only
+        // if there is anything to do (avoids paying the lock for an empty list).
         let new_keys = scene.new_instances();
-        for key in new_keys {
-            let instance = match scene.render_instance(*key) {
-                Some(inst) => inst,
-                None => continue,
-            };
+        if !new_keys.is_empty() {
+            let rm_arc = crate::engine::Engine::resource_manager()?;
+            let rm = rm_arc.lock().unwrap();
 
-            let world = *instance.world_matrix();
-            let inverse_world = world.inverse();
-            let flags = instance.flags() as u32;
+            for key in new_keys {
+                let instance = match scene.render_instance(*key) {
+                    Some(inst) => inst,
+                    None => continue,
+                };
 
-            let lod = match instance.lod(0) {
-                Some(lod) => lod,
-                None => continue,
-            };
+                let world = *instance.world_matrix();
+                let inverse_world = world.inverse();
+                let flags = instance.flags() as u32;
 
-            for sm_idx in 0..lod.sub_mesh_count() {
-                let sub_mesh = lod.sub_mesh(sm_idx).unwrap();
-                let slot = sub_mesh.draw_slot();
-                let material_slot_id = sub_mesh.material_slot_id();
+                for sm_idx in 0..instance.sub_mesh_count() {
+                    let sub_mesh = instance.sub_mesh(sm_idx).unwrap();
+                    let slot = sub_mesh.draw_slot();
+                    // Look up the material slot id directly — it lives on the
+                    // Material itself; no per-instance cache to keep in sync.
+                    let material_slot_id = rm.material(sub_mesh.material())
+                        .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater",
+                            "Material key not found in ResourceManager"))?
+                        .slot_id();
 
-                let buf = scene.global_buffer(Self::BINDING_INSTANCES)
-                    .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
-                buf.update_field(slot, Self::INSTANCE_FIELD_WORLD,
-                    bytemuck::bytes_of(&world))?;
-                buf.update_field(slot, Self::INSTANCE_FIELD_PREVIOUS_WORLD,
-                    bytemuck::bytes_of(&world))?;
-                buf.update_field(slot, Self::INSTANCE_FIELD_INVERSE_WORLD,
-                    bytemuck::bytes_of(&inverse_world))?;
-                buf.update_field(slot, Self::INSTANCE_FIELD_MATERIAL_SLOT_ID,
-                    bytemuck::bytes_of(&material_slot_id))?;
-                buf.update_field(slot, Self::INSTANCE_FIELD_FLAGS,
-                    bytemuck::bytes_of(&flags))?;
-            }
+                    let buf = scene.global_buffer(Self::BINDING_INSTANCES)
+                        .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
+                    buf.update_field(slot, Self::INSTANCE_FIELD_WORLD,
+                        bytemuck::bytes_of(&world))?;
+                    buf.update_field(slot, Self::INSTANCE_FIELD_PREVIOUS_WORLD,
+                        bytemuck::bytes_of(&world))?;
+                    buf.update_field(slot, Self::INSTANCE_FIELD_INVERSE_WORLD,
+                        bytemuck::bytes_of(&inverse_world))?;
+                    buf.update_field(slot, Self::INSTANCE_FIELD_MATERIAL_SLOT_ID,
+                        bytemuck::bytes_of(&material_slot_id))?;
+                    buf.update_field(slot, Self::INSTANCE_FIELD_FLAGS,
+                        bytemuck::bytes_of(&flags))?;
+                }
 
-            if let Some(ref mut idx) = scene_index {
-                let world_aabb = instance.bounding_box().transformed(&world);
-                let world_position = world.w_axis.truncate();
-                idx.insert(*key, world_position, &world_aabb);
+                if let Some(ref mut idx) = scene_index {
+                    let world_aabb = instance.bounding_box().transformed(&world);
+                    let world_position = world.w_axis.truncate();
+                    idx.insert(*key, world_position, &world_aabb);
+                }
             }
         }
 
@@ -232,14 +252,10 @@ impl Updater for DefaultUpdater {
                 None => continue,
             };
 
-            let lod = match instance.lod(0) {
-                Some(lod) => lod,
-                None => continue,
-            };
             let world = *instance.world_matrix();
             let inverse_world = world.inverse();
-            for sm_idx in 0..lod.sub_mesh_count() {
-                let sub_mesh = lod.sub_mesh(sm_idx).unwrap();
+            for sm_idx in 0..instance.sub_mesh_count() {
+                let sub_mesh = instance.sub_mesh(sm_idx).unwrap();
                 let slot = sub_mesh.draw_slot();
 
                 let buf = scene.global_buffer(Self::BINDING_INSTANCES)
@@ -337,12 +353,16 @@ impl Updater for DefaultUpdater {
     }
 
     fn assign_lights(&mut self, scene: &Scene, render_view: &RenderView) -> Result<()> {
-        // Collect enabled lights into a flat Vec for fast iteration
-        let enabled_lights: Vec<_> = scene.lights()
-            .filter(|(_, light)| light.enabled())
-            .collect();
+        // Refresh the persistent enabled-light-keys buffer.
+        // clear() preserves capacity → no allocation in steady state.
+        self.enabled_light_keys.clear();
+        for (key, light) in scene.lights() {
+            if light.enabled() {
+                self.enabled_light_keys.push(key);
+            }
+        }
 
-        if enabled_lights.is_empty() {
+        if self.enabled_light_keys.is_empty() {
             // Write lightCount = 0 for all visible instances
             let zero_count = 0u32;
             let zero_indices = [0u32; 4];
@@ -352,14 +372,10 @@ impl Updater for DefaultUpdater {
                     Some(i) => i,
                     None => continue,
                 };
-                let lod = match instance.lod(0) {
-                    Some(l) => l,
-                    None => continue,
-                };
                 let buf = scene.global_buffer(Self::BINDING_INSTANCES)
                     .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
-                for sm_idx in 0..lod.sub_mesh_count() {
-                    let slot = lod.sub_mesh(sm_idx).unwrap().draw_slot();
+                for sm_idx in 0..instance.sub_mesh_count() {
+                    let slot = instance.sub_mesh(sm_idx).unwrap().draw_slot();
                     buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,
                         bytemuck::bytes_of(&zero_count))?;
                     buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_0,
@@ -371,8 +387,8 @@ impl Updater for DefaultUpdater {
             return Ok(());
         }
 
-        // Reusable buffer for light candidates per instance
-        let mut candidates: Vec<(u32, f32)> = Vec::new();
+        // The light candidates buffer is persistent (field of DefaultUpdater),
+        // reused across frames AND across visible instances within a frame.
 
         for vi in render_view.visible_instances().iter() {
             let inst_key = vi.key;
@@ -385,9 +401,13 @@ impl Updater for DefaultUpdater {
             let world_aabb = instance.bounding_box().transformed(&world);
             let aabb_center = world_aabb.center();
 
-            candidates.clear();
+            self.candidates.clear();
 
-            for &(_, light) in &enabled_lights {
+            for &light_key in &self.enabled_light_keys {
+                let light = match scene.light(light_key) {
+                    Some(l) => l,
+                    None => continue,
+                };
                 let light_pos = light.position();
                 let range = light.range();
                 let range_sq = range * range;
@@ -413,12 +433,12 @@ impl Updater for DefaultUpdater {
                 let center_dist_sq = (light_pos - aabb_center).length_squared().max(0.01);
                 let score = light.intensity() / center_dist_sq;
 
-                candidates.push((light.light_slot(), score));
+                self.candidates.push((light.light_slot(), score));
             }
 
             // Sort by score descending, take top MAX_LIGHTS_PER_INSTANCE
-            candidates.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            let count = candidates.len().min(Self::MAX_LIGHTS_PER_INSTANCE);
+            self.candidates.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            let count = self.candidates.len().min(Self::MAX_LIGHTS_PER_INSTANCE);
 
             // Build GPU data
             let light_count = count as u32;
@@ -426,21 +446,17 @@ impl Updater for DefaultUpdater {
             let mut indices_1 = [0u32; 4];
             for i in 0..count {
                 if i < 4 {
-                    indices_0[i] = candidates[i].0;
+                    indices_0[i] = self.candidates[i].0;
                 } else {
-                    indices_1[i - 4] = candidates[i].0;
+                    indices_1[i - 4] = self.candidates[i].0;
                 }
             }
 
             // Write to all submesh draw slots
-            let lod = match instance.lod(0) {
-                Some(l) => l,
-                None => continue,
-            };
             let buf = scene.global_buffer(Self::BINDING_INSTANCES)
                 .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
-            for sm_idx in 0..lod.sub_mesh_count() {
-                let slot = lod.sub_mesh(sm_idx).unwrap().draw_slot();
+            for sm_idx in 0..instance.sub_mesh_count() {
+                let slot = instance.sub_mesh(sm_idx).unwrap().draw_slot();
                 buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,
                     bytemuck::bytes_of(&light_count))?;
                 buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_0,

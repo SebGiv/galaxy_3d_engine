@@ -416,6 +416,15 @@ impl RenderGraph {
 
         // Create GPU render passes and framebuffers
         for pass_idx in 0..self.passes.len() {
+            // Refresh per-pass cached vectors (clear_values, image_accesses).
+            // These reuse their internal Vec capacity → zero allocation in steady
+            // state once the pass has been compiled at least once.
+            // Done for ALL passes, including those without attachments, so that
+            // a pass that loses its attachments between two compiles ends up with
+            // empty cached vectors instead of stale data.
+            self.passes[pass_idx].refresh_clear_values(&self.targets);
+            self.passes[pass_idx].refresh_image_accesses(&self.targets);
+
             let attachments: Vec<(usize, AccessType)> = self.passes[pass_idx]
                 .accesses()
                 .iter()
@@ -650,9 +659,12 @@ impl RenderGraph {
         // If any error occurs, we must still call end() to leave the command list
         // in a clean state (not recording), otherwise the next frame's begin() will fail.
         let result = (|| -> Result<()> {
-            let order = self.execution_order.clone();
-
-            for &pass_idx in &order {
+            // Iterate by index to avoid holding a borrow on `self.execution_order`
+            // during the mut accesses on `self.command_lists` and `self.passes` below.
+            // pass_idx is a usize (Copy), so reading it releases the borrow immediately.
+            let pass_count = self.execution_order.len();
+            for i in 0..pass_count {
+                let pass_idx = self.execution_order[i];
                 // Skip passes with no attachments (pure compute passes would go here later)
                 let rp = match self.passes[pass_idx].graphics_device_render_pass() {
                     Some(rp) => rp.clone(),
@@ -663,13 +675,12 @@ impl RenderGraph {
                     None => continue,
                 };
 
-                // Build clear values from per-target ops
-                let clear_values = self.build_clear_values(pass_idx);
+                // Read pre-computed clear values and image accesses (refreshed at compile()).
+                // Zero allocation: these are slices into the RenderPass-owned Vecs.
+                let clear_values = self.passes[pass_idx].clear_values();
+                let accesses = self.passes[pass_idx].image_accesses();
 
-                // Build image accesses for backend barrier tracking
-                let accesses = self.build_image_accesses(pass_idx);
-
-                self.command_lists[frame].begin_render_pass(&rp, &fb, &clear_values, &accesses)?;
+                self.command_lists[frame].begin_render_pass(&rp, &fb, clear_values, accesses)?;
 
                 let (action, pass_info) = self.passes[pass_idx].action_and_pass_info_mut();
                 if let Some(action) = action {
@@ -703,37 +714,6 @@ impl RenderGraph {
         Ok(&*self.command_lists[self.current_frame])
     }
 
-    /// Build clear values for a pass based on its attachment targets' ops.
-    ///
-    /// Color attachments first (matching compile() order), then depth/stencil.
-    fn build_clear_values(&self, pass_idx: usize) -> Vec<graphics_device::ClearValue> {
-        let pass = &self.passes[pass_idx];
-        let mut clear_values = Vec::new();
-
-        // Color attachments first
-        for access in pass.accesses() {
-            if access.access_type.is_attachment() {
-                if let TargetOps::Color { clear_color, .. } = self.targets[access.target_id].ops() {
-                    clear_values.push(graphics_device::ClearValue::Color(*clear_color));
-                }
-            }
-        }
-
-        // Depth/stencil attachment last
-        for access in pass.accesses() {
-            if access.access_type.is_attachment() {
-                if let TargetOps::DepthStencil { depth_clear, stencil_clear, .. } = self.targets[access.target_id].ops() {
-                    clear_values.push(graphics_device::ClearValue::DepthStencil {
-                        depth: *depth_clear,
-                        stencil: *stencil_clear,
-                    });
-                }
-            }
-        }
-
-        clear_values
-    }
-
     /// Resolve previous access types for each resource access.
     ///
     /// Walks the execution order and for each access, records the last
@@ -747,26 +727,6 @@ impl RenderGraph {
                 last_access[access.target_id] = Some(access.access_type);
             }
         }
-    }
-
-    /// Build image access declarations for a pass.
-    ///
-    /// Maps render graph ResourceAccess entries to graphics_device::ImageAccess
-    /// so the backend can emit layout transitions internally.
-    /// `previous_access_type` is already resolved by `compile()`.
-    fn build_image_accesses(&self, pass_idx: usize) -> Vec<graphics_device::ImageAccess> {
-        let pass = &self.passes[pass_idx];
-        pass.accesses()
-            .iter()
-            .map(|access| {
-                let target = &self.targets[access.target_id];
-                graphics_device::ImageAccess {
-                    texture: target.texture().graphics_device_texture().clone(),
-                    access_type: access.access_type,
-                    previous_access_type: access.previous_access_type,
-                }
-            })
-            .collect()
     }
 
     // ===== QUERY =====
