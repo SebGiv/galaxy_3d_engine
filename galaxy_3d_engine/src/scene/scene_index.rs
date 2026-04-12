@@ -8,9 +8,8 @@
 /// It is passed by reference to Updater and CameraCuller.
 
 use glam::Vec3;
-use crate::camera::Frustum;
+use crate::camera::{Frustum, VisibleInstance};
 use super::render_instance::{RenderInstanceKey, AABB};
-use super::visible_instance_list::VisibleInstanceList;
 
 /// Trait for spatial indexing of scene instances.
 ///
@@ -35,15 +34,15 @@ pub trait SceneIndex: Send + Sync {
     ///
     /// For each visible instance, computes the view-space depth
     /// `depth = dot(instance_pos - camera_pos, camera_forward)` and pushes
-    /// `(key, depth)` into `results` (depth is encoded to u16 by the list).
+    /// a `VisibleInstance { key, distance }` into `results`.
     ///
-    /// Results are appended to `results` (the list is NOT cleared).
+    /// Results are appended to `results` (the vec is NOT cleared).
     fn query_frustum(
         &self,
         frustum: &Frustum,
         camera_pos: Vec3,
         camera_forward: Vec3,
-        results: &mut VisibleInstanceList,
+        results: &mut Vec<VisibleInstance>,
     );
 
     /// Remove all instances from the index.

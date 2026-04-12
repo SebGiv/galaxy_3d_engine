@@ -1,7 +1,7 @@
 //! Scene management module
 //!
 //! Provides scene, render instance management, and rendering strategies
-//! (culling, drawing, updating).
+//! (culling, dispatching, drawing, updating).
 
 mod render_instance;
 mod light;
@@ -12,13 +12,16 @@ mod octree_scene_index;
 mod culler;
 mod drawer;
 mod updater;
-mod visible_instance_list;
+mod render_view;
+mod view_dispatcher;
 
 pub use render_instance::{
-    RenderInstance, RenderInstanceKey, RenderSubMesh,
+    RenderInstance, RenderInstanceKey, RenderSubMesh, RenderSubMeshPass,
+    VertexShaderOverride,
     AABB, FLAG_VISIBLE, FLAG_CAST_SHADOW, FLAG_RECEIVE_SHADOW,
 };
-pub use visible_instance_list::{VisibleInstance, VisibleInstanceList};
+pub use render_view::{RenderView, VisibleSubMesh};
+pub use view_dispatcher::ViewDispatcher;
 pub use light::{Light, LightKey, LightType, LightDesc};
 pub use scene::{Scene, GlobalBinding};
 pub use scene_manager::SceneManager;

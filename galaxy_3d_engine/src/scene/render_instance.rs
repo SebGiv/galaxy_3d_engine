@@ -105,40 +105,69 @@ pub const FLAG_CAST_SHADOW: u64    = 1 << 1;
 pub const FLAG_RECEIVE_SHADOW: u64 = 1 << 2;
 // Bits 3-63 reserved for future extensions
 
-// ===== RENDER SUBMESH =====
+// ===== VERTEX SHADER OVERRIDE =====
 
-/// A single drawable submesh of a RenderInstance.
+/// Override the default vertex shader for a specific (submesh, pass_type) pair.
 ///
-/// Stores only the per-instance information: which Material to use, its
-/// draw slot in the GPU scene SSBO, and a reference to the corresponding
-/// GeometrySubMesh (by id) for the geometry data. LOD selection on the
-/// geometry happens at draw time via `GeometrySubMesh::lod(lod_index)`.
+/// Used in `RenderInstance::from_mesh` to assign a different vertex shader
+/// to specific passes of specific submeshes, while keeping the default for
+/// all other combinations.
+pub struct VertexShaderOverride {
+    /// Index of the submesh within the RenderInstance
+    pub submesh: usize,
+    /// Pass type to override (must be < 64)
+    pub pass_type: u8,
+    /// Vertex shader to use instead of the default
+    pub vertex_shader: ShaderKey,
+}
+
+// ===== RENDER SUBMESH PASS =====
+
+/// Per-pass pipeline data for a RenderSubMesh.
 ///
-/// The pipeline cache lives here (and not on `RenderInstance`) because the
-/// resolved pipeline depends on the material's fragment shader / blend / etc.,
-/// which vary per submesh. A single cache slot at the instance level would
-/// thrash whenever an instance has multiple submeshes with different materials.
-pub struct RenderSubMesh {
-    /// Index of the corresponding GeometrySubMesh in the parent GeometryMesh.
-    /// The geometry data (vertex/index offsets, counts, topology) is read
-    /// from the Geometry at draw time via this id and a chosen LOD index.
-    geometry_submesh_id: usize,
-    /// Material key (resolved via ResourceManager at draw time).
-    /// Stable across all LOD variants of this submesh.
-    material: MaterialKey,
-    /// Unique slot index in the GPU scene SSBO
-    draw_slot: u32,
-    /// Vertex shader used for pipeline resolution.
-    /// Currently identical for all submeshes of an instance (copied from the
-    /// `from_mesh` parameter), but stored per submesh so it can vary in the
-    /// future without an API change.
+/// Each entry corresponds to one `MaterialPass` of the assigned material.
+/// The vertex shader is copied from the `from_mesh` default, unless
+/// overridden via `VertexShaderOverride`.
+pub struct RenderSubMeshPass {
+    /// Vertex shader used for pipeline resolution for this pass
     vertex_shader: ShaderKey,
-    /// Cached pipeline key (resolved lazily on first draw of this submesh)
+    /// Cached pipeline key (resolved lazily on first draw of this pass)
     cached_pipeline_key: Option<PipelineKey>,
     /// PassInfo generation at the time of pipeline resolution
     cached_pass_info_gen: u64,
     /// Material generation at the time of pipeline resolution
     cached_material_gen: u64,
+}
+
+// ===== RENDER SUBMESH =====
+
+/// Sentinel value in `pass_type_to_index` indicating the pass_type is not
+/// present for this submesh.
+const PASS_INDEX_NONE: u8 = 0xFF;
+
+/// A single drawable submesh of a RenderInstance.
+///
+/// Each submesh has its own material and a set of rendering passes derived
+/// from that material's `MaterialPass` list. The `pass_mask` bitmask
+/// controls which passes are active for drawing (mutable at runtime), while
+/// the `pass_type_to_index` table provides O(1) lookup from a pass_type to
+/// the compact `passes` vec.
+pub struct RenderSubMesh {
+    /// Index of the corresponding GeometrySubMesh in the parent GeometryMesh.
+    geometry_submesh_id: usize,
+    /// Material key (resolved via ResourceManager at draw time).
+    material: MaterialKey,
+    /// Unique slot index in the GPU scene SSBO
+    draw_slot: u32,
+    /// Bitmask — bit N = 1 if pass_type N is active for drawing.
+    /// Mutable at runtime: toggle passes on/off without rebuilding.
+    pass_mask: u64,
+    /// Static mapping: pass_type → index in `passes` (0xFF = not present).
+    /// Immutable after construction.
+    pass_type_to_index: [u8; 64],
+    /// Compact array of per-pass data. One entry per `MaterialPass` of the
+    /// assigned material. Indices match `pass_type_to_index` values.
+    passes: Vec<RenderSubMeshPass>,
 }
 
 // ===== RENDER INSTANCE =====
@@ -154,8 +183,7 @@ pub struct RenderInstance {
     /// Index of the GeometryMesh within the Geometry
     geometry_mesh_id: usize,
     /// Per-instance submeshes (one per GeometrySubMesh of the referenced
-    /// GeometryMesh). LOD selection happens at draw time, per-submesh.
-    /// Each submesh owns its own pipeline cache and vertex shader.
+    /// GeometryMesh). Each submesh owns its own per-pass pipeline caches.
     sub_meshes: Vec<RenderSubMesh>,
     /// World transform matrix (pre-computed by game engine)
     world_matrix: Mat4,
@@ -170,14 +198,19 @@ pub struct RenderInstance {
 impl RenderInstance {
     /// Create a RenderInstance from a resource::Mesh.
     ///
-    /// Validates that the referenced Geometry, GeometryMesh, and GeometrySubMeshes
-    /// exist via the ResourceManager. Stores only keys + ids — no buffer or
-    /// layout duplication.
+    /// Validates that the referenced Geometry, GeometryMesh, GeometrySubMeshes,
+    /// and Materials exist via the ResourceManager. For each submesh, builds
+    /// the per-pass pipeline data from the material's `MaterialPass` list.
+    ///
+    /// `vertex_shader` is the default vertex shader for all passes of all
+    /// submeshes. `vertex_shader_overrides` can override the VS for specific
+    /// (submesh index, pass_type) pairs.
     pub(crate) fn from_mesh(
         mesh: &Mesh,
         world_matrix: Mat4,
         bounding_box: AABB,
         vertex_shader: ShaderKey,
+        vertex_shader_overrides: &[VertexShaderOverride],
         slot_allocator: &mut SlotAllocator,
         resource_manager: &ResourceManager,
     ) -> Result<Self> {
@@ -197,8 +230,7 @@ impl RenderInstance {
                 .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
                     "SubMesh index {} out of range", sm_idx))?;
 
-            // Validate that the geometry submesh id is valid (early error
-            // instead of a runtime crash at draw time).
+            // Validate geometry submesh
             if geom_mesh.submesh(submesh.submesh_id()).is_none() {
                 return Err(engine_err!("galaxy3d::RenderInstance",
                     "GeometrySubMesh id {} not found in GeometryMesh",
@@ -206,22 +238,44 @@ impl RenderInstance {
             }
 
             let material_key = submesh.material();
+            let material = resource_manager.material(material_key)
+                .ok_or_else(|| engine_err!("galaxy3d::RenderInstance",
+                    "Material key not found in ResourceManager"))?;
 
-            // Validate that the material exists (early error instead of a
-            // runtime crash at draw / update time).
-            if resource_manager.material(material_key).is_none() {
-                return Err(engine_err!("galaxy3d::RenderInstance",
-                    "Material key not found in ResourceManager"));
+            // Build per-pass data from the material's passes
+            let mut pass_mask: u64 = 0;
+            let mut pass_type_to_index = [PASS_INDEX_NONE; 64];
+            let mut passes = Vec::with_capacity(material.pass_count());
+
+            for pass_idx in 0..material.pass_count() {
+                let mat_pass = material.pass(pass_idx).unwrap();
+                let pt = mat_pass.pass_type();
+
+                // Lookup override for this (submesh, pass_type)
+                let vs = vertex_shader_overrides.iter()
+                    .find(|o| o.submesh == sm_idx && o.pass_type == pt)
+                    .map(|o| o.vertex_shader)
+                    .unwrap_or(vertex_shader);
+
+                let local_idx = passes.len();
+                passes.push(RenderSubMeshPass {
+                    vertex_shader: vs,
+                    cached_pipeline_key: None,
+                    cached_pass_info_gen: 0,
+                    cached_material_gen: 0,
+                });
+
+                pass_mask |= 1u64 << pt;
+                pass_type_to_index[pt as usize] = local_idx as u8;
             }
 
             sub_meshes.push(RenderSubMesh {
                 geometry_submesh_id: submesh.submesh_id(),
                 material: material_key,
                 draw_slot: slot_allocator.alloc(),
-                vertex_shader,
-                cached_pipeline_key: None,
-                cached_pass_info_gen: 0,
-                cached_material_gen: 0,
+                pass_mask,
+                pass_type_to_index,
+                passes,
             });
         }
 
@@ -255,8 +309,7 @@ impl RenderInstance {
     /// Get a mutable submesh by index.
     ///
     /// Used by the drawer to update the per-submesh pipeline cache after
-    /// lazy resolution. Symmetric with `Geometry::mesh_mut` /
-    /// `GeometryMesh::submesh_mut`.
+    /// lazy resolution.
     pub fn sub_mesh_mut(&mut self, index: usize) -> Option<&mut RenderSubMesh> {
         self.sub_meshes.get_mut(index)
     }
@@ -318,7 +371,7 @@ impl RenderInstance {
 // ===== RENDER SUBMESH ACCESSORS =====
 
 impl RenderSubMesh {
-    /// Get the corresponding GeometrySubMesh id (within the parent GeometryLOD)
+    /// Get the corresponding GeometrySubMesh id
     pub fn geometry_submesh_id(&self) -> usize {
         self.geometry_submesh_id
     }
@@ -333,9 +386,91 @@ impl RenderSubMesh {
         self.draw_slot
     }
 
-    // ===== PIPELINE CACHE =====
+    // ===== PASS MASK (activation/deactivation) =====
 
-    /// Get the vertex shader key
+    /// Get the pass activation bitmask
+    pub fn pass_mask(&self) -> u64 {
+        self.pass_mask
+    }
+
+    /// Set the entire pass activation bitmask
+    pub fn set_pass_mask(&mut self, mask: u64) {
+        self.pass_mask = mask;
+    }
+
+    /// Enable a pass_type for drawing
+    pub fn enable_pass(&mut self, pass_type: u8) {
+        self.pass_mask |= 1u64 << pass_type;
+    }
+
+    /// Disable a pass_type for drawing
+    pub fn disable_pass(&mut self, pass_type: u8) {
+        self.pass_mask &= !(1u64 << pass_type);
+    }
+
+    /// Check if a pass_type is active (enabled AND present)
+    pub fn is_pass_active(&self, pass_type: u8) -> bool {
+        self.pass_mask & (1u64 << pass_type) != 0
+    }
+
+    /// Check if a pass_type is present (regardless of activation)
+    pub fn has_pass(&self, pass_type: u8) -> bool {
+        self.pass_type_to_index[pass_type as usize] != PASS_INDEX_NONE
+    }
+
+    /// Get the local pass index for a given pass_type.
+    /// Returns the index into the compact `passes` vec.
+    /// Caller must ensure the pass_type is present (check `has_pass` first).
+    pub fn pass_index_for_type(&self, pass_type: u8) -> u8 {
+        self.pass_type_to_index[pass_type as usize]
+    }
+
+    // ===== PASS ACCESS =====
+
+    /// Get a pass by pass_type (checks bitmask + lookup table).
+    /// Returns None if the pass_type is not active or not present.
+    pub fn pass(&self, pass_type: u8) -> Option<&RenderSubMeshPass> {
+        if self.pass_mask & (1u64 << pass_type) == 0 {
+            return None;
+        }
+        let idx = self.pass_type_to_index[pass_type as usize];
+        if idx == PASS_INDEX_NONE { return None; }
+        self.passes.get(idx as usize)
+    }
+
+    /// Get a mutable pass by pass_type (checks bitmask + lookup table).
+    /// Returns None if the pass_type is not active or not present.
+    pub fn pass_mut(&mut self, pass_type: u8) -> Option<&mut RenderSubMeshPass> {
+        if self.pass_mask & (1u64 << pass_type) == 0 {
+            return None;
+        }
+        let idx = self.pass_type_to_index[pass_type as usize];
+        if idx == PASS_INDEX_NONE { return None; }
+        self.passes.get_mut(idx as usize)
+    }
+
+    /// Get a pass by its local index in the compact `passes` vec.
+    /// Does NOT check the bitmask — direct access for V1 drawer.
+    pub fn pass_by_index(&self, index: usize) -> Option<&RenderSubMeshPass> {
+        self.passes.get(index)
+    }
+
+    /// Get a mutable pass by its local index in the compact `passes` vec.
+    /// Does NOT check the bitmask — direct access for V1 drawer.
+    pub fn pass_by_index_mut(&mut self, index: usize) -> Option<&mut RenderSubMeshPass> {
+        self.passes.get_mut(index)
+    }
+
+    /// Get the number of passes
+    pub fn pass_count(&self) -> usize {
+        self.passes.len()
+    }
+}
+
+// ===== RENDER SUBMESH PASS ACCESSORS =====
+
+impl RenderSubMeshPass {
+    /// Get the vertex shader key for this pass
     pub fn vertex_shader(&self) -> ShaderKey {
         self.vertex_shader
     }

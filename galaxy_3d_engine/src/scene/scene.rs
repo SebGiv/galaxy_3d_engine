@@ -15,7 +15,7 @@ use crate::resource::texture::Texture;
 use crate::resource::resource_manager::{ResourceManager, MeshKey, ShaderKey};
 use crate::utils::{SlotAllocator, SwapSet};
 use super::render_instance::{
-    RenderInstance, RenderInstanceKey, AABB,
+    RenderInstance, RenderInstanceKey, VertexShaderOverride, AABB,
 };
 use super::light::{Light, LightKey, LightType, LightDesc};
 
@@ -129,6 +129,7 @@ impl Scene {
         world_matrix: Mat4,
         bounding_box: AABB,
         vertex_shader: ShaderKey,
+        vertex_shader_overrides: &[VertexShaderOverride],
         resource_manager: &ResourceManager,
     ) -> Result<RenderInstanceKey> {
         let mesh = resource_manager.mesh(mesh_key)
@@ -136,6 +137,7 @@ impl Scene {
 
         let instance = RenderInstance::from_mesh(
             mesh, world_matrix, bounding_box, vertex_shader,
+            vertex_shader_overrides,
             &mut self.draw_slot_allocator,
             resource_manager,
         )?;

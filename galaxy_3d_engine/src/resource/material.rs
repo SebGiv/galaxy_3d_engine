@@ -109,7 +109,7 @@ pub struct MaterialTextureSlot {
 /// and parameters. Texture slot names and parameter names are globally unique
 /// across all passes of a Material — a given name appears in exactly one pass.
 pub struct MaterialPass {
-    pass_type: u64,
+    pass_type: u8,
     fragment_shader: ShaderKey,
     color_blend: ColorBlendState,
     polygon_mode: PolygonMode,
@@ -138,7 +138,7 @@ pub struct Material {
 
 /// Material pass creation descriptor
 pub struct MaterialPassDesc {
-    pub pass_type: u64,
+    pub pass_type: u8,
     pub fragment_shader: ShaderKey,
     pub color_blend: ColorBlendState,
     pub polygon_mode: PolygonMode,
@@ -184,8 +184,16 @@ impl Material {
                 "Material must have at least one pass");
         }
 
-        // ========== VALIDATION 2: Unique pass_type across passes ==========
-        let mut seen_pass_types: FxHashSet<u64> = FxHashSet::default();
+        // ========== VALIDATION 2: pass_type must be < 64 (bitmask + [u8; 64]) ==========
+        for pass_desc in &desc.passes {
+            if pass_desc.pass_type >= 64 {
+                engine_bail!("galaxy3d::Material",
+                    "pass_type {} exceeds maximum (63)", pass_desc.pass_type);
+            }
+        }
+
+        // ========== VALIDATION 3: Unique pass_type across passes ==========
+        let mut seen_pass_types: FxHashSet<u8> = FxHashSet::default();
         for pass_desc in &desc.passes {
             if !seen_pass_types.insert(pass_desc.pass_type) {
                 engine_bail!("galaxy3d::Material",
@@ -193,7 +201,7 @@ impl Material {
             }
         }
 
-        // ========== VALIDATION 3: Globally unique texture/param names across passes ==========
+        // ========== VALIDATION 4: Globally unique texture/param names across passes ==========
         let mut global_texture_names: FxHashSet<String> = FxHashSet::default();
         let mut global_param_names: FxHashSet<String> = FxHashSet::default();
 
@@ -377,7 +385,7 @@ impl Material {
     }
 
     /// Get a pass by its pass_type value
-    pub fn pass_by_type(&self, pass_type: u64) -> Option<&MaterialPass> {
+    pub fn pass_by_type(&self, pass_type: u8) -> Option<&MaterialPass> {
         self.passes.iter().find(|p| p.pass_type == pass_type)
     }
 
@@ -423,7 +431,7 @@ impl Material {
 
 impl MaterialPass {
     /// Get the pass type identifier
-    pub fn pass_type(&self) -> u64 {
+    pub fn pass_type(&self) -> u8 {
         self.pass_type
     }
 

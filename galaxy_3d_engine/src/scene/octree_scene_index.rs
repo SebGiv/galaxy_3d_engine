@@ -18,10 +18,9 @@
 
 use rustc_hash::FxHashMap;
 use glam::Vec3;
-use crate::camera::{Frustum, FrustumTest};
+use crate::camera::{Frustum, FrustumTest, VisibleInstance};
 use super::render_instance::{RenderInstanceKey, AABB};
 use super::scene_index::SceneIndex;
-use super::visible_instance_list::VisibleInstanceList;
 
 /// Index of the root node in the flat node array.
 const ROOT: usize = 0;
@@ -258,7 +257,7 @@ impl OctreeSceneIndex {
         classification: FrustumTest,
         camera_pos: Vec3,
         camera_forward: Vec3,
-        results: &mut VisibleInstanceList,
+        results: &mut Vec<VisibleInstance>,
         depth: u32,
     ) {
         let node = &self.nodes[node_idx];
@@ -279,7 +278,7 @@ impl OctreeSceneIndex {
                     if let Some((_, _, world_aabb)) = self.object_locations.get(&key) {
                         if frustum.intersects_aabb(world_aabb) {
                             let view_depth = (inst_pos - camera_pos).dot(camera_forward);
-                            results.push(key, view_depth);
+                            results.push(VisibleInstance { key, distance: view_depth });
                         }
                     }
                 }
@@ -313,13 +312,13 @@ impl OctreeSceneIndex {
         node_idx: usize,
         camera_pos: Vec3,
         camera_forward: Vec3,
-        results: &mut VisibleInstanceList,
+        results: &mut Vec<VisibleInstance>,
         depth: u32,
     ) {
         let node = &self.nodes[node_idx];
         for &(key, inst_pos) in &node.objects {
             let view_depth = (inst_pos - camera_pos).dot(camera_forward);
-            results.push(key, view_depth);
+            results.push(VisibleInstance { key, distance: view_depth });
         }
 
         if depth < self.max_depth {
@@ -391,7 +390,7 @@ impl SceneIndex for OctreeSceneIndex {
         frustum: &Frustum,
         camera_pos: Vec3,
         camera_forward: Vec3,
-        results: &mut VisibleInstanceList,
+        results: &mut Vec<VisibleInstance>,
     ) {
         if self.nodes.is_empty() {
             return;
@@ -470,8 +469,8 @@ mod tests {
         key
     }
 
-    /// Helper: collect visible keys from a VisibleInstanceList.
-    fn visible_keys(list: &VisibleInstanceList) -> Vec<RenderInstanceKey> {
+    /// Helper: collect visible keys from a results vec.
+    fn visible_keys(list: &[VisibleInstance]) -> Vec<RenderInstanceKey> {
         list.iter().map(|vi| vi.key).collect()
     }
 
@@ -497,7 +496,7 @@ mod tests {
 
         let frustum = forward_frustum();
         let (cam_pos, cam_fwd) = forward_camera_pos_forward();
-        let mut results = VisibleInstanceList::new();
+        let mut results = Vec::new();
         octree.query_frustum(&frustum, cam_pos, cam_fwd, &mut results);
 
         assert!(visible_keys(&results).contains(&key));
@@ -530,7 +529,7 @@ mod tests {
 
         let frustum = all_visible_frustum();
         let (cam_pos, cam_fwd) = forward_camera_pos_forward();
-        let mut results = VisibleInstanceList::new();
+        let mut results = Vec::new();
         octree.query_frustum(&frustum, cam_pos, cam_fwd, &mut results);
         assert!(!visible_keys(&results).contains(&key));
     }
@@ -571,7 +570,7 @@ mod tests {
 
         let frustum = forward_frustum();
         let (cam_pos, cam_fwd) = forward_camera_pos_forward();
-        let mut results = VisibleInstanceList::new();
+        let mut results = Vec::new();
         octree.query_frustum(&frustum, cam_pos, cam_fwd, &mut results);
 
         let keys = visible_keys(&results);
@@ -601,7 +600,7 @@ mod tests {
 
         let frustum = all_visible_frustum();
         let (cam_pos, cam_fwd) = forward_camera_pos_forward();
-        let mut results = VisibleInstanceList::new();
+        let mut results = Vec::new();
         octree.query_frustum(&frustum, cam_pos, cam_fwd, &mut results);
         assert!(results.is_empty());
     }
@@ -616,7 +615,7 @@ mod tests {
 
         let frustum = all_visible_frustum();
         let (cam_pos, cam_fwd) = forward_camera_pos_forward();
-        let mut results = VisibleInstanceList::new();
+        let mut results = Vec::new();
         octree.query_frustum(&frustum, cam_pos, cam_fwd, &mut results);
 
         // With Approach 1, each object is in exactly one node → no duplicates
@@ -643,7 +642,7 @@ mod tests {
 
         let frustum = forward_frustum();
         let (cam_pos, cam_fwd) = forward_camera_pos_forward();
-        let mut results = VisibleInstanceList::new();
+        let mut results = Vec::new();
         octree.query_frustum(&frustum, cam_pos, cam_fwd, &mut results);
 
         // Both should be visible

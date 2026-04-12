@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::Result;
 use crate::graphics_device::{self, CommandList};
 use crate::resource::resource_manager::PassInfo;
-use crate::camera::RenderView;
+use crate::scene::RenderView;
 use crate::scene::{Scene, Drawer};
 
 /// Action executed by a render pass.

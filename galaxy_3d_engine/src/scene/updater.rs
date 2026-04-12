@@ -6,7 +6,7 @@
 
 use glam::Vec3;
 use crate::error::Result;
-use crate::camera::{Camera, RenderView};
+use crate::camera::{Camera, VisibleInstances};
 use super::scene::Scene;
 use super::scene_index::SceneIndex;
 use super::render_instance::AABB;
@@ -47,11 +47,11 @@ pub trait Updater: Send + Sync {
 
     /// Assign lights to visible instances (post-culling).
     ///
-    /// For each visible instance in the RenderView, tests all enabled lights
+    /// For each visible instance in the VisibleInstances, tests all enabled lights
     /// against the instance's world AABB (sphere-AABB for range, cone-AABB
     /// for spots), scores by intensity/distance², takes the top 8, and writes
     /// lightCount + lightIndices0/1 to the instance buffer.
-    fn assign_lights(&mut self, scene: &Scene, render_view: &RenderView) -> Result<()>;
+    fn assign_lights(&mut self, scene: &Scene, visible: &VisibleInstances) -> Result<()>;
 }
 
 /// No-op updater — does nothing.
@@ -82,7 +82,7 @@ impl Updater for NoOpUpdater {
         Ok(())
     }
 
-    fn assign_lights(&mut self, _scene: &Scene, _render_view: &RenderView) -> Result<()> {
+    fn assign_lights(&mut self, _scene: &Scene, _visible: &VisibleInstances) -> Result<()> {
         Ok(())
     }
 }
@@ -352,7 +352,7 @@ impl Updater for DefaultUpdater {
         Ok(())
     }
 
-    fn assign_lights(&mut self, scene: &Scene, render_view: &RenderView) -> Result<()> {
+    fn assign_lights(&mut self, scene: &Scene, visible: &VisibleInstances) -> Result<()> {
         // Refresh the persistent enabled-light-keys buffer.
         // clear() preserves capacity → no allocation in steady state.
         self.enabled_light_keys.clear();
@@ -366,7 +366,7 @@ impl Updater for DefaultUpdater {
             // Write lightCount = 0 for all visible instances
             let zero_count = 0u32;
             let zero_indices = [0u32; 4];
-            for vi in render_view.visible_instances().iter() {
+            for vi in visible.instances().iter() {
                 let inst_key = vi.key;
                 let instance = match scene.render_instance(inst_key) {
                     Some(i) => i,
@@ -390,7 +390,7 @@ impl Updater for DefaultUpdater {
         // The light candidates buffer is persistent (field of DefaultUpdater),
         // reused across frames AND across visible instances within a frame.
 
-        for vi in render_view.visible_instances().iter() {
+        for vi in visible.instances().iter() {
             let inst_key = vi.key;
             let instance = match scene.render_instance(inst_key) {
                 Some(i) => i,

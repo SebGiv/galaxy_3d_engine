@@ -183,7 +183,7 @@ fn create_non_indexed_resources() -> (TestResources, MeshKey) {
 fn create_test_render_instance(mesh_key: MeshKey, matrix: Mat4, aabb: AABB, vertex_shader: ShaderKey, rm: &ResourceManager) -> crate::error::Result<RenderInstance> {
     let mesh = rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    RenderInstance::from_mesh(mesh, matrix, aabb, vertex_shader, &mut alloc, rm)
+    RenderInstance::from_mesh(mesh, matrix, aabb, vertex_shader, &[], &mut alloc, rm)
 }
 
 // ============================================================================
@@ -533,7 +533,7 @@ fn test_draw_slot_allocation() {
     let mesh_key = create_simple_mesh_key(&mut res);
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
+    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &[], &mut alloc, &res.rm).unwrap();
     assert_eq!(alloc.len(), 3);
     assert_eq!(alloc.high_water_mark(), 3);
     let slot0 = instance.sub_mesh(0).unwrap().draw_slot();
@@ -550,7 +550,7 @@ fn test_draw_slot_sequential_allocation() {
     let mesh_key = create_simple_mesh_key(&mut res);
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
+    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &[], &mut alloc, &res.rm).unwrap();
     assert_eq!(instance.sub_mesh(0).unwrap().draw_slot(), 0);
     assert_eq!(instance.sub_mesh(1).unwrap().draw_slot(), 1);
     assert_eq!(instance.sub_mesh(2).unwrap().draw_slot(), 2);
@@ -562,8 +562,8 @@ fn test_draw_slot_shared_allocator() {
     let mesh_key = create_simple_mesh_key(&mut res);
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    let inst1 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
-    let inst2 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
+    let inst1 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &[], &mut alloc, &res.rm).unwrap();
+    let inst2 = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &[], &mut alloc, &res.rm).unwrap();
     assert_eq!(alloc.len(), 6);
     assert_eq!(inst1.sub_mesh(0).unwrap().draw_slot(), 0);
     assert_eq!(inst2.sub_mesh(0).unwrap().draw_slot(), 3);
@@ -575,7 +575,7 @@ fn test_free_draw_slots() {
     let mesh_key = create_simple_mesh_key(&mut res);
     let mesh = res.rm.mesh(mesh_key).unwrap();
     let mut alloc = SlotAllocator::new();
-    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &mut alloc, &res.rm).unwrap();
+    let instance = RenderInstance::from_mesh(mesh, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &[], &mut alloc, &res.rm).unwrap();
     assert_eq!(alloc.len(), 3);
     instance.free_draw_slots(&mut alloc);
     assert_eq!(alloc.len(), 0);
