@@ -23,7 +23,7 @@ pub use render_instance::{
 pub use render_view::{RenderView, VisibleSubMesh};
 pub use view_dispatcher::ViewDispatcher;
 pub use light::{Light, LightKey, LightType, LightDesc};
-pub use scene::{Scene, GlobalBinding};
+pub use scene::Scene;
 pub use scene_manager::SceneManager;
 pub use scene_index::SceneIndex;
 pub use octree_scene_index::OctreeSceneIndex;

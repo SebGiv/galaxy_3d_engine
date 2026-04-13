@@ -10,7 +10,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Framebuffer as RendererFramebuffer, FramebufferDesc,
     RenderPassDesc,
     TextureDesc, TextureData, TextureInfo, TextureType, BufferDesc, ShaderDesc, PipelineDesc,
-    BindingResource, BindingType, ShaderStageFlags,
+    BindingResource, BindingType, BindingGroupLayoutDesc, ShaderStageFlags,
     ReflectedBinding, ReflectedPushConstant, ReflectedMember, ReflectedMemberType,
     ScalarKind, PipelineReflection,
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
@@ -1124,7 +1124,7 @@ impl VulkanGraphicsDevice {
                         .binding(b.binding)
                         .descriptor_type(Self::binding_type_to_vk(b.binding_type))
                         .descriptor_count(1)
-                        .stage_flags(Self::stage_flags_to_vk(b.stage_flags))
+                        .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 })
                 .collect();
 
@@ -1753,6 +1753,156 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             }
 
             self.device.update_descriptor_sets(&writes, &[]);
+
+            Ok(Arc::new(BindingGroup {
+                descriptor_set,
+                set_index,
+            }))
+        }
+    }
+
+    fn create_binding_group_from_layout(
+        &self,
+        layout: &BindingGroupLayoutDesc,
+        set_index: u32,
+        resources: &[BindingResource],
+    ) -> Result<Arc<dyn RendererBindingGroup>> {
+        unsafe {
+            // Build VkDescriptorSetLayout from the explicit layout description
+            let vk_bindings: Vec<vk::DescriptorSetLayoutBinding> = layout.entries.iter()
+                .map(|entry| {
+                    vk::DescriptorSetLayoutBinding::default()
+                        .binding(entry.binding)
+                        .descriptor_type(Self::binding_type_to_vk(entry.binding_type))
+                        .descriptor_count(entry.count)
+                        .stage_flags(Self::stage_flags_to_vk(entry.stage_flags))
+                })
+                .collect();
+
+            let layout_create = vk::DescriptorSetLayoutCreateInfo::default()
+                .bindings(&vk_bindings);
+            let ds_layout = self.device.create_descriptor_set_layout(&layout_create, None)
+                .map_err(|e| engine_err!("galaxy3d::vulkan",
+                    "Failed to create descriptor set layout from explicit layout: {:?}", e))?;
+
+            // Allocate descriptor set from pool (grow dynamically if exhausted)
+            let layouts = [ds_layout];
+            let descriptor_sets = {
+                let mut pools = self.descriptor_pools.lock().unwrap();
+                let current_pool = *pools.last().unwrap();
+                let allocate_info = vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(current_pool)
+                    .set_layouts(&layouts);
+
+                match self.device.allocate_descriptor_sets(&allocate_info) {
+                    Ok(sets) => sets,
+                    Err(vk::Result::ERROR_OUT_OF_POOL_MEMORY) => {
+                        let new_pool = Self::create_descriptor_pool(&self.device)?;
+                        pools.push(new_pool);
+                        engine_info!("galaxy3d::vulkan",
+                            "Descriptor pool exhausted, created new pool (total: {})",
+                            pools.len()
+                        );
+                        let retry_info = vk::DescriptorSetAllocateInfo::default()
+                            .descriptor_pool(new_pool)
+                            .set_layouts(&layouts);
+                        self.device.allocate_descriptor_sets(&retry_info)
+                            .map_err(|e| engine_err!("galaxy3d::vulkan",
+                                "Failed to allocate descriptor set after pool growth: {:?}", e))?
+                    }
+                    Err(e) => return Err(engine_err!("galaxy3d::vulkan",
+                        "Failed to allocate descriptor set: {:?}", e)),
+                }
+            };
+
+            let descriptor_set = descriptor_sets[0];
+
+            // Write resources into descriptor set (same logic as create_binding_group)
+            let mut buffer_infos: Vec<vk::DescriptorBufferInfo> = Vec::new();
+            let mut image_infos: Vec<vk::DescriptorImageInfo> = Vec::new();
+
+            for resource in resources.iter() {
+                match resource {
+                    BindingResource::UniformBuffer(buffer) => {
+                        let vk_buffer = *buffer as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = &*vk_buffer;
+                        buffer_infos.push(
+                            vk::DescriptorBufferInfo::default()
+                                .buffer(vk_buffer.buffer)
+                                .offset(0)
+                                .range(vk::WHOLE_SIZE)
+                        );
+                    }
+                    BindingResource::SampledTexture(texture, sampler_type) => {
+                        let vk_texture = *texture as *const dyn RendererTexture as *const Texture;
+                        let vk_texture = &*vk_texture;
+                        let vk_sampler = self.sampler_cache.lock().unwrap().get(*sampler_type);
+                        image_infos.push(
+                            vk::DescriptorImageInfo::default()
+                                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                .image_view(vk_texture.view)
+                                .sampler(vk_sampler)
+                        );
+                    }
+                    BindingResource::StorageBuffer(buffer) => {
+                        let vk_buffer = *buffer as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = &*vk_buffer;
+                        buffer_infos.push(
+                            vk::DescriptorBufferInfo::default()
+                                .buffer(vk_buffer.buffer)
+                                .offset(0)
+                                .range(vk::WHOLE_SIZE)
+                        );
+                    }
+                }
+            }
+
+            let mut buffer_idx = 0usize;
+            let mut image_idx = 0usize;
+            let mut writes: Vec<vk::WriteDescriptorSet> = Vec::new();
+
+            for (binding_index, resource) in resources.iter().enumerate() {
+                match resource {
+                    BindingResource::UniformBuffer(_) => {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .dst_set(descriptor_set)
+                                .dst_binding(binding_index as u32)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                                .buffer_info(std::slice::from_ref(&buffer_infos[buffer_idx]))
+                        );
+                        buffer_idx += 1;
+                    }
+                    BindingResource::SampledTexture(_, _) => {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .dst_set(descriptor_set)
+                                .dst_binding(binding_index as u32)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .image_info(std::slice::from_ref(&image_infos[image_idx]))
+                        );
+                        image_idx += 1;
+                    }
+                    BindingResource::StorageBuffer(_) => {
+                        writes.push(
+                            vk::WriteDescriptorSet::default()
+                                .dst_set(descriptor_set)
+                                .dst_binding(binding_index as u32)
+                                .dst_array_element(0)
+                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                                .buffer_info(std::slice::from_ref(&buffer_infos[buffer_idx]))
+                        );
+                        buffer_idx += 1;
+                    }
+                }
+            }
+
+            self.device.update_descriptor_sets(&writes, &[]);
+
+            // Layout can be safely destroyed after update_descriptor_sets
+            self.device.destroy_descriptor_set_layout(ds_layout, None);
 
             Ok(Arc::new(BindingGroup {
                 descriptor_set,

@@ -13,7 +13,7 @@ use crate::graphics_device::{
     GraphicsDevice, Buffer, Texture, Shader, Pipeline, CommandList,
     RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
-    BindingResource,
+    BindingResource, BindingGroupLayoutDesc,
     RenderPassDesc, FramebufferDesc, Viewport, Rect2D,
     ClearValue, IndexType, TextureInfo, TextureUsage, ImageAccess,
     PipelineReflection, DynamicRenderState, ShaderStageFlags,
@@ -208,6 +208,11 @@ impl CommandList for MockCommandList {
 
     fn bind_index_buffer(&mut self, _buffer: &Arc<dyn Buffer>, _offset: u64, _index_type: IndexType) -> Result<()> {
         self.commands.push("bind_index_buffer".to_string());
+        Ok(())
+    }
+
+    fn bind_textures(&mut self) -> Result<()> {
+        self.commands.push("bind_textures".to_string());
         Ok(())
     }
 
@@ -547,6 +552,18 @@ impl GraphicsDevice for MockGraphicsDevice {
     ) -> Result<Arc<dyn BindingGroup>> {
         Ok(Arc::new(MockBindingGroup::new(
             format!("binding_group_set{}", set_index),
+            set_index,
+        )))
+    }
+
+    fn create_binding_group_from_layout(
+        &self,
+        _layout: &BindingGroupLayoutDesc,
+        set_index: u32,
+        _resources: &[BindingResource],
+    ) -> Result<Arc<dyn BindingGroup>> {
+        Ok(Arc::new(MockBindingGroup::new(
+            format!("binding_group_layout_set{}", set_index),
             set_index,
         )))
     }

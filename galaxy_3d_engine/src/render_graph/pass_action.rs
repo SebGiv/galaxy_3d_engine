@@ -5,28 +5,21 @@
 
 use std::sync::{Arc, Mutex};
 use crate::error::Result;
-use crate::graphics_device::{self, CommandList};
+use crate::engine::Engine;
+use crate::graphics_device::{self, CommandList, BindingGroup, BindingResource, BindingGroupLayoutDesc, BindingSlotDesc, BindingType, ShaderStageFlags, SamplerType};
 use crate::resource::resource_manager::PassInfo;
+use crate::resource::buffer::Buffer;
+use crate::resource::texture::Texture;
 use crate::scene::RenderView;
 use crate::scene::{Scene, Drawer};
 
 /// Action executed by a render pass.
-///
-/// Determines what draw commands are recorded between
-/// begin_render_pass() and end_render_pass().
-///
-/// `pass_info` provides the attachment formats and generation counter
-/// of the current render pass (derived automatically at compile time).
 pub trait PassAction: Send + Sync {
     /// Record draw commands into the command list.
     fn execute(&mut self, cmd: &mut dyn CommandList, pass_info: &PassInfo) -> Result<()>;
 }
 
 /// Fullscreen pass action (data-driven, no closure)
-///
-/// Binds a pipeline and a binding group, then draws a fullscreen
-/// triangle (3 vertices). Used for post-processing passes
-/// (bloom, blur, tone mapping, etc.).
 pub struct FullscreenAction {
     pipeline: Arc<dyn graphics_device::Pipeline>,
     binding_group: Arc<dyn graphics_device::BindingGroup>,
@@ -50,9 +43,6 @@ impl PassAction for FullscreenAction {
 }
 
 /// Custom pass action (closure-based)
-///
-/// Executes a user-provided closure for full control over
-/// draw command recording.
 pub struct CustomAction {
     callback: Box<dyn FnMut(&mut dyn CommandList, &PassInfo) -> Result<()> + Send + Sync>,
 }
@@ -72,24 +62,88 @@ impl PassAction for CustomAction {
     }
 }
 
-/// Scene pass action — draws visible instances from a RenderView.
+// ===== SCENE BINDING =====
+
+/// A binding resource for the scene pass descriptor set.
 ///
-/// Replaces the common CustomAction boilerplate for scene rendering passes.
-/// Encapsulates a Scene, a Drawer, and a RenderView. The PassInfo is received
-/// at execute() time from the RenderPass (not stored here).
+/// Each entry maps to a binding index (0, 1, 2, ...) in declaration order.
+pub enum SceneBinding {
+    /// Uniform buffer
+    UniformBuffer(Arc<Buffer>),
+    /// Storage buffer
+    StorageBuffer(Arc<Buffer>),
+    /// Sampled texture with sampler type
+    SampledTexture(Arc<Texture>, SamplerType),
+}
+
+// ===== SCENE PASS ACTION =====
+
+/// Scene pass action — draws visible submeshes from a RenderView.
+///
+/// The constructor receives the buffers (`Vec<SceneBinding>`) and builds the
+/// `BindingGroup` immediately via `create_binding_group_from_layout`. No lazy
+/// construction, no pipeline dependency.
 pub struct ScenePassAction {
     scene: Arc<Mutex<Scene>>,
     drawer: Arc<Mutex<dyn Drawer>>,
     render_view: Arc<Mutex<Option<RenderView>>>,
+    binding_group: Arc<dyn BindingGroup>,
+    bind_textures: bool,
 }
 
 impl ScenePassAction {
+    /// Create a ScenePassAction.
+    ///
+    /// `bindings` is the list of buffers/textures for the per-pass descriptor
+    /// set (set 1). The BindingGroup is created immediately — no lazy, no
+    /// pipeline needed.
     pub fn new(
         scene: Arc<Mutex<Scene>>,
         drawer: Arc<Mutex<dyn Drawer>>,
         render_view: Arc<Mutex<Option<RenderView>>>,
-    ) -> Self {
-        Self { scene, drawer, render_view }
+        bindings: Vec<SceneBinding>,
+        bind_textures: bool,
+    ) -> Result<Self> {
+        // Build layout description from bindings
+        let layout = BindingGroupLayoutDesc {
+            entries: bindings.iter().enumerate().map(|(i, b)| {
+                BindingSlotDesc {
+                    binding: i as u32,
+                    binding_type: match b {
+                        SceneBinding::UniformBuffer(_) => BindingType::UniformBuffer,
+                        SceneBinding::StorageBuffer(_) => BindingType::StorageBuffer,
+                        SceneBinding::SampledTexture(_, _) => BindingType::CombinedImageSampler,
+                    },
+                    count: 1,
+                    stage_flags: ShaderStageFlags::VERTEX_FRAGMENT,
+                }
+            }).collect(),
+        };
+
+        // Build binding resources
+        let resources: Vec<BindingResource> = bindings.iter()
+            .map(|b| match b {
+                SceneBinding::UniformBuffer(buf) =>
+                    BindingResource::UniformBuffer(buf.graphics_device_buffer().as_ref()),
+                SceneBinding::StorageBuffer(buf) =>
+                    BindingResource::StorageBuffer(buf.graphics_device_buffer().as_ref()),
+                SceneBinding::SampledTexture(tex, sampler_type) =>
+                    BindingResource::SampledTexture(
+                        tex.graphics_device_texture().as_ref(), *sampler_type,
+                    ),
+            })
+            .collect();
+
+        // Create the BindingGroup immediately
+        let gd_arc = Engine::graphics_device("main")?;
+        let gd = gd_arc.lock().unwrap();
+        let binding_group = gd.create_binding_group_from_layout(
+            &layout,
+            1, // Set 1: scene bindings (set 0 is reserved for bindless textures)
+            &resources,
+        )?;
+
+        Ok(Self { scene, drawer, render_view, binding_group, bind_textures })
     }
 }
 
@@ -99,7 +153,7 @@ impl PassAction for ScenePassAction {
         let drawer = self.drawer.lock().unwrap();
         let view = self.render_view.lock().unwrap();
         if let Some(ref view) = *view {
-            drawer.draw(&mut scene, view, cmd, pass_info)?;
+            drawer.draw(&mut scene, view, cmd, pass_info, &self.binding_group, self.bind_textures)?;
         }
         Ok(())
     }

@@ -125,10 +125,15 @@ pub struct VertexShaderOverride {
 
 /// Per-pass pipeline data for a RenderSubMesh.
 ///
-/// Each entry corresponds to one `MaterialPass` of the assigned material.
-/// The vertex shader is copied from the `from_mesh` default, unless
-/// overridden via `VertexShaderOverride`.
+/// Each entry corresponds to one rendering pass of the submesh. The material
+/// and material pass index are stored per-pass so that different passes of the
+/// same submesh can reference different materials (e.g. a PBR material for
+/// forward rendering and a simpler material for shadow casting).
 pub struct RenderSubMeshPass {
+    /// Material used for this pass
+    material: MaterialKey,
+    /// Index of the pass within the Material's `passes` vec
+    material_pass_index: u8,
     /// Vertex shader used for pipeline resolution for this pass
     vertex_shader: ShaderKey,
     /// Cached pipeline key (resolved lazily on first draw of this pass)
@@ -155,8 +160,6 @@ const PASS_INDEX_NONE: u8 = 0xFF;
 pub struct RenderSubMesh {
     /// Index of the corresponding GeometrySubMesh in the parent GeometryMesh.
     geometry_submesh_id: usize,
-    /// Material key (resolved via ResourceManager at draw time).
-    material: MaterialKey,
     /// Unique slot index in the GPU scene SSBO
     draw_slot: u32,
     /// Bitmask — bit N = 1 if pass_type N is active for drawing.
@@ -259,6 +262,8 @@ impl RenderInstance {
 
                 let local_idx = passes.len();
                 passes.push(RenderSubMeshPass {
+                    material: material_key,
+                    material_pass_index: pass_idx as u8,
                     vertex_shader: vs,
                     cached_pipeline_key: None,
                     cached_pass_info_gen: 0,
@@ -271,7 +276,6 @@ impl RenderInstance {
 
             sub_meshes.push(RenderSubMesh {
                 geometry_submesh_id: submesh.submesh_id(),
-                material: material_key,
                 draw_slot: slot_allocator.alloc(),
                 pass_mask,
                 pass_type_to_index,
@@ -376,11 +380,6 @@ impl RenderSubMesh {
         self.geometry_submesh_id
     }
 
-    /// Get the material key
-    pub fn material(&self) -> MaterialKey {
-        self.material
-    }
-
     /// Get the draw slot index (position in the GPU scene SSBO)
     pub fn draw_slot(&self) -> u32 {
         self.draw_slot
@@ -470,6 +469,16 @@ impl RenderSubMesh {
 // ===== RENDER SUBMESH PASS ACCESSORS =====
 
 impl RenderSubMeshPass {
+    /// Get the material key for this pass
+    pub fn material(&self) -> MaterialKey {
+        self.material
+    }
+
+    /// Get the index of the pass within the Material's passes vec
+    pub fn material_pass_index(&self) -> usize {
+        self.material_pass_index as usize
+    }
+
     /// Get the vertex shader key for this pass
     pub fn vertex_shader(&self) -> ShaderKey {
         self.vertex_shader

@@ -86,22 +86,9 @@ fn test_integration_scene_manager_lifecycle() {
 
     // Use scene manager: create scenes
     {
-        let graphics_device_arc = Engine::graphics_device("main").unwrap();
         let mut sm = sm_arc.lock().unwrap();
-        let (fb, ib, mb, lb) = create_test_buffers_via_rm(graphics_device_arc.clone(), "game");
-        sm.create_scene("game", graphics_device_arc.clone(), vec![
-            galaxy_3d_engine::galaxy3d::scene::GlobalBinding::UniformBuffer(fb),
-            galaxy_3d_engine::galaxy3d::scene::GlobalBinding::StorageBuffer(ib),
-            galaxy_3d_engine::galaxy3d::scene::GlobalBinding::StorageBuffer(mb),
-            galaxy_3d_engine::galaxy3d::scene::GlobalBinding::StorageBuffer(lb),
-        ]).unwrap();
-        let (fb2, ib2, mb2, lb2) = create_test_buffers_via_rm(graphics_device_arc.clone(), "ui");
-        sm.create_scene("ui", graphics_device_arc.clone(), vec![
-            galaxy_3d_engine::galaxy3d::scene::GlobalBinding::UniformBuffer(fb2),
-            galaxy_3d_engine::galaxy3d::scene::GlobalBinding::StorageBuffer(ib2),
-            galaxy_3d_engine::galaxy3d::scene::GlobalBinding::StorageBuffer(mb2),
-            galaxy_3d_engine::galaxy3d::scene::GlobalBinding::StorageBuffer(lb2),
-        ]).unwrap();
+        sm.create_scene("game").unwrap();
+        sm.create_scene("ui").unwrap();
         assert_eq!(sm.scene_count(), 2);
 
         // Get a scene

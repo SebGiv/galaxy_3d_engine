@@ -516,17 +516,24 @@ impl RendererCommandList for CommandList {
                 vk_pipeline.pipeline,
             );
 
-            // Save pipeline layout for push constants
+            // Save pipeline layout for push constants and bind_textures
             self.bound_pipeline_layout = Some(vk_pipeline.pipeline_layout);
 
-            // Bind the bindless descriptor set (set 0) with the current pipeline layout.
-            // Must be done on every bind_pipeline because pipeline layouts with different
-            // push constant ranges are incompatible, which invalidates all descriptor sets.
+            Ok(())
+        }
+    }
+
+    fn bind_textures(&mut self) -> Result<()> {
+        unsafe {
+            let pipeline_layout = self.bound_pipeline_layout
+                .ok_or_else(|| engine_err!("galaxy3d::vulkan",
+                    "bind_textures: no pipeline bound (call bind_pipeline first)"))?;
+
             self.device.cmd_bind_descriptor_sets(
                 self.command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                vk_pipeline.pipeline_layout,
-                0, // firstSet = 0
+                pipeline_layout,
+                0, // firstSet = 0 (bindless textures)
                 &[self.bindless_descriptor_set],
                 &[],
             );

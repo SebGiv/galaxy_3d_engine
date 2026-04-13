@@ -78,6 +78,13 @@ pub trait CommandList: Send + Sync {
         binding_group: &Arc<dyn BindingGroup>,
     ) -> Result<()>;
 
+    /// Bind the bindless texture descriptor set (set 0).
+    ///
+    /// Must be called after `bind_pipeline`. Uses the currently bound pipeline
+    /// layout to bind the persistent bindless descriptor set at set 0.
+    /// Only needed for passes that sample textures — shadow passes can skip this.
+    fn bind_textures(&mut self) -> Result<()>;
+
     /// Push constants to the pipeline
     ///
     /// # Arguments

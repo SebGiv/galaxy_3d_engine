@@ -53,14 +53,6 @@ fn create_test_buffers(gd: &Arc<Mutex<dyn crate::graphics_device::GraphicsDevice
     (mk(BufferKind::Uniform), mk(BufferKind::Storage), mk(BufferKind::Storage), mk(BufferKind::Storage))
 }
 
-fn to_global_bindings(b: &(Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>)) -> Vec<GlobalBinding> {
-    vec![
-        GlobalBinding::UniformBuffer(b.0.clone()),
-        GlobalBinding::StorageBuffer(b.1.clone()),
-        GlobalBinding::StorageBuffer(b.2.clone()),
-        GlobalBinding::StorageBuffer(b.3.clone()),
-    ]
-}
 
 fn create_test_shaders(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> (ShaderKey, ShaderKey) {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -144,7 +136,7 @@ fn remove_and_commit(scene: &mut Scene, key: RenderInstanceKey) -> bool {
 fn test_scene_new_is_empty() {
     let gd = create_mock_graphics_device();
     let b = create_test_buffers(&gd);
-    let scene = Scene::new(gd, to_global_bindings(&b));
+    let scene = Scene::new();
     assert_eq!(scene.render_instance_count(), 0);
 }
 
@@ -155,7 +147,7 @@ fn test_scene_new_is_empty() {
 #[test]
 fn test_create_render_instance() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     assert_eq!(scene.render_instance_count(), 1);
     assert!(scene.render_instance(key).is_some());
@@ -164,7 +156,7 @@ fn test_create_render_instance() {
 #[test]
 fn test_create_multiple_render_instances() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::X), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::Y), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k3 = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::Z), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
@@ -177,7 +169,7 @@ fn test_create_multiple_render_instances() {
 #[test]
 fn test_create_render_instance_returns_unique_keys() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     assert_ne!(k1, k2);
@@ -190,7 +182,7 @@ fn test_create_render_instance_returns_unique_keys() {
 #[test]
 fn test_remove_render_instance_deferred() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     assert!(scene.remove_render_instance(key));
     assert_eq!(scene.render_instance_count(), 1); // still present (deferred)
@@ -201,7 +193,7 @@ fn test_remove_render_instance_deferred() {
 #[test]
 fn test_remove_render_instance_key_becomes_invalid() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     remove_and_commit(&mut scene, key);
     assert!(scene.render_instance(key).is_none());
@@ -211,7 +203,7 @@ fn test_remove_render_instance_key_becomes_invalid() {
 #[test]
 fn test_remove_nonexistent_key_returns_false() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     remove_and_commit(&mut scene, key);
     assert!(!scene.remove_render_instance(key));
@@ -220,7 +212,7 @@ fn test_remove_nonexistent_key_returns_false() {
 #[test]
 fn test_remove_does_not_invalidate_other_keys() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::X), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::Y), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k3 = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::Z), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
@@ -234,7 +226,7 @@ fn test_remove_does_not_invalidate_other_keys() {
 #[test]
 fn test_slot_reuse_after_remove() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     remove_and_commit(&mut scene, k1);
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
@@ -249,7 +241,7 @@ fn test_slot_reuse_after_remove() {
 #[test]
 fn test_render_instance_access() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     assert_eq!(*scene.render_instance(key).unwrap().world_matrix(), Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)));
 }
@@ -257,7 +249,7 @@ fn test_render_instance_access() {
 #[test]
 fn test_set_world_matrix() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let m = Mat4::from_translation(Vec3::new(99.0, 0.0, 0.0));
     assert!(scene.set_world_matrix(key, m));
@@ -272,14 +264,14 @@ fn test_set_world_matrix() {
 fn test_render_instance_keys_empty() {
     let gd = create_mock_graphics_device();
     let b = create_test_buffers(&gd);
-    let scene = Scene::new(gd, to_global_bindings(&b));
+    let scene = Scene::new();
     assert_eq!(scene.render_instance_keys().count(), 0);
 }
 
 #[test]
 fn test_render_instance_keys_returns_all() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let keys: Vec<_> = scene.render_instance_keys().collect();
@@ -295,7 +287,7 @@ fn test_render_instance_keys_returns_all() {
 #[test]
 fn test_render_instances_iteration() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::X), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::Y), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let items: Vec<(RenderInstanceKey, _)> = scene.render_instances().collect();
@@ -308,7 +300,7 @@ fn test_render_instances_iteration() {
 #[test]
 fn test_iteration_after_removal() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let _k1 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let _k3 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
@@ -320,7 +312,7 @@ fn test_iteration_after_removal() {
 fn test_iteration_empty_scene() {
     let gd = create_mock_graphics_device();
     let b = create_test_buffers(&gd);
-    let scene = Scene::new(gd, to_global_bindings(&b));
+    let scene = Scene::new();
     assert_eq!(scene.render_instances().count(), 0);
 }
 
@@ -331,7 +323,7 @@ fn test_iteration_empty_scene() {
 #[test]
 fn test_clear() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.clear();
@@ -343,7 +335,7 @@ fn test_clear() {
 #[test]
 fn test_clear_then_add() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.clear();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
@@ -358,7 +350,7 @@ fn test_clear_then_add() {
 #[test]
 fn test_many_instances() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let mut keys = Vec::new();
     for i in 0..100 {
         let key = scene.create_render_instance(s.mesh_key, Mat4::from_translation(Vec3::new(i as f32, 0.0, 0.0)), create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
@@ -392,7 +384,7 @@ fn create_test_camera() -> Camera {
 
 /// Setup the Engine singleton with a ResourceManager populated with test resources.
 /// Returns (Scene, ResourceManager mesh_key) for drawer tests.
-fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey) {
+fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey, Arc<dyn crate::graphics_device::BindingGroup>) {
     Engine::initialize().unwrap();
     Engine::reset_for_testing();
     Engine::create_resource_manager().unwrap();
@@ -451,16 +443,25 @@ fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey) {
     };
 
     let rm_lock = rm_arc.lock().unwrap();
-    let scene = Scene::new(gd, to_global_bindings(&buffers));
+    let scene = Scene::new();
     drop(rm_lock);
 
-    (scene, mesh_key, vertex_shader_key)
+    let binding_group: Arc<dyn crate::graphics_device::BindingGroup> = {
+        let gd = Engine::graphics_device("main").unwrap();
+        let gd_lock = gd.lock().unwrap();
+        gd_lock.create_binding_group_from_layout(
+            &crate::graphics_device::BindingGroupLayoutDesc { entries: vec![] },
+            1, &[],
+        ).unwrap()
+    };
+
+    (scene, mesh_key, vertex_shader_key, binding_group)
 }
 
 #[test]
 #[serial]
 fn test_draw_empty_view() {
-    let (mut scene, _mesh_key, _vertex_shader_key) = setup_engine_draw_test();
+    let (mut scene, _mesh_key, _vertex_shader_key, binding_group) = setup_engine_draw_test();
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
     let drawer = ForwardDrawer::new();
@@ -472,7 +473,7 @@ fn test_draw_empty_view() {
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
     );
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info).unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false).unwrap();
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
     Engine::reset_for_testing();
 }
@@ -480,7 +481,7 @@ fn test_draw_empty_view() {
 #[test]
 #[serial]
 fn test_draw_single_instance() {
-    let (mut scene, mesh_key, vertex_shader_key) = setup_engine_draw_test();
+    let (mut scene, mesh_key, vertex_shader_key, binding_group) = setup_engine_draw_test();
     {
         let rm_arc = Engine::resource_manager().unwrap();
         let rm = rm_arc.lock().unwrap();
@@ -497,7 +498,7 @@ fn test_draw_single_instance() {
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
     );
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info).unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false).unwrap();
     assert_eq!(cmd.commands, vec![
         "set_viewport",
         "set_scissor",
@@ -515,7 +516,7 @@ fn test_draw_single_instance() {
 #[test]
 #[serial]
 fn test_draw_skips_committed_removal() {
-    let (mut scene, mesh_key, vertex_shader_key) = setup_engine_draw_test();
+    let (mut scene, mesh_key, vertex_shader_key, binding_group) = setup_engine_draw_test();
     let key = {
         let rm_arc = Engine::resource_manager().unwrap();
         let rm = rm_arc.lock().unwrap();
@@ -533,7 +534,7 @@ fn test_draw_skips_committed_removal() {
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
     );
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info).unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false).unwrap();
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
     Engine::reset_for_testing();
 }
@@ -541,7 +542,7 @@ fn test_draw_skips_committed_removal() {
 #[test]
 #[serial]
 fn test_draw_multiple_instances() {
-    let (mut scene, mesh_key, vertex_shader_key) = setup_engine_draw_test();
+    let (mut scene, mesh_key, vertex_shader_key, binding_group) = setup_engine_draw_test();
     {
         let rm_arc = Engine::resource_manager().unwrap();
         let rm = rm_arc.lock().unwrap();
@@ -559,7 +560,7 @@ fn test_draw_multiple_instances() {
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
     );
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info).unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false).unwrap();
     // 2 instances: viewport + scissor + 2x (bind_vb, bind_ib, bind_pipeline, set_dynamic_state, bind_bg, draw_indexed)
     // push_constants skipped: MockShader has no reflected push constants
     assert_eq!(cmd.commands.len(), 2 + 2 * 6);
@@ -574,7 +575,7 @@ fn test_draw_multiple_instances() {
 fn test_draw_slot_count_empty() {
     let gd = create_mock_graphics_device();
     let b = create_test_buffers(&gd);
-    let scene = Scene::new(gd, to_global_bindings(&b));
+    let scene = Scene::new();
     assert_eq!(scene.draw_slot_count(), 0);
     assert_eq!(scene.draw_slot_high_water_mark(), 0);
 }
@@ -582,7 +583,7 @@ fn test_draw_slot_count_empty() {
 #[test]
 fn test_draw_slot_count_tracks_instances() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     assert_eq!(scene.draw_slot_count(), 1);
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
@@ -592,7 +593,7 @@ fn test_draw_slot_count_tracks_instances() {
 #[test]
 fn test_draw_slot_count_after_remove() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     remove_and_commit(&mut scene, k1);
@@ -603,7 +604,7 @@ fn test_draw_slot_count_after_remove() {
 #[test]
 fn test_draw_slot_recycling_after_remove() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     remove_and_commit(&mut scene, k1);
@@ -615,7 +616,7 @@ fn test_draw_slot_recycling_after_remove() {
 #[test]
 fn test_draw_slot_count_after_clear() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.clear();
@@ -630,7 +631,7 @@ fn test_draw_slot_count_after_clear() {
 #[test]
 fn test_create_marks_new_instance() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     assert!(scene.has_new_instance(key));
     assert!(!scene.has_dirty_instance_transform(key));
@@ -639,7 +640,7 @@ fn test_create_marks_new_instance() {
 #[test]
 fn test_set_world_matrix_marks_dirty_transform() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     assert_eq!(scene.dirty_instance_transform_count(), 0);
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
@@ -649,7 +650,7 @@ fn test_set_world_matrix_marks_dirty_transform() {
 #[test]
 fn test_dirty_instance_transforms_flip_clears_front() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
     let taken = scene.dirty_instance_transforms();
@@ -660,7 +661,7 @@ fn test_dirty_instance_transforms_flip_clears_front() {
 #[test]
 fn test_remove_cleans_dirty_transform() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
     scene.remove_render_instance(key);
@@ -670,7 +671,7 @@ fn test_remove_cleans_dirty_transform() {
 #[test]
 fn test_clear_cleans_dirty_transforms() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let k1 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let k2 = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.set_world_matrix(k1, Mat4::from_translation(Vec3::X));
@@ -682,7 +683,7 @@ fn test_clear_cleans_dirty_transforms() {
 #[test]
 fn test_set_world_matrix_on_invalid_key_returns_false() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     remove_and_commit(&mut scene, key);
     assert!(!scene.set_world_matrix(key, Mat4::IDENTITY));
@@ -691,7 +692,7 @@ fn test_set_world_matrix_on_invalid_key_returns_false() {
 #[test]
 fn test_dirty_transform_deduplication() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::X));
     scene.set_world_matrix(key, Mat4::from_translation(Vec3::Y));
@@ -706,7 +707,7 @@ fn test_dirty_transform_deduplication() {
 #[test]
 fn test_new_instances_flip_clears_front() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     let taken = scene.new_instances();
     assert!(taken.contains(&key));
@@ -716,7 +717,7 @@ fn test_new_instances_flip_clears_front() {
 #[test]
 fn test_remove_cleans_new_instance() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.remove_render_instance(key);
     assert!(!scene.has_new_instance(key));
@@ -725,7 +726,7 @@ fn test_remove_cleans_new_instance() {
 #[test]
 fn test_clear_cleans_new_instances() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.clear();
@@ -735,7 +736,7 @@ fn test_clear_cleans_new_instances() {
 #[test]
 fn test_create_then_set_matrix_in_both_sets() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     assert!(scene.has_new_instance(key));
     assert!(!scene.has_dirty_instance_transform(key));
@@ -751,7 +752,7 @@ fn test_create_then_set_matrix_in_both_sets() {
 #[test]
 fn test_remove_marks_removed_instance() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.remove_render_instance(key);
     let removed = scene.removed_instances();
@@ -761,7 +762,7 @@ fn test_remove_marks_removed_instance() {
 #[test]
 fn test_removed_instances_flip_clears_front() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.remove_render_instance(key);
     let _ = scene.removed_instances();
@@ -771,7 +772,7 @@ fn test_removed_instances_flip_clears_front() {
 #[test]
 fn test_remove_deduplication() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.remove_render_instance(key);
     scene.remove_render_instance(key);
@@ -781,7 +782,7 @@ fn test_remove_deduplication() {
 #[test]
 fn test_clear_cleans_removed_instances() {
     let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
+    let mut scene = Scene::new();
     let key = scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
     scene.remove_render_instance(key);
     scene.clear();
@@ -789,33 +790,5 @@ fn test_clear_cleans_removed_instances() {
 }
 
 // ============================================================================
-// Tests: Global Binding Group
-// ============================================================================
-
-#[test]
-fn test_global_binding_group_none_before_first_instance() {
-    let gd = create_mock_graphics_device();
-    let b = create_test_buffers(&gd);
-    let scene = Scene::new(gd, to_global_bindings(&b));
-    assert!(scene.global_binding_group().is_none());
-}
-
-#[test]
-fn test_global_binding_group_created_on_first_instance() {
-    let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
-    scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
-    let bg = scene.global_binding_group();
-    assert!(bg.is_some());
-    assert_eq!(bg.unwrap().set_index(), 1); // Set 0 is reserved for bindless textures
-}
-
-#[test]
-fn test_global_binding_group_survives_clear() {
-    let s = setup_resources();
-    let mut scene = Scene::new(s.gd, to_global_bindings(&s.buffers));
-    scene.create_render_instance(s.mesh_key, Mat4::IDENTITY, create_test_aabb(), s.vertex_shader_key, &[], &s.rm).unwrap();
-    assert!(scene.global_binding_group().is_some());
-    scene.clear();
-    assert!(scene.global_binding_group().is_some());
-}
+// Global binding group tests removed — binding groups are now owned
+// by ScenePassAction, not by Scene.

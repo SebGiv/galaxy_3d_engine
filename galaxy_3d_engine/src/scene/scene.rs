@@ -4,14 +4,10 @@
 /// Instances and lights are stored contiguously for cache-friendly iteration.
 
 use rustc_hash::FxHashSet;
-use std::sync::{Arc, Mutex};
 use slotmap::SlotMap;
 use glam::{Mat4, Vec3};
 use crate::error::Result;
 use crate::engine_err;
-use crate::graphics_device::{self, BindingGroup, BindingResource, SamplerType};
-use crate::resource::buffer::Buffer;
-use crate::resource::texture::Texture;
 use crate::resource::resource_manager::{ResourceManager, MeshKey, ShaderKey};
 use crate::utils::{SlotAllocator, SwapSet};
 use super::render_instance::{
@@ -19,28 +15,15 @@ use super::render_instance::{
 };
 use super::light::{Light, LightKey, LightType, LightDesc};
 
-/// A global binding resource for the scene's set 0 descriptor set.
-///
-/// Each entry maps to a binding index (0, 1, 2, ...) in declaration order.
-/// The scene builds the global binding group from these at first use.
-pub enum GlobalBinding {
-    /// Uniform buffer
-    UniformBuffer(Arc<Buffer>),
-    /// Storage buffer
-    StorageBuffer(Arc<Buffer>),
-    /// Sampled texture with sampler type
-    SampledTexture(Arc<Texture>, SamplerType),
-}
-
 /// A renderable scene containing RenderInstances and Lights.
 ///
 /// Instances and lights are managed via stable keys (RenderInstanceKey, LightKey).
 /// Keys remain valid even after other entries are removed.
-/// The scene holds a reference to the GraphicsDevice for creating GPU binding groups.
+///
+/// The scene is a pure data container — it does NOT hold GPU binding groups
+/// or buffer references. Binding groups live on `ScenePassAction`, and
+/// GPU buffers are passed directly to the `Updater` methods.
 pub struct Scene {
-    /// Graphics device for creating GPU resources (binding groups)
-    graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
-
     // ----- Render Instances -----
 
     /// Render instances stored in a slot map for O(1) insert/remove
@@ -68,28 +51,12 @@ pub struct Scene {
     dirty_light_data: SwapSet<LightKey>,
     /// Lights marked for deferred removal
     removed_lights: SwapSet<LightKey>,
-
-    // ----- Global Bindings -----
-
-    /// User-defined global bindings for set 0 (binding 0, 1, 2, ... in order)
-    global_bindings: Vec<GlobalBinding>,
-    /// Set 0 binding group, built lazily from global_bindings
-    global_binding_group: Option<Arc<dyn BindingGroup>>,
 }
 
 impl Scene {
     /// Create a new empty scene (internal: only via SceneManager)
-    ///
-    /// # Arguments
-    ///
-    /// * `graphics_device` - GraphicsDevice for creating GPU resources
-    /// * `global_bindings` - Global bindings for set 0 (UBO, SSBO, or Texture+Sampler in order)
-    pub(crate) fn new(
-        graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
-        global_bindings: Vec<GlobalBinding>,
-    ) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            graphics_device,
             render_instances: SlotMap::with_key(),
             draw_slot_allocator: SlotAllocator::new(),
             dirty_instance_transforms: SwapSet::new(),
@@ -101,8 +68,6 @@ impl Scene {
             dirty_light_transforms: SwapSet::new(),
             dirty_light_data: SwapSet::new(),
             removed_lights: SwapSet::new(),
-            global_bindings,
-            global_binding_group: None,
         }
     }
 
@@ -247,70 +212,6 @@ impl Scene {
     /// Get the number of render instances
     pub fn render_instance_count(&self) -> usize {
         self.render_instances.len()
-    }
-
-    /// Get a global binding at the given index
-    pub fn global_binding(&self, index: usize) -> Option<&GlobalBinding> {
-        self.global_bindings.get(index)
-    }
-
-    /// Get the number of global bindings
-    pub fn global_binding_count(&self) -> usize {
-        self.global_bindings.len()
-    }
-
-    /// Get the buffer from a global binding at the given index.
-    /// Returns None if the index is out of range or the binding is not a buffer.
-    pub fn global_buffer(&self, index: usize) -> Option<&Arc<Buffer>> {
-        match self.global_bindings.get(index)? {
-            GlobalBinding::UniformBuffer(buf) => Some(buf),
-            GlobalBinding::StorageBuffer(buf) => Some(buf),
-            GlobalBinding::SampledTexture(_, _) => None,
-        }
-    }
-
-    /// Get the global binding group (Set 0).
-    ///
-    /// Returns None if no instance has been created yet.
-    pub fn global_binding_group(&self) -> Option<&Arc<dyn BindingGroup>> {
-        self.global_binding_group.as_ref()
-    }
-
-    /// Lazily create the global binding group (Set 1) using the given pipeline.
-    ///
-    /// Builds the binding group from the user-declared global_bindings Vec.
-    /// Called at draw time with the first resolved pipeline, since the pipeline
-    /// is no longer stored on the material.
-    pub fn ensure_global_binding_group_with_pipeline(
-        &mut self,
-        gd_pipeline: &Arc<dyn graphics_device::Pipeline>,
-    ) -> Result<()> {
-        if self.global_binding_group.is_some() {
-            return Ok(());
-        }
-
-        let resources: Vec<BindingResource> = self.global_bindings.iter()
-            .map(|gb| match gb {
-                GlobalBinding::UniformBuffer(buf) =>
-                    BindingResource::UniformBuffer(buf.graphics_device_buffer().as_ref()),
-                GlobalBinding::StorageBuffer(buf) =>
-                    BindingResource::StorageBuffer(buf.graphics_device_buffer().as_ref()),
-                GlobalBinding::SampledTexture(tex, sampler_type) =>
-                    BindingResource::SampledTexture(
-                        tex.graphics_device_texture().as_ref(), *sampler_type,
-                    ),
-            })
-            .collect();
-
-        let graphics_device_lock = self.graphics_device.lock().unwrap();
-        let bg = graphics_device_lock.create_binding_group(
-            gd_pipeline,
-            1, // Set 1: scene global bindings (set 0 is reserved for bindless textures)
-            &resources,
-        )?;
-
-        self.global_binding_group = Some(bg);
-        Ok(())
     }
 
     // ===== LIGHTS =====

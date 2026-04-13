@@ -13,7 +13,7 @@ mod render_pass;
 mod render_target;
 
 pub use access_type::{AccessType, ResourceAccess};
-pub use pass_action::{PassAction, FullscreenAction, CustomAction, ScenePassAction};
+pub use pass_action::{PassAction, FullscreenAction, CustomAction, ScenePassAction, SceneBinding};
 pub use render_graph::RenderGraph;
 pub use render_graph_manager::RenderGraphManager;
 pub use render_pass::RenderPass;

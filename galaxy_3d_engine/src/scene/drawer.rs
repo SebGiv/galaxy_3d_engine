@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use crate::error::Result;
 use crate::engine::Engine;
-use crate::graphics_device::CommandList;
+use crate::graphics_device::{CommandList, BindingGroup};
 use crate::resource::resource_manager::PassInfo;
 use super::render_view::RenderView;
 use super::scene::Scene;
@@ -16,16 +16,26 @@ use super::scene::Scene;
 /// Called within an active render pass. The Drawer issues draw commands
 /// into the command list, resolving pipelines lazily via the pipeline cache.
 ///
+/// `binding_group` is the per-pass descriptor set (set 1) containing the
+/// global buffers. It is created by the ScenePassAction at construction
+/// and passed here ready to use.
+///
 /// `&self` because drawing is stateless — the same Drawer can be
 /// reused across multiple scenes and frames.
 pub trait Drawer: Send + Sync {
     /// Draw visible submeshes from the RenderView into the command list.
+    ///
+    /// `bind_textures` controls whether the bindless texture descriptor set
+    /// (set 0) is bound after each pipeline change. Shadow passes can set
+    /// this to false to skip the texture bind.
     fn draw(
         &self,
         scene: &mut Scene,
         view: &RenderView,
         cmd: &mut dyn CommandList,
         pass_info: &PassInfo,
+        binding_group: &Arc<dyn BindingGroup>,
+        bind_textures: bool,
     ) -> Result<()>;
 }
 
@@ -48,6 +58,8 @@ impl Drawer for ForwardDrawer {
         view: &RenderView,
         cmd: &mut dyn CommandList,
         pass_info: &PassInfo,
+        binding_group: &Arc<dyn BindingGroup>,
+        bind_textures: bool,
     ) -> Result<()> {
         let pass_info_gen = pass_info.generation();
         let camera = view.camera();
@@ -89,7 +101,8 @@ impl Drawer for ForwardDrawer {
             }
 
             // ===== Phase 1: read submesh + pass + cache validity =====
-            let (vertex_shader, vertex_layout_arc, topology, material_key, draw_slot,
+            let (vertex_shader, vertex_layout_arc, topology,
+                 sm_pass_material, sm_pass_mat_pass_idx, draw_slot,
                  vertex_offset, vertex_count, index_offset, index_count,
                  is_pipeline_valid, mat_gen) = {
                 let inst = scene.render_instance(key).unwrap();
@@ -99,13 +112,14 @@ impl Drawer for ForwardDrawer {
                 let geo_mesh = geo.mesh(inst.geometry_mesh_id()).unwrap();
                 let geo_sm = geo_mesh.submesh(render_sm.geometry_submesh_id()).unwrap();
                 let geo_sm_lod = geo_sm.lod(lod_idx).unwrap();
-                let mat = rm.material(render_sm.material()).unwrap();
+                let mat = rm.material(sm_pass.material()).unwrap();
                 let mat_gen = mat.generation();
                 (
                     sm_pass.vertex_shader(),
                     Arc::clone(geo.vertex_layout()),
                     geo_sm_lod.topology(),
-                    render_sm.material(),
+                    sm_pass.material(),
+                    sm_pass.material_pass_index(),
                     render_sm.draw_slot(),
                     geo_sm_lod.vertex_offset(),
                     geo_sm_lod.vertex_count(),
@@ -119,8 +133,8 @@ impl Drawer for ForwardDrawer {
             // ===== Phase 2: resolve pipeline if stale or missing =====
             if !is_pipeline_valid {
                 let (frag_shader, color_blend, polygon_mode) = {
-                    let mat = rm.material(material_key).unwrap();
-                    let pass = mat.pass(pass_idx).unwrap();
+                    let mat = rm.material(sm_pass_material).unwrap();
+                    let pass = mat.pass(sm_pass_mat_pass_idx).unwrap();
                     (pass.fragment_shader(), *pass.color_blend(), pass.polygon_mode())
                 };
 
@@ -146,17 +160,15 @@ impl Drawer for ForwardDrawer {
             let pipeline = rm.pipeline(pipeline_key).unwrap();
             let gd_pipeline = pipeline.graphics_device_pipeline().clone();
 
-            let render_state = rm.material(material_key).unwrap()
-                .pass(pass_idx).unwrap()
+            let render_state = rm.material(sm_pass_material).unwrap()
+                .pass(sm_pass_mat_pass_idx).unwrap()
                 .render_state();
-
-            scene.ensure_global_binding_group_with_pipeline(&gd_pipeline)?;
 
             cmd.bind_pipeline(&gd_pipeline)?;
             cmd.set_dynamic_state(render_state)?;
-
-            if let Some(global_bg) = scene.global_binding_group() {
-                cmd.bind_binding_group(&gd_pipeline, global_bg.set_index(), global_bg)?;
+            cmd.bind_binding_group(&gd_pipeline, binding_group.set_index(), binding_group)?;
+            if bind_textures {
+                cmd.bind_textures()?;
             }
 
             let reflection = gd_pipeline.reflection();

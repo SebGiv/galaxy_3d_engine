@@ -306,7 +306,7 @@ fn test_from_mesh_stores_material_key() {
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let sm = instance.sub_mesh(0).unwrap();
-    assert_eq!(sm.material(), mat_key);
+    assert_eq!(sm.pass_by_index(0).unwrap().material(), mat_key);
 }
 
 #[test]
@@ -315,7 +315,7 @@ fn test_from_mesh_material_pipeline_structure() {
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let sm = instance.sub_mesh(0).unwrap();
-    let material = res.rm.material(sm.material()).unwrap();
+    let material = res.rm.material(sm.pass_by_index(0).unwrap().material()).unwrap();
     assert_eq!(material.pass(0).unwrap().fragment_shader(), res.fragment_shader_key);
 }
 
@@ -377,8 +377,8 @@ fn test_from_mesh_material_with_texture() {
 
     let instance = create_test_render_instance(mesh_key, Mat4::IDENTITY, create_test_aabb(), vk, &rm).unwrap();
     let sm = instance.sub_mesh(0).unwrap();
-    assert_eq!(sm.material(), mk);
-    assert_eq!(rm.material(sm.material()).unwrap().total_texture_slot_count(), 1);
+    assert_eq!(sm.pass_by_index(0).unwrap().material(), mk);
+    assert_eq!(rm.material(sm.pass_by_index(0).unwrap().material()).unwrap().total_texture_slot_count(), 1);
     let _ = pk;
 }
 
@@ -499,7 +499,7 @@ fn test_render_submesh_all_accessors() {
     let mk = create_simple_mesh_key(&mut res);
     let instance = create_test_render_instance(mk, Mat4::IDENTITY, create_test_aabb(), res.vertex_shader_key, &res.rm).unwrap();
     let sm = instance.sub_mesh(0).unwrap();
-    assert_eq!(sm.material(), res.material_key);
+    assert_eq!(sm.pass_by_index(0).unwrap().material(), res.material_key);
     assert_eq!(sm.geometry_submesh_id(), 0);
 
     // Geometry data is read from the Geometry, not the RenderSubMesh

@@ -7,6 +7,7 @@
 use glam::Vec3;
 use crate::error::Result;
 use crate::camera::{Camera, VisibleInstances};
+use crate::resource::buffer::Buffer;
 use super::scene::Scene;
 use super::scene_index::SceneIndex;
 use super::render_instance::AABB;
@@ -14,15 +15,16 @@ use super::light::{LightType, LightKey};
 
 /// Strategy for synchronizing scene data to GPU buffers.
 ///
-/// Called once per frame before culling. `&mut self` allows
-/// stateful implementations to track dirty state and manage
-/// GPU buffer allocations.
+/// Called once per frame before culling. GPU buffers are passed directly
+/// to each method — the Scene does not hold any buffer references.
+///
+/// `&mut self` allows stateful implementations to track dirty state.
 pub trait Updater: Send + Sync {
     /// Update the per-frame uniform buffer from the camera state.
     ///
     /// Writes camera matrices (view, projection, view-projection)
-    /// and other per-frame data into the Scene's frame buffer.
-    fn update_frame(&mut self, scene: &Scene, camera: &Camera) -> Result<()>;
+    /// and other per-frame data into `frame_buffer`.
+    fn update_frame(&mut self, camera: &Camera, frame_buffer: &Buffer) -> Result<()>;
 
     /// Update the per-instance storage buffer from dirty instances.
     ///
@@ -34,6 +36,7 @@ pub trait Updater: Send + Sync {
         &mut self,
         scene: &mut Scene,
         scene_index: Option<&mut dyn SceneIndex>,
+        instance_buffer: &Buffer,
     ) -> Result<()>;
 
     /// Update the per-light storage buffer from dirty lights.
@@ -43,7 +46,7 @@ pub trait Updater: Send + Sync {
     /// - New: writes all GPU fields to light buffer
     /// - Dirty transforms: writes position/type + direction/range
     /// - Dirty data: writes color/intensity + spot params + attenuation
-    fn update_lights(&mut self, scene: &mut Scene) -> Result<()>;
+    fn update_lights(&mut self, scene: &mut Scene, light_buffer: &Buffer) -> Result<()>;
 
     /// Assign lights to visible instances (post-culling).
     ///
@@ -51,7 +54,7 @@ pub trait Updater: Send + Sync {
     /// against the instance's world AABB (sphere-AABB for range, cone-AABB
     /// for spots), scores by intensity/distance², takes the top 8, and writes
     /// lightCount + lightIndices0/1 to the instance buffer.
-    fn assign_lights(&mut self, scene: &Scene, visible: &VisibleInstances) -> Result<()>;
+    fn assign_lights(&mut self, scene: &Scene, visible: &VisibleInstances, instance_buffer: &Buffer) -> Result<()>;
 }
 
 /// No-op updater — does nothing.
@@ -66,7 +69,7 @@ impl NoOpUpdater {
 }
 
 impl Updater for NoOpUpdater {
-    fn update_frame(&mut self, _scene: &Scene, _camera: &Camera) -> Result<()> {
+    fn update_frame(&mut self, _camera: &Camera, _frame_buffer: &Buffer) -> Result<()> {
         Ok(())
     }
 
@@ -74,15 +77,16 @@ impl Updater for NoOpUpdater {
         &mut self,
         _scene: &mut Scene,
         _scene_index: Option<&mut dyn SceneIndex>,
+        _instance_buffer: &Buffer,
     ) -> Result<()> {
         Ok(())
     }
 
-    fn update_lights(&mut self, _scene: &mut Scene) -> Result<()> {
+    fn update_lights(&mut self, _scene: &mut Scene, _light_buffer: &Buffer) -> Result<()> {
         Ok(())
     }
 
-    fn assign_lights(&mut self, _scene: &Scene, _visible: &VisibleInstances) -> Result<()> {
+    fn assign_lights(&mut self, _scene: &Scene, _visible: &VisibleInstances, _instance_buffer: &Buffer) -> Result<()> {
         Ok(())
     }
 }
@@ -113,11 +117,6 @@ pub struct DefaultUpdater {
 }
 
 impl DefaultUpdater {
-    /// Default global binding indices (set 0)
-    const BINDING_FRAME: usize     = 0;
-    const BINDING_INSTANCES: usize = 1;
-    const BINDING_LIGHTS: usize    = 3;
-
     /// Field indices matching `create_default_frame_uniform_buffer()` layout
     const FRAME_FIELD_VIEW: usize              = 0;
     const FRAME_FIELD_PROJECTION: usize        = 1;
@@ -154,9 +153,8 @@ impl DefaultUpdater {
 }
 
 impl Updater for DefaultUpdater {
-    fn update_frame(&mut self, scene: &Scene, camera: &Camera) -> Result<()> {
-        let buf = scene.global_buffer(Self::BINDING_FRAME)
-            .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Frame buffer not found at binding {}", Self::BINDING_FRAME))?;
+    fn update_frame(&mut self, camera: &Camera, frame_buffer: &Buffer) -> Result<()> {
+        let buf = frame_buffer;
         let view = camera.view_matrix();
         let proj = camera.projection_matrix();
         let view_proj = camera.view_projection_matrix();
@@ -182,6 +180,7 @@ impl Updater for DefaultUpdater {
         &mut self,
         scene: &mut Scene,
         mut scene_index: Option<&mut dyn SceneIndex>,
+        instance_buffer: &Buffer,
     ) -> Result<()> {
         // Phase 0: removals — removed_instances() flips the SwapSet, frees draw
         // slots and removes from SlotMap, then we clean up the SceneIndex.
@@ -215,24 +214,25 @@ impl Updater for DefaultUpdater {
                 for sm_idx in 0..instance.sub_mesh_count() {
                     let sub_mesh = instance.sub_mesh(sm_idx).unwrap();
                     let slot = sub_mesh.draw_slot();
-                    // Look up the material slot id directly — it lives on the
-                    // Material itself; no per-instance cache to keep in sync.
-                    let material_slot_id = rm.material(sub_mesh.material())
+                    // Look up the material slot id from the first pass of the
+                    // submesh. When multiple passes reference different materials,
+                    // the SSBO slot will need to change — for now V1 uses passes[0].
+                    let material_slot_id = rm.material(
+                            sub_mesh.pass_by_index(0).unwrap().material()
+                        )
                         .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater",
                             "Material key not found in ResourceManager"))?
                         .slot_id();
 
-                    let buf = scene.global_buffer(Self::BINDING_INSTANCES)
-                        .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
-                    buf.update_field(slot, Self::INSTANCE_FIELD_WORLD,
+                    instance_buffer.update_field(slot, Self::INSTANCE_FIELD_WORLD,
                         bytemuck::bytes_of(&world))?;
-                    buf.update_field(slot, Self::INSTANCE_FIELD_PREVIOUS_WORLD,
+                    instance_buffer.update_field(slot, Self::INSTANCE_FIELD_PREVIOUS_WORLD,
                         bytemuck::bytes_of(&world))?;
-                    buf.update_field(slot, Self::INSTANCE_FIELD_INVERSE_WORLD,
+                    instance_buffer.update_field(slot, Self::INSTANCE_FIELD_INVERSE_WORLD,
                         bytemuck::bytes_of(&inverse_world))?;
-                    buf.update_field(slot, Self::INSTANCE_FIELD_MATERIAL_SLOT_ID,
+                    instance_buffer.update_field(slot, Self::INSTANCE_FIELD_MATERIAL_SLOT_ID,
                         bytemuck::bytes_of(&material_slot_id))?;
-                    buf.update_field(slot, Self::INSTANCE_FIELD_FLAGS,
+                    instance_buffer.update_field(slot, Self::INSTANCE_FIELD_FLAGS,
                         bytemuck::bytes_of(&flags))?;
                 }
 
@@ -258,8 +258,7 @@ impl Updater for DefaultUpdater {
                 let sub_mesh = instance.sub_mesh(sm_idx).unwrap();
                 let slot = sub_mesh.draw_slot();
 
-                let buf = scene.global_buffer(Self::BINDING_INSTANCES)
-                    .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
+                let buf = instance_buffer;
                 buf.update_field(slot, Self::INSTANCE_FIELD_WORLD,
                     bytemuck::bytes_of(&world))?;
                 buf.update_field(slot, Self::INSTANCE_FIELD_PREVIOUS_WORLD,
@@ -278,7 +277,7 @@ impl Updater for DefaultUpdater {
         Ok(())
     }
 
-    fn update_lights(&mut self, scene: &mut Scene) -> Result<()> {
+    fn update_lights(&mut self, scene: &mut Scene, light_buffer: &Buffer) -> Result<()> {
         // Phase 0: removals — free light slots + remove from SlotMap
         let _ = scene.removed_lights();
 
@@ -295,8 +294,7 @@ impl Updater for DefaultUpdater {
                 LightType::Spot  => 1.0f32,
             };
 
-            let buf = scene.global_buffer(Self::BINDING_LIGHTS)
-                .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Light buffer not found at binding {}", Self::BINDING_LIGHTS))?;
+            let buf = light_buffer;
             buf.update_field(slot, Self::LIGHT_FIELD_POSITION_TYPE,
                 bytemuck::bytes_of(&[light.position().x, light.position().y, light.position().z, type_id]))?;
             buf.update_field(slot, Self::LIGHT_FIELD_DIRECTION_RANGE,
@@ -322,8 +320,7 @@ impl Updater for DefaultUpdater {
                 LightType::Spot  => 1.0f32,
             };
 
-            let buf = scene.global_buffer(Self::BINDING_LIGHTS)
-                .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Light buffer not found at binding {}", Self::BINDING_LIGHTS))?;
+            let buf = light_buffer;
             buf.update_field(slot, Self::LIGHT_FIELD_POSITION_TYPE,
                 bytemuck::bytes_of(&[light.position().x, light.position().y, light.position().z, type_id]))?;
             buf.update_field(slot, Self::LIGHT_FIELD_DIRECTION_RANGE,
@@ -339,8 +336,7 @@ impl Updater for DefaultUpdater {
             };
             let slot = light.light_slot();
 
-            let buf = scene.global_buffer(Self::BINDING_LIGHTS)
-                .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Light buffer not found at binding {}", Self::BINDING_LIGHTS))?;
+            let buf = light_buffer;
             buf.update_field(slot, Self::LIGHT_FIELD_COLOR_INTENSITY,
                 bytemuck::bytes_of(&[light.color().x, light.color().y, light.color().z, light.intensity()]))?;
             buf.update_field(slot, Self::LIGHT_FIELD_SPOT_PARAMS,
@@ -352,7 +348,7 @@ impl Updater for DefaultUpdater {
         Ok(())
     }
 
-    fn assign_lights(&mut self, scene: &Scene, visible: &VisibleInstances) -> Result<()> {
+    fn assign_lights(&mut self, scene: &Scene, visible: &VisibleInstances, instance_buffer: &Buffer) -> Result<()> {
         // Refresh the persistent enabled-light-keys buffer.
         // clear() preserves capacity → no allocation in steady state.
         self.enabled_light_keys.clear();
@@ -372,8 +368,7 @@ impl Updater for DefaultUpdater {
                     Some(i) => i,
                     None => continue,
                 };
-                let buf = scene.global_buffer(Self::BINDING_INSTANCES)
-                    .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
+                let buf = instance_buffer;
                 for sm_idx in 0..instance.sub_mesh_count() {
                     let slot = instance.sub_mesh(sm_idx).unwrap().draw_slot();
                     buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,
@@ -453,15 +448,13 @@ impl Updater for DefaultUpdater {
             }
 
             // Write to all submesh draw slots
-            let buf = scene.global_buffer(Self::BINDING_INSTANCES)
-                .ok_or_else(|| crate::engine_err!("galaxy3d::DefaultUpdater", "Instance buffer not found at binding {}", Self::BINDING_INSTANCES))?;
             for sm_idx in 0..instance.sub_mesh_count() {
                 let slot = instance.sub_mesh(sm_idx).unwrap().draw_slot();
-                buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,
+                instance_buffer.update_field(slot, Self::INSTANCE_FIELD_LIGHT_COUNT,
                     bytemuck::bytes_of(&light_count))?;
-                buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_0,
+                instance_buffer.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_0,
                     bytemuck::bytes_of(&indices_0))?;
-                buf.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_1,
+                instance_buffer.update_field(slot, Self::INSTANCE_FIELD_LIGHT_INDICES_1,
                     bytemuck::bytes_of(&indices_1))?;
             }
         }

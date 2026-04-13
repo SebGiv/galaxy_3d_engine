@@ -8,7 +8,7 @@ use winit::window::Window;
 use crate::graphics_device::{
     Buffer, Texture, Shader, Pipeline, BindingGroup,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
-    BindingResource,
+    BindingResource, BindingGroupLayoutDesc,
     CommandList, RenderPass, RenderTarget, Swapchain,
     RenderPassDesc,
     Framebuffer, FramebufferDesc,
@@ -351,6 +351,19 @@ pub trait GraphicsDevice: Send + Sync {
     fn create_binding_group(
         &self,
         pipeline: &Arc<dyn Pipeline>,
+        set_index: u32,
+        resources: &[BindingResource],
+    ) -> Result<Arc<dyn BindingGroup>>;
+
+    /// Create an immutable binding group from an explicit layout description.
+    ///
+    /// Unlike `create_binding_group`, this does not require a pipeline — the
+    /// layout is provided directly. The caller is responsible for ensuring
+    /// that pipelines used with this binding group have a compatible layout
+    /// at the given set index.
+    fn create_binding_group_from_layout(
+        &self,
+        layout: &BindingGroupLayoutDesc,
         set_index: u32,
         resources: &[BindingResource],
     ) -> Result<Arc<dyn BindingGroup>>;
