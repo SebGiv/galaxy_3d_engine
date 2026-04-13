@@ -16,7 +16,6 @@ use crate::resource::mesh::{
     MeshDesc, MeshSubMeshDesc,
     GeometryMeshRef, GeometrySubMeshRef,
 };
-use crate::resource::buffer::{Buffer, BufferDesc, BufferKind, FieldDesc, FieldType};
 use crate::resource::shader::ShaderDesc;
 use crate::resource::resource_manager::{ResourceManager, MeshKey, ShaderKey};
 use crate::scene::render_instance::{AABB, RenderInstanceKey};
@@ -29,10 +28,6 @@ use std::sync::{Arc, Mutex};
 // Helper Functions
 // ============================================================================
 
-fn create_mock_graphics_device() -> Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>> {
-    Arc::new(Mutex::new(MockGraphicsDevice::new()))
-}
-
 fn create_vertex_layout() -> VertexLayout {
     VertexLayout {
         bindings: vec![VertexBinding { binding: 0, stride: 8, input_rate: VertexInputRate::Vertex }],
@@ -44,14 +39,6 @@ fn create_test_aabb() -> AABB {
     AABB { min: Vec3::new(-1.0, -1.0, -1.0), max: Vec3::new(1.0, 1.0, 1.0) }
 }
 
-fn create_test_buffers(gd: &Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
-    let mk = |kind| Arc::new(Buffer::from_desc(BufferDesc {
-        graphics_device: gd.clone(), kind,
-        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
-        count: 1,
-    }).unwrap());
-    (mk(BufferKind::Uniform), mk(BufferKind::Storage), mk(BufferKind::Storage), mk(BufferKind::Storage))
-}
 
 
 fn create_test_shaders(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>) -> (ShaderKey, ShaderKey) {
@@ -64,17 +51,18 @@ fn create_test_shaders(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn crate::graph
 }
 
 struct TestSetup {
-    gd: Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>>,
     rm: ResourceManager,
     mesh_key: MeshKey,
     vertex_shader_key: ShaderKey,
-    buffers: (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>),
+}
+
+fn create_mock_graphics_device() -> Arc<Mutex<dyn crate::graphics_device::GraphicsDevice>> {
+    Arc::new(Mutex::new(MockGraphicsDevice::new()))
 }
 
 fn setup_resources() -> TestSetup {
     let gd = create_mock_graphics_device();
     let mut rm = ResourceManager::new();
-    let buffers = create_test_buffers(&gd);
 
     let _geo_key = rm.create_geometry("geo".to_string(), GeometryDesc {
         name: "geo".to_string(), graphics_device: gd.clone(),
@@ -119,7 +107,7 @@ fn setup_resources() -> TestSetup {
         }],
     }).unwrap();
 
-    TestSetup { gd, rm, mesh_key, vertex_shader_key: vk, buffers }
+    TestSetup { rm, mesh_key, vertex_shader_key: vk }
 }
 
 fn remove_and_commit(scene: &mut Scene, key: RenderInstanceKey) -> bool {
@@ -134,8 +122,6 @@ fn remove_and_commit(scene: &mut Scene, key: RenderInstanceKey) -> bool {
 
 #[test]
 fn test_scene_new_is_empty() {
-    let gd = create_mock_graphics_device();
-    let b = create_test_buffers(&gd);
     let scene = Scene::new();
     assert_eq!(scene.render_instance_count(), 0);
 }
@@ -262,8 +248,6 @@ fn test_set_world_matrix() {
 
 #[test]
 fn test_render_instance_keys_empty() {
-    let gd = create_mock_graphics_device();
-    let b = create_test_buffers(&gd);
     let scene = Scene::new();
     assert_eq!(scene.render_instance_keys().count(), 0);
 }
@@ -310,8 +294,6 @@ fn test_iteration_after_removal() {
 
 #[test]
 fn test_iteration_empty_scene() {
-    let gd = create_mock_graphics_device();
-    let b = create_test_buffers(&gd);
     let scene = Scene::new();
     assert_eq!(scene.render_instances().count(), 0);
 }
@@ -392,7 +374,7 @@ fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey, Arc<dyn crate::graphi
     let rm_arc = Engine::resource_manager().unwrap();
     let gd = create_mock_graphics_device();
 
-    let (mesh_key, vertex_shader_key, buffers) = {
+    let (mesh_key, vertex_shader_key) = {
         let mut rm = rm_arc.lock().unwrap();
 
         let geo_key = rm.create_geometry("geo".to_string(), GeometryDesc {
@@ -438,8 +420,7 @@ fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey, Arc<dyn crate::graphi
             }],
         }).unwrap();
 
-        let buffers = create_test_buffers(&gd);
-        (mesh_key, vk, buffers)
+        (mesh_key, vk)
     };
 
     let rm_lock = rm_arc.lock().unwrap();
@@ -573,8 +554,6 @@ fn test_draw_multiple_instances() {
 
 #[test]
 fn test_draw_slot_count_empty() {
-    let gd = create_mock_graphics_device();
-    let b = create_test_buffers(&gd);
     let scene = Scene::new();
     assert_eq!(scene.draw_slot_count(), 0);
     assert_eq!(scene.draw_slot_high_water_mark(), 0);
