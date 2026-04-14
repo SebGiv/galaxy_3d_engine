@@ -97,7 +97,7 @@ fn test_create_geometry_indexed() {
         meshes: vec![],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     assert_eq!(geom.name(), "test_geom");
     assert_eq!(geom.total_vertex_count(), 4);
@@ -119,7 +119,7 @@ fn test_create_geometry_non_indexed() {
         meshes: vec![],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     assert_eq!(geom.name(), "test_geom");
     assert_eq!(geom.total_vertex_count(), 4);
@@ -146,7 +146,7 @@ fn test_create_geometry_with_mesh() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     assert_eq!(geom.mesh_count(), 1);
     assert!(geom.mesh_by_name("hero").is_some());
@@ -165,7 +165,7 @@ fn test_create_geometry_invalid_vertex_stride() {
         meshes: vec![],
     };
 
-    let result = Geometry::from_desc(desc);
+    let result = Geometry::from_desc(desc, 0);
     assert!(result.is_err());
 }
 
@@ -182,7 +182,7 @@ fn test_create_geometry_invalid_index_stride() {
         meshes: vec![],
     };
 
-    let result = Geometry::from_desc(desc);
+    let result = Geometry::from_desc(desc, 0);
     assert!(result.is_err());
 }
 
@@ -203,7 +203,7 @@ fn test_add_mesh() {
         meshes: vec![],
     };
 
-    let mut geom = Geometry::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
@@ -235,7 +235,7 @@ fn test_get_mesh_by_name() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh = geom.mesh_by_name("hero");
     assert!(mesh.is_some());
@@ -262,7 +262,7 @@ fn test_get_mesh_by_id() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh_id = geom.mesh_id("hero");
     assert_eq!(mesh_id, Some(0));
@@ -289,7 +289,7 @@ fn test_add_duplicate_mesh() {
         ],
     };
 
-    let mut geom = Geometry::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
@@ -322,7 +322,7 @@ fn test_add_submesh_to_mesh() {
         ],
     };
 
-    let mut geom = Geometry::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh_id = geom.mesh_id("hero").unwrap();
     let submesh_id = geom.add_submesh(mesh_id, make_quad_submesh_desc("body")).unwrap();
@@ -351,7 +351,7 @@ fn test_add_submesh_lod_to_existing_submesh() {
         ],
     };
 
-    let mut geom = Geometry::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh_id = geom.mesh_id("hero").unwrap();
     let submesh_id = geom.mesh(mesh_id).unwrap().submesh_id("body").unwrap();
@@ -397,7 +397,7 @@ fn test_submesh_lod_accessors() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     let submesh = geom.submesh_by_name("hero", "test").unwrap();
     let lod0 = submesh.lod(0).unwrap();
@@ -422,7 +422,7 @@ fn test_submesh_validation_vertex_overflow() {
         meshes: vec![],
     };
 
-    let mut geom = Geometry::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
@@ -455,7 +455,7 @@ fn test_submesh_validation_index_overflow() {
         meshes: vec![],
     };
 
-    let mut geom = Geometry::from_desc(desc).unwrap();
+    let mut geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh_desc = GeometryMeshDesc {
         name: "hero".to_string(),
@@ -497,7 +497,7 @@ fn test_submesh_lookup_by_name() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh = geom.mesh_by_name("hero").unwrap();
 
@@ -546,7 +546,7 @@ fn test_multiple_submeshes() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh = geom.mesh_by_name("hero").unwrap();
 
@@ -620,7 +620,7 @@ fn test_complex_geometry_hierarchy() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     assert_eq!(geom.mesh_count(), 2);
     assert_eq!(geom.mesh_names().len(), 2);
@@ -654,7 +654,7 @@ fn test_geometry_getters() {
         meshes: vec![],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     assert!(Arc::ptr_eq(&geom.graphics_device(), &graphics_device));
     let vb = geom.vertex_buffer();
@@ -703,7 +703,7 @@ fn test_submesh_by_id_path() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh_id = geom.mesh_id("hero").unwrap();
     assert_eq!(mesh_id, 0);
@@ -748,7 +748,7 @@ fn test_submeshes_iterator() {
         ],
     };
 
-    let geom = Geometry::from_desc(desc).unwrap();
+    let geom = Geometry::from_desc(desc, 0).unwrap();
 
     let mesh = geom.mesh_by_name("hero").unwrap();
 

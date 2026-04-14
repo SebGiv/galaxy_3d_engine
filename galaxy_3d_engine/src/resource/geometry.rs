@@ -254,6 +254,10 @@ pub struct Geometry {
 
     /// Name to id (index) mapping
     mesh_names: FxHashMap<String, usize>,
+
+    /// Unique sort id assigned at creation; used as a sort-key component to
+    /// group consecutive draw calls that share the same vertex/index buffer.
+    sort_id: u16,
 }
 
 impl Geometry {
@@ -267,6 +271,7 @@ impl Geometry {
         index_type: graphics_device::IndexType,
         total_vertex_count: u32,
         total_index_count: u32,
+        sort_id: u16,
     ) -> Self {
         Self {
             name,
@@ -279,13 +284,14 @@ impl Geometry {
             total_index_count,
             meshes: Vec::new(),
             mesh_names: FxHashMap::default(),
+            sort_id,
         }
     }
 
     /// Create a Geometry from a descriptor
     ///
     /// Creates the GPU buffers and populates meshes from the descriptor.
-    pub(crate) fn from_desc(desc: GeometryDesc) -> Result<Self> {
+    pub(crate) fn from_desc(desc: GeometryDesc, sort_id: u16) -> Result<Self> {
         // Get stride from first binding (binding 0)
         let vertex_stride = desc.vertex_layout.bindings
             .first()
@@ -351,6 +357,7 @@ impl Geometry {
             desc.index_type,
             vertex_count as u32,
             index_count,
+            sort_id,
         );
 
         // Add meshes from descriptor
@@ -366,6 +373,11 @@ impl Geometry {
     /// Get the group name
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Get the geometry sort id (unique per Geometry resource)
+    pub fn sort_id(&self) -> u16 {
+        self.sort_id
     }
 
     /// Get the graphics device reference

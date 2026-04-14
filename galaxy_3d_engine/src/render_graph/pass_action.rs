@@ -150,7 +150,7 @@ impl ScenePassAction {
 impl PassAction for ScenePassAction {
     fn execute(&mut self, cmd: &mut dyn CommandList, pass_info: &PassInfo) -> Result<()> {
         let mut scene = self.scene.lock().unwrap();
-        let drawer = self.drawer.lock().unwrap();
+        let mut drawer = self.drawer.lock().unwrap();
         let view = self.render_view.lock().unwrap();
         if let Some(ref view) = *view {
             drawer.draw(&mut scene, view, cmd, pass_info, &self.binding_group, self.bind_textures)?;

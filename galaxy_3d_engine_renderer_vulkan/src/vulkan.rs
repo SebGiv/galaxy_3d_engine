@@ -2962,9 +2962,17 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             // Build VkDescriptorSetLayouts from merged reflected bindings (sets 1+)
             let reflected_set_layouts = self.build_descriptor_set_layouts(&merged_bindings)?;
 
-            // Inject bindless layout at set 0, then append reflected layouts (sets 1+)
-            let mut descriptor_set_layouts = vec![self.bindless_state.layout];
-            descriptor_set_layouts.extend_from_slice(&reflected_set_layouts);
+            // Inject bindless layout at set 0 only if the shader actually declares bindings there.
+            // Set 0 is reserved for the bindless descriptor set; pipelines that don't use textures
+            // don't need it in their pipeline layout.
+            let uses_bindless = merged_bindings.iter().any(|b| b.set == 0);
+            let descriptor_set_layouts: Vec<vk::DescriptorSetLayout> = if uses_bindless {
+                std::iter::once(self.bindless_state.layout)
+                    .chain(reflected_set_layouts.iter().copied())
+                    .collect()
+            } else {
+                reflected_set_layouts.clone()
+            };
 
             // Build VkPushConstantRanges from merged reflected push constants
             let push_constant_ranges = Self::build_push_constant_ranges(

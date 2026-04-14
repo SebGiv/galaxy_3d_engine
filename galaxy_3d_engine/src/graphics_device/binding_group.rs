@@ -15,7 +15,7 @@ use crate::graphics_device::{Texture, Buffer, SamplerType, ShaderStage};
 // ============================================================================
 
 /// Type of resource bound at a given slot
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindingType {
     /// Uniform buffer (read-only structured data)
     UniformBuffer,
@@ -26,7 +26,7 @@ pub enum BindingType {
 }
 
 /// Shader stage visibility flags
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ShaderStageFlags(u32);
 
 impl ShaderStageFlags {

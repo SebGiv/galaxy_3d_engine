@@ -592,6 +592,11 @@ impl PipelineReflection {
         Self { bindings: Vec::new(), binding_names: FxHashMap::default(), push_constants: Vec::new() }
     }
 
+    /// All reflected bindings (for iteration)
+    pub fn bindings(&self) -> &[ReflectedBinding] {
+        &self.bindings
+    }
+
     /// Access by index (hot path, O(1))
     pub fn binding(&self, index: usize) -> Option<&ReflectedBinding> {
         self.bindings.get(index)
@@ -638,6 +643,86 @@ pub trait Pipeline: Send + Sync {
     fn binding_group_layout_count(&self) -> u32;
     /// Returns the shader reflection data for this pipeline
     fn reflection(&self) -> &PipelineReflection;
+}
+
+// ============================================================================
+// Pipeline signature — binding layout + push constants identity
+// ============================================================================
+
+/// Signature of a single binding within a descriptor set.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct BindingSignature {
+    pub binding: u32,
+    pub binding_type: BindingType,
+    pub count: u32,
+    pub stage_flags: ShaderStageFlags,
+}
+
+/// Signature of a descriptor set (set index + sorted bindings).
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct DescriptorSetSignature {
+    pub set: u32,
+    /// Bindings sorted by binding index ascending
+    pub bindings: Vec<BindingSignature>,
+}
+
+/// Signature of a push constant range.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct PushConstantRangeSignature {
+    pub stage_flags: ShaderStageFlags,
+    pub offset: u32,
+    pub size: u32,
+}
+
+/// Identity of a pipeline layout: descriptor set layouts + push constant ranges.
+///
+/// Two pipelines with equal `PipelineSignatureKey` have compatible pipeline
+/// layouts per Vulkan spec §14.2.2, so their descriptor set binds can be shared
+/// when switching between them.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct PipelineSignatureKey {
+    /// Descriptor sets sorted by set index ascending
+    pub descriptor_sets: Vec<DescriptorSetSignature>,
+    /// Push constant ranges sorted by (stage flags bits, offset)
+    pub push_constant_ranges: Vec<PushConstantRangeSignature>,
+}
+
+impl PipelineSignatureKey {
+    /// Build a signature key from a pipeline reflection.
+    /// Sets, bindings and push constant ranges are sorted for deterministic hashing.
+    pub fn from_reflection(reflection: &PipelineReflection) -> Self {
+        let mut by_set: FxHashMap<u32, Vec<BindingSignature>> = FxHashMap::default();
+        for b in reflection.bindings() {
+            by_set.entry(b.set).or_default().push(BindingSignature {
+                binding: b.binding,
+                binding_type: b.binding_type,
+                count: 1,
+                stage_flags: b.stage_flags,
+            });
+        }
+
+        let mut descriptor_sets: Vec<DescriptorSetSignature> = by_set
+            .into_iter()
+            .map(|(set, mut bindings)| {
+                bindings.sort_by_key(|b| b.binding);
+                DescriptorSetSignature { set, bindings }
+            })
+            .collect();
+        descriptor_sets.sort_by_key(|s| s.set);
+
+        let mut push_constant_ranges: Vec<PushConstantRangeSignature> = reflection
+            .push_constants()
+            .iter()
+            .map(|p| PushConstantRangeSignature {
+                stage_flags: p.stage_flags,
+                offset: 0,
+                size: p.size.unwrap_or(0),
+            })
+            .collect();
+        push_constant_ranges.sort_by_key(|r| (r.stage_flags.bits(), r.offset));
+
+        Self { descriptor_sets, push_constant_ranges }
+    }
 }
 
 #[cfg(test)]

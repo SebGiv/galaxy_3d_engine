@@ -14,6 +14,7 @@ mod drawer;
 mod updater;
 mod render_view;
 mod view_dispatcher;
+mod render_queue;
 
 pub use render_instance::{
     RenderInstance, RenderInstanceKey, RenderSubMesh, RenderSubMeshPass,
@@ -30,3 +31,4 @@ pub use octree_scene_index::OctreeSceneIndex;
 pub use culler::{CameraCuller, BruteForceCuller, FrustumCuller};
 pub use drawer::{Drawer, ForwardDrawer};
 pub use updater::{Updater, NoOpUpdater, DefaultUpdater};
+pub use render_queue::{RenderQueue, DrawCall, distance_to_u16, build_sort_key};

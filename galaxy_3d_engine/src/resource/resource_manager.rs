@@ -183,6 +183,18 @@ pub struct ResourceManager {
     /// Pipelines created by the cache are stored in the same `pipelines` SlotMap
     /// as manually created pipelines, with an auto-generated name.
     pipeline_cache: HashMap<PipelineCacheKey, PipelineKey>,
+
+    /// Pipeline signature cache: assigns a stable u16 id per unique pipeline layout
+    /// signature (descriptor set layouts + push constant ranges). Pipelines sharing
+    /// the same signature id can share descriptor set binds when sorted together.
+    pipeline_signatures: FxHashMap<graphics_device::PipelineSignatureKey, u16>,
+    /// Counter for the next pipeline signature id to assign.
+    next_pipeline_signature_id: u16,
+
+    /// Counter for the next per-Pipeline sort id (unique id per resource::Pipeline).
+    next_pipeline_sort_id: u16,
+    /// Counter for the next per-Geometry sort id (unique id per resource::Geometry).
+    next_geometry_sort_id: u16,
 }
 
 impl ResourceManager {
@@ -208,7 +220,54 @@ impl ResourceManager {
             material_slot_allocator: SlotAllocator::new(),
 
             pipeline_cache: HashMap::new(),
+
+            pipeline_signatures: FxHashMap::default(),
+            next_pipeline_signature_id: 0,
+
+            next_pipeline_sort_id: 0,
+            next_geometry_sort_id: 0,
         }
+    }
+
+    /// Assign a fresh sort id to a resource::Pipeline being created.
+    fn assign_pipeline_sort_id(&mut self) -> Result<u16> {
+        if self.next_pipeline_sort_id == u16::MAX {
+            crate::engine_bail!("galaxy3d::ResourceManager",
+                "Pipeline sort id overflow (>65535 pipelines)");
+        }
+        let id = self.next_pipeline_sort_id;
+        self.next_pipeline_sort_id += 1;
+        Ok(id)
+    }
+
+    /// Assign a fresh sort id to a resource::Geometry being created.
+    fn assign_geometry_sort_id(&mut self) -> Result<u16> {
+        if self.next_geometry_sort_id == u16::MAX {
+            crate::engine_bail!("galaxy3d::ResourceManager",
+                "Geometry sort id overflow (>65535 geometries)");
+        }
+        let id = self.next_geometry_sort_id;
+        self.next_geometry_sort_id += 1;
+        Ok(id)
+    }
+
+    /// Get or assign a u16 id for a pipeline layout signature.
+    /// Two pipelines with equal signatures return the same id.
+    fn get_or_assign_pipeline_signature_id(
+        &mut self,
+        key: graphics_device::PipelineSignatureKey,
+    ) -> Result<u16> {
+        if let Some(&id) = self.pipeline_signatures.get(&key) {
+            return Ok(id);
+        }
+        if self.next_pipeline_signature_id == u16::MAX {
+            crate::engine_bail!("galaxy3d::ResourceManager",
+                "Pipeline signature id overflow (>65535 distinct signatures)");
+        }
+        let id = self.next_pipeline_signature_id;
+        self.next_pipeline_signature_id += 1;
+        self.pipeline_signatures.insert(key, id);
+        Ok(id)
     }
 
     // ===== TEXTURE CREATION =====
@@ -323,7 +382,8 @@ impl ResourceManager {
             crate::engine_bail_warn!("galaxy3d::ResourceManager", "Geometry '{}' already exists", name);
         }
 
-        let geometry = Geometry::from_desc(desc)?;
+        let sort_id = self.assign_geometry_sort_id()?;
+        let geometry = Geometry::from_desc(desc, sort_id)?;
         let mesh_count = geometry.mesh_count();
         let total_vertex_count = geometry.total_vertex_count();
         let total_index_count = geometry.total_index_count();
@@ -508,7 +568,20 @@ impl ResourceManager {
             vert.graphics_device_shader(),
             frag.graphics_device_shader(),
         )?;
-        let pipeline = Pipeline::from_gpu_pipeline(gd_pipeline, desc.vertex_shader, desc.fragment_shader);
+
+        let signature_key = graphics_device::PipelineSignatureKey::from_reflection(
+            gd_pipeline.reflection(),
+        );
+        let signature_id = self.get_or_assign_pipeline_signature_id(signature_key)?;
+        let sort_id = self.assign_pipeline_sort_id()?;
+
+        let pipeline = Pipeline::from_gpu_pipeline(
+            gd_pipeline,
+            desc.vertex_shader,
+            desc.fragment_shader,
+            signature_id,
+            sort_id,
+        );
 
         let key = self.pipelines.insert(Arc::new(pipeline));
         self.pipeline_names.insert(name.clone(), key);

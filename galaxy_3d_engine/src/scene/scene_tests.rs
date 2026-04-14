@@ -445,7 +445,7 @@ fn test_draw_empty_view() {
     let (mut scene, _mesh_key, _vertex_shader_key, binding_group) = setup_engine_draw_test();
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
-    let drawer = ForwardDrawer::new();
+    let mut drawer = ForwardDrawer::new();
     let mut culled = crate::camera::VisibleInstances::new_empty();
     culler.cull_into(&scene, &camera, None, &mut culled);
     let mut render_view = RenderView::new(camera.clone(), 0);
@@ -470,7 +470,7 @@ fn test_draw_single_instance() {
     }
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
-    let drawer = ForwardDrawer::new();
+    let mut drawer = ForwardDrawer::new();
     let mut culled = crate::camera::VisibleInstances::new_empty();
     culler.cull_into(&scene, &camera, None, &mut culled);
     let mut render_view = RenderView::new(camera.clone(), 0);
@@ -506,7 +506,7 @@ fn test_draw_skips_committed_removal() {
     remove_and_commit(&mut scene, key);
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
-    let drawer = ForwardDrawer::new();
+    let mut drawer = ForwardDrawer::new();
     let mut culled = crate::camera::VisibleInstances::new_empty();
     culler.cull_into(&scene, &camera, None, &mut culled);
     let mut render_view = RenderView::new(camera.clone(), 0);
@@ -532,7 +532,7 @@ fn test_draw_multiple_instances() {
     }
     let camera = create_test_camera();
     let mut culler = BruteForceCuller::new();
-    let drawer = ForwardDrawer::new();
+    let mut drawer = ForwardDrawer::new();
     let mut culled = crate::camera::VisibleInstances::new_empty();
     culler.cull_into(&scene, &camera, None, &mut culled);
     let mut render_view = RenderView::new(camera.clone(), 0);

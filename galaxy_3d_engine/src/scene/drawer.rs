@@ -10,6 +10,11 @@ use crate::graphics_device::{CommandList, BindingGroup};
 use crate::resource::resource_manager::PassInfo;
 use super::render_view::RenderView;
 use super::scene::Scene;
+use super::render_queue::{RenderQueue, DrawCall, build_sort_key};
+
+/// Default preallocated capacity for the internal RenderQueue.
+/// Sized to cover typical scenes without any per-frame reallocation.
+const DEFAULT_DRAW_CALL_CAPACITY: usize = 4096;
 
 /// Strategy for drawing visible submeshes.
 ///
@@ -20,16 +25,16 @@ use super::scene::Scene;
 /// global buffers. It is created by the ScenePassAction at construction
 /// and passed here ready to use.
 ///
-/// `&self` because drawing is stateless — the same Drawer can be
-/// reused across multiple scenes and frames.
+/// Drawers are `&mut self` because they own per-frame working buffers
+/// (e.g. the sort queue) that are reset and filled each draw.
 pub trait Drawer: Send + Sync {
     /// Draw visible submeshes from the RenderView into the command list.
     ///
     /// `bind_textures` controls whether the bindless texture descriptor set
-    /// (set 0) is bound after each pipeline change. Shadow passes can set
-    /// this to false to skip the texture bind.
+    /// (set 0) is bound after each pipeline-layout change. Shadow passes can
+    /// set this to false to skip the texture bind.
     fn draw(
-        &self,
+        &mut self,
         scene: &mut Scene,
         view: &RenderView,
         cmd: &mut dyn CommandList,
@@ -39,21 +44,32 @@ pub trait Drawer: Send + Sync {
     ) -> Result<()>;
 }
 
-/// Forward drawer — draws each submesh sequentially (no sorting, no instancing).
+/// Forward drawer — sorts visible submeshes by (signature, pipeline, geometry,
+/// distance), then emits draw calls with state-tracked rebinds so identical
+/// pipelines and geometries are not rebound back-to-back.
 ///
-/// Iterates the flat list of VisibleSubMesh items from the RenderView.
-/// Each item has pre-resolved submesh_index, pass_index, and lod_index.
-pub struct ForwardDrawer;
+/// The internal `RenderQueue` is preallocated and reused frame-to-frame; no
+/// allocation happens during a normal draw (unless the queue grows past its
+/// initial capacity, in which case it grows once and stays at the new size).
+pub struct ForwardDrawer {
+    queue: RenderQueue,
+}
 
 impl ForwardDrawer {
+    /// Create a ForwardDrawer with the default preallocated draw-call capacity.
     pub fn new() -> Self {
-        Self
+        Self::with_capacity(DEFAULT_DRAW_CALL_CAPACITY)
+    }
+
+    /// Create a ForwardDrawer with a specific preallocated capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self { queue: RenderQueue::with_capacity(capacity) }
     }
 }
 
 impl Drawer for ForwardDrawer {
     fn draw(
-        &self,
+        &mut self,
         scene: &mut Scene,
         view: &RenderView,
         cmd: &mut dyn CommandList,
@@ -72,47 +88,37 @@ impl Drawer for ForwardDrawer {
         let rm_arc = Engine::resource_manager()?;
         let mut rm = rm_arc.lock().unwrap();
 
-        // Track the last bound instance key to avoid re-binding geometry
-        // buffers for consecutive submeshes of the same instance.
-        let mut last_bound_key = None;
+        // ===== PHASE 1: fill the queue =====
+        // Resolve pipelines for stale/missing cache entries, collect per-submesh
+        // draw data and its 64-bit sort key.
+        self.queue.clear();
 
-        // Iterate the flat draw list — each item is one submesh draw call.
         for item in view.items() {
             let key = item.key;
             let sm_idx = item.submesh_index as usize;
             let pass_idx = item.pass_index as usize;
             let lod_idx = item.lod_index as usize;
 
-            // Bind shared geometry buffers (only when the instance changes)
-            if last_bound_key != Some(key) {
-                let instance = match scene.render_instance(key) {
-                    Some(inst) => inst,
+            // Read submesh + pass + cache-validity info + geometry key + LOD data.
+            let (
+                vertex_shader, vertex_layout_arc, topology,
+                sm_pass_material, sm_pass_mat_pass_idx, draw_slot,
+                vertex_offset, vertex_count, index_offset, index_count,
+                is_pipeline_valid, mat_gen,
+                geometry_key,
+            ) = {
+                let inst = match scene.render_instance(key) {
+                    Some(i) => i,
                     None => continue,
                 };
-                let geo = match rm.geometry(instance.geometry()) {
-                    Some(g) => g,
-                    None => continue,
-                };
-                cmd.bind_vertex_buffer(geo.vertex_buffer(), 0)?;
-                if let Some(ib) = geo.index_buffer() {
-                    cmd.bind_index_buffer(ib, 0, geo.index_type())?;
-                }
-                last_bound_key = Some(key);
-            }
-
-            // ===== Phase 1: read submesh + pass + cache validity =====
-            let (vertex_shader, vertex_layout_arc, topology,
-                 sm_pass_material, sm_pass_mat_pass_idx, draw_slot,
-                 vertex_offset, vertex_count, index_offset, index_count,
-                 is_pipeline_valid, mat_gen) = {
-                let inst = scene.render_instance(key).unwrap();
-                let render_sm = inst.sub_mesh(sm_idx).unwrap();
-                let sm_pass = render_sm.pass_by_index(pass_idx).unwrap();
-                let geo = rm.geometry(inst.geometry()).unwrap();
-                let geo_mesh = geo.mesh(inst.geometry_mesh_id()).unwrap();
-                let geo_sm = geo_mesh.submesh(render_sm.geometry_submesh_id()).unwrap();
-                let geo_sm_lod = geo_sm.lod(lod_idx).unwrap();
-                let mat = rm.material(sm_pass.material()).unwrap();
+                let geometry_key = inst.geometry();
+                let render_sm = match inst.sub_mesh(sm_idx) { Some(s) => s, None => continue };
+                let sm_pass = match render_sm.pass_by_index(pass_idx) { Some(p) => p, None => continue };
+                let geo = match rm.geometry(geometry_key) { Some(g) => g, None => continue };
+                let geo_mesh = match geo.mesh(inst.geometry_mesh_id()) { Some(m) => m, None => continue };
+                let geo_sm = match geo_mesh.submesh(render_sm.geometry_submesh_id()) { Some(s) => s, None => continue };
+                let geo_sm_lod = match geo_sm.lod(lod_idx) { Some(l) => l, None => continue };
+                let mat = match rm.material(sm_pass.material()) { Some(m) => m, None => continue };
                 let mat_gen = mat.generation();
                 (
                     sm_pass.vertex_shader(),
@@ -127,10 +133,11 @@ impl Drawer for ForwardDrawer {
                     geo_sm_lod.index_count(),
                     sm_pass.is_pipeline_valid(pass_info_gen, mat_gen),
                     mat_gen,
+                    geometry_key,
                 )
             };
 
-            // ===== Phase 2: resolve pipeline if stale or missing =====
+            // Resolve pipeline if stale or missing.
             if !is_pipeline_valid {
                 let (frag_shader, color_blend, polygon_mode) = {
                     let mat = rm.material(sm_pass_material).unwrap();
@@ -152,36 +159,105 @@ impl Drawer for ForwardDrawer {
                     .set_cached_pipeline(pipeline_key, pass_info_gen, mat_gen);
             }
 
-            // ===== Phase 3: draw with cached pipeline =====
+            // Read final pipeline key + pipeline sort ids + material render state.
             let pipeline_key = scene.render_instance(key).unwrap()
                 .sub_mesh(sm_idx).unwrap()
                 .pass_by_index(pass_idx).unwrap()
                 .cached_pipeline_key().unwrap();
             let pipeline = rm.pipeline(pipeline_key).unwrap();
-            let gd_pipeline = pipeline.graphics_device_pipeline().clone();
-
-            let render_state = rm.material(sm_pass_material).unwrap()
+            let signature_id = pipeline.signature_id();
+            let pipeline_sort_id = pipeline.sort_id();
+            let geometry_sort_id = rm.geometry(geometry_key).unwrap().sort_id();
+            let render_state = *rm.material(sm_pass_material).unwrap()
                 .pass(sm_pass_mat_pass_idx).unwrap()
                 .render_state();
 
-            cmd.bind_pipeline(&gd_pipeline)?;
-            cmd.set_dynamic_state(render_state)?;
-            cmd.bind_binding_group(&gd_pipeline, binding_group.set_index(), binding_group)?;
-            if bind_textures {
-                cmd.bind_textures()?;
+            let sort_key = build_sort_key(
+                signature_id,
+                pipeline_sort_id,
+                geometry_sort_id,
+                item.distance,
+            );
+
+            self.queue.push(
+                DrawCall {
+                    pipeline_key,
+                    geometry_key,
+                    vertex_offset,
+                    vertex_count,
+                    index_offset,
+                    index_count,
+                    draw_slot,
+                    render_state,
+                },
+                sort_key,
+            );
+        }
+
+        // ===== PHASE 2: sort =====
+        self.queue.sort();
+
+        // ===== PHASE 3: emit with state tracking =====
+        // Track the last bound pipeline/geometry/signature so identical values
+        // on consecutive draw calls don't re-issue Vulkan bind commands.
+        let mut last_pipeline_key = None;
+        let mut last_geometry_key = None;
+        let mut last_signature_id: Option<u16> = None;
+
+        for dc in self.queue.iter_sorted() {
+            // Pipeline rebind if different from previous draw call.
+            if last_pipeline_key != Some(dc.pipeline_key) {
+                let pipeline = rm.pipeline(dc.pipeline_key).unwrap();
+                let gd_pipeline = pipeline.graphics_device_pipeline();
+                cmd.bind_pipeline(gd_pipeline)?;
+
+                // When the pipeline layout signature changes, Vulkan invalidates
+                // all previously bound descriptor sets. We must re-bind set 0
+                // (bindless) and set 1 (per-pass binding group) here.
+                let sig = pipeline.signature_id();
+                if last_signature_id != Some(sig) {
+                    if bind_textures {
+                        cmd.bind_textures()?;
+                    }
+                    cmd.bind_binding_group(
+                        gd_pipeline,
+                        binding_group.set_index(),
+                        binding_group,
+                    )?;
+                    last_signature_id = Some(sig);
+                }
+
+                last_pipeline_key = Some(dc.pipeline_key);
             }
 
+            // Geometry rebind if different from previous draw call.
+            if last_geometry_key != Some(dc.geometry_key) {
+                let geo = rm.geometry(dc.geometry_key).unwrap();
+                cmd.bind_vertex_buffer(geo.vertex_buffer(), 0)?;
+                if let Some(ib) = geo.index_buffer() {
+                    cmd.bind_index_buffer(ib, 0, geo.index_type())?;
+                }
+                last_geometry_key = Some(dc.geometry_key);
+            }
+
+            // Per-draw-call dynamic state (may differ between draw calls sharing
+            // the same pipeline, e.g. blend / cull overrides from the material).
+            cmd.set_dynamic_state(&dc.render_state)?;
+
+            // Push constants (draw slot) and the draw command.
+            let pipeline = rm.pipeline(dc.pipeline_key).unwrap();
+            let gd_pipeline = pipeline.graphics_device_pipeline();
             let reflection = gd_pipeline.reflection();
             if let Some(pc) = reflection.push_constants().first() {
                 cmd.push_constants(
-                    pc.stage_flags, 0, bytemuck::bytes_of(&draw_slot),
+                    pc.stage_flags, 0, bytemuck::bytes_of(&dc.draw_slot),
                 )?;
             }
 
-            if index_count > 0 {
-                cmd.draw_indexed(index_count, index_offset, vertex_offset as i32)?;
+            if dc.index_count > 0 {
+                cmd.draw_indexed(dc.index_count, dc.index_offset, dc.vertex_offset as i32)?;
             } else {
-                cmd.draw(vertex_count, vertex_offset)?;
+                cmd.draw(dc.vertex_count, dc.vertex_offset)?;
             }
         }
 

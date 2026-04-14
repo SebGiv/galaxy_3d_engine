@@ -71,7 +71,7 @@ fn create_test_pipeline() -> crate::resource::Pipeline {
     };
 
     let gd_pipeline = gd_lock.create_pipeline(desc, &vertex_shader, &fragment_shader).unwrap();
-    crate::resource::Pipeline::from_gpu_pipeline(gd_pipeline, vk, fk)
+    crate::resource::Pipeline::from_gpu_pipeline(gd_pipeline, vk, fk, 0, 0)
 }
 
 // ============================================================================

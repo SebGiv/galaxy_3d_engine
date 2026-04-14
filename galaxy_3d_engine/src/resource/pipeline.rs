@@ -15,6 +15,13 @@ pub struct Pipeline {
     graphics_device_pipeline: Arc<dyn graphics_device::Pipeline>,
     vertex_shader: ShaderKey,
     fragment_shader: ShaderKey,
+    /// Pipeline signature id: pipelines sharing this id have compatible layouts
+    /// (same descriptor set layouts + push constant ranges). Used for sorting
+    /// draw calls to preserve descriptor set binds when switching pipelines.
+    signature_id: u16,
+    /// Unique sort id assigned at creation; used as a sort-key component to
+    /// group consecutive draw calls that use this exact pipeline.
+    sort_id: u16,
 }
 
 // ===== DESCRIPTOR =====
@@ -54,8 +61,20 @@ impl Pipeline {
         graphics_device_pipeline: Arc<dyn graphics_device::Pipeline>,
         vertex_shader: ShaderKey,
         fragment_shader: ShaderKey,
+        signature_id: u16,
+        sort_id: u16,
     ) -> Self {
-        Self { graphics_device_pipeline, vertex_shader, fragment_shader }
+        Self { graphics_device_pipeline, vertex_shader, fragment_shader, signature_id, sort_id }
+    }
+
+    /// Get the pipeline signature id
+    pub fn signature_id(&self) -> u16 {
+        self.signature_id
+    }
+
+    /// Get the pipeline sort id (unique per Pipeline resource)
+    pub fn sort_id(&self) -> u16 {
+        self.sort_id
     }
 
     /// Get the vertex shader key
