@@ -114,6 +114,12 @@ pub struct MaterialPass {
     color_blend: ColorBlendState,
     polygon_mode: PolygonMode,
     render_state: DynamicRenderState,
+    /// Stable u16 id identifying this pass's `DynamicRenderState`. Assigned by
+    /// `ResourceManager::get_or_assign_material_render_state_signature_id()`
+    /// after the Material is built. Two passes with identical render states
+    /// share the same id — used by the drawer to skip redundant
+    /// `set_dynamic_state` emissions.
+    render_state_signature_id: u16,
     textures: Vec<MaterialTextureSlot>,
     texture_names: FxHashMap<String, usize>,
     params: Vec<MaterialParam>,
@@ -346,6 +352,8 @@ impl Material {
                 color_blend: pass_desc.color_blend,
                 polygon_mode: pass_desc.polygon_mode,
                 render_state,
+                // Assigned after `from_desc` by ResourceManager::create_material().
+                render_state_signature_id: 0,
                 textures,
                 texture_names,
                 params,
@@ -392,6 +400,12 @@ impl Material {
     /// Get all passes as a slice
     pub fn passes(&self) -> &[MaterialPass] {
         &self.passes
+    }
+
+    /// Get all passes as a mutable slice (crate-internal, used by
+    /// `ResourceManager::create_material()` to assign render-state signature ids).
+    pub(crate) fn passes_mut(&mut self) -> &mut [MaterialPass] {
+        &mut self.passes
     }
 
     // ===== GLOBAL ITERATION (for SSBO upload) =====
@@ -453,6 +467,20 @@ impl MaterialPass {
     /// Get the DynamicRenderState for this pass.
     pub fn render_state(&self) -> &DynamicRenderState {
         &self.render_state
+    }
+
+    /// Get the stable u16 id identifying this pass's render state.
+    ///
+    /// Two passes with identical `DynamicRenderState` values share the same id.
+    /// Used by the drawer to skip redundant `set_dynamic_state` emissions.
+    pub fn render_state_signature_id(&self) -> u16 {
+        self.render_state_signature_id
+    }
+
+    /// Set the render state signature id. Called by `ResourceManager::create_material()`
+    /// after the Material is built.
+    pub(crate) fn set_render_state_signature_id(&mut self, id: u16) {
+        self.render_state_signature_id = id;
     }
 
     // ===== TEXTURE SLOT ACCESS =====

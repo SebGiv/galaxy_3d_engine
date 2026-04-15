@@ -3,6 +3,12 @@ name = "galaxy_3d_engine_renderer_vulkan"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# When enabled, compiles in the Vulkan validation layers support
+# (VK_LAYER_KHRONOS_validation + debug messenger + message callbacks).
+# When disabled, none of that code is present in the final binary.
+vulkan-validation = []
+
 [dependencies]
 galaxy_3d_engine = { path = "../galaxy_3d_engine" }
 ash = "0.38"

@@ -16,6 +16,7 @@ mod vulkan_texture;
 mod vulkan_buffer;
 mod vulkan_shader;
 mod vulkan_pipeline;
+#[cfg(feature = "vulkan-validation")]
 mod debug;
 mod vulkan_command_list;
 mod vulkan_render_target;
@@ -44,7 +45,8 @@ pub mod galaxy3d {
         pub use crate::vulkan_frame_buffer::Framebuffer;
     }
 
-    // Debug sub-module
+    // Debug sub-module (validation layers / debug messenger)
+    #[cfg(feature = "vulkan-validation")]
     pub mod debug {
         pub use crate::debug::*;
     }

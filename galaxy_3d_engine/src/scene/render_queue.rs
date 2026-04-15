@@ -43,12 +43,12 @@ pub fn build_sort_key(
     signature_id: u16,
     pipeline_sort_id: u16,
     geometry_sort_id: u16,
-    distance: f32,
+    render_state_sig: u16,
 ) -> u64 {
     ((signature_id as u64)     << 48)
   | ((pipeline_sort_id as u64) << 32)
   | ((geometry_sort_id as u64) << 16)
-  |  (distance_to_u16(distance) as u64)
+  |  (render_state_sig as u64)
 }
 
 /// One entry in the auxiliary sort array.
@@ -81,6 +81,10 @@ pub struct DrawCall {
     pub index_count: u32,
     pub draw_slot: u32,
     pub render_state: DynamicRenderState,
+    /// Stable u16 id identifying `render_state`. Draw calls with equal ids share
+    /// the same dynamic state, so the drawer can skip redundant
+    /// `set_dynamic_state` calls.
+    pub render_state_sig: u16,
 }
 
 /// Preallocated queue of draw calls + sort entries.

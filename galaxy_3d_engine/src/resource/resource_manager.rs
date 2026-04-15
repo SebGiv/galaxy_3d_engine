@@ -191,6 +191,13 @@ pub struct ResourceManager {
     /// Counter for the next pipeline signature id to assign.
     next_pipeline_signature_id: u16,
 
+    /// Material render-state signature cache: assigns a stable u16 id per unique
+    /// `DynamicRenderState` encountered in Material passes. Draw calls sharing the
+    /// same id can skip `set_dynamic_state()` re-emission in the drawer.
+    material_render_state_signatures: FxHashMap<graphics_device::DynamicRenderStateKey, u16>,
+    /// Counter for the next material render-state signature id to assign.
+    next_material_render_state_signature_id: u16,
+
     /// Counter for the next per-Pipeline sort id (unique id per resource::Pipeline).
     next_pipeline_sort_id: u16,
     /// Counter for the next per-Geometry sort id (unique id per resource::Geometry).
@@ -223,6 +230,9 @@ impl ResourceManager {
 
             pipeline_signatures: FxHashMap::default(),
             next_pipeline_signature_id: 0,
+
+            material_render_state_signatures: FxHashMap::default(),
+            next_material_render_state_signature_id: 0,
 
             next_pipeline_sort_id: 0,
             next_geometry_sort_id: 0,
@@ -267,6 +277,27 @@ impl ResourceManager {
         let id = self.next_pipeline_signature_id;
         self.next_pipeline_signature_id += 1;
         self.pipeline_signatures.insert(key, id);
+        Ok(id)
+    }
+
+    /// Get or assign a u16 id for a Material pass render state.
+    /// Two passes with equal `DynamicRenderState` values return the same id,
+    /// allowing the drawer to skip redundant `set_dynamic_state` calls.
+    fn get_or_assign_material_render_state_signature_id(
+        &mut self,
+        state: &graphics_device::DynamicRenderState,
+    ) -> Result<u16> {
+        let key = graphics_device::DynamicRenderStateKey::from(state);
+        if let Some(&id) = self.material_render_state_signatures.get(&key) {
+            return Ok(id);
+        }
+        if self.next_material_render_state_signature_id == u16::MAX {
+            crate::engine_bail!("galaxy3d::ResourceManager",
+                "Material render state signature id overflow (>65535 distinct states)");
+        }
+        let id = self.next_material_render_state_signature_id;
+        self.next_material_render_state_signature_id += 1;
+        self.material_render_state_signatures.insert(key, id);
         Ok(id)
     }
 
@@ -712,7 +743,19 @@ impl ResourceManager {
         }
 
         let slot_id = self.material_slot_allocator.alloc();
-        let material = Material::from_desc(slot_id, desc, &*self, graphics_device)?;
+        let mut material = Material::from_desc(slot_id, desc, &*self, graphics_device)?;
+
+        // Assign a stable signature id to every pass's render state.
+        // Deduplicated across Materials via the ResourceManager-wide registry.
+        let pass_count = material.pass_count();
+        let mut sigs = Vec::with_capacity(pass_count);
+        for pass in material.passes() {
+            sigs.push(self.get_or_assign_material_render_state_signature_id(pass.render_state())?);
+        }
+        for (pass, sig) in material.passes_mut().iter_mut().zip(sigs.into_iter()) {
+            pass.set_render_state_signature_id(sig);
+        }
+
         let texture_count = material.total_texture_slot_count();
         let param_count = material.total_param_count();
 

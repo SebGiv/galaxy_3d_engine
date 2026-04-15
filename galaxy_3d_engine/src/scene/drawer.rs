@@ -168,15 +168,16 @@ impl Drawer for ForwardDrawer {
             let signature_id = pipeline.signature_id();
             let pipeline_sort_id = pipeline.sort_id();
             let geometry_sort_id = rm.geometry(geometry_key).unwrap().sort_id();
-            let render_state = *rm.material(sm_pass_material).unwrap()
-                .pass(sm_pass_mat_pass_idx).unwrap()
-                .render_state();
+            let pass = rm.material(sm_pass_material).unwrap()
+                .pass(sm_pass_mat_pass_idx).unwrap();
+            let render_state = *pass.render_state();
+            let render_state_sig = pass.render_state_signature_id();
 
             let sort_key = build_sort_key(
                 signature_id,
                 pipeline_sort_id,
                 geometry_sort_id,
-                item.distance,
+                render_state_sig,
             );
 
             self.queue.push(
@@ -189,6 +190,7 @@ impl Drawer for ForwardDrawer {
                     index_count,
                     draw_slot,
                     render_state,
+                    render_state_sig,
                 },
                 sort_key,
             );
@@ -203,6 +205,7 @@ impl Drawer for ForwardDrawer {
         let mut last_pipeline_key = None;
         let mut last_geometry_key = None;
         let mut last_signature_id: Option<u16> = None;
+        let mut last_render_state_sig: Option<u16> = None;
 
         for dc in self.queue.iter_sorted() {
             // Pipeline rebind if different from previous draw call.
@@ -242,7 +245,12 @@ impl Drawer for ForwardDrawer {
 
             // Per-draw-call dynamic state (may differ between draw calls sharing
             // the same pipeline, e.g. blend / cull overrides from the material).
-            cmd.set_dynamic_state(&dc.render_state)?;
+            // Skip re-emission when the render state signature is identical to
+            // the previous draw call — sort key groups identical signatures.
+            if last_render_state_sig != Some(dc.render_state_sig) {
+                cmd.set_dynamic_state(&dc.render_state)?;
+                last_render_state_sig = Some(dc.render_state_sig);
+            }
 
             // Push constants (draw slot) and the draw command.
             let pipeline = rm.pipeline(dc.pipeline_key).unwrap();

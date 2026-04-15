@@ -41,9 +41,11 @@ pub struct GpuContext {
     instance: ash::Instance,
 
     /// Debug utils loader (for validation layers)
+    #[cfg(feature = "vulkan-validation")]
     pub(crate) debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
 
     /// Debug messenger handle
+    #[cfg(feature = "vulkan-validation")]
     pub(crate) debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
 }
 
@@ -67,7 +69,9 @@ impl GpuContext {
         graphics_queue_family: u32,
         upload_command_pool: vk::CommandPool,
         instance: ash::Instance,
+        #[cfg(feature = "vulkan-validation")]
         debug_utils_loader: Option<ash::ext::debug_utils::Instance>,
+        #[cfg(feature = "vulkan-validation")]
         debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
     ) -> Self {
         Self {
@@ -77,7 +81,9 @@ impl GpuContext {
             graphics_queue_family,
             upload_command_pool: Mutex::new(upload_command_pool),
             instance,
+            #[cfg(feature = "vulkan-validation")]
             debug_utils_loader,
+            #[cfg(feature = "vulkan-validation")]
             debug_messenger,
         }
     }

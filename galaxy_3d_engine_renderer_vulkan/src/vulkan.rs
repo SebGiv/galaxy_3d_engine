@@ -16,11 +16,13 @@ use galaxy_3d_engine::galaxy3d::render::{
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
     LoadOp, StoreOp, ImageLayout,
     GraphicsDeviceStats, VertexInputRate,
-    Config, BindlessConfig, DebugSeverity, TextureUsage, SamplerType,
+    Config, BindlessConfig, TextureUsage, SamplerType,
     MipmapMode, ManualMipmapData,
     PolygonMode,
     BlendFactor, BlendOp, SampleCount,
 };
+#[cfg(feature = "vulkan-validation")]
+use galaxy_3d_engine::galaxy3d::render::DebugSeverity;
 use galaxy_3d_engine::galaxy3d::utils::SlotAllocator;
 use ash::vk;
 use std::sync::{Arc, Mutex};
@@ -443,6 +445,7 @@ impl VulkanGraphicsDevice {
                     engine_error!("galaxy3d::vulkan", "Failed to get display handle: {}", e);
                     Error::InitializationFailed(format!("Failed to get display handle: {}", e))
                 })?;
+            #[cfg_attr(not(feature = "vulkan-validation"), allow(unused_mut))]
             let mut extension_names = ash_window::enumerate_required_extensions(display_handle.as_raw())
                 .map_err(|e| {
                     engine_error!("galaxy3d::vulkan", "Failed to get required extensions: {}", e);
@@ -451,16 +454,20 @@ impl VulkanGraphicsDevice {
                 .to_vec();
 
             // Add debug utils extension if validation is enabled
+            #[cfg(feature = "vulkan-validation")]
             if config.enable_validation {
                 extension_names.push(ash::ext::debug_utils::NAME.as_ptr());
             }
 
             // Validation layers
-            let layer_names = if config.enable_validation {
+            #[cfg(feature = "vulkan-validation")]
+            let layer_names: Vec<*const i8> = if config.enable_validation {
                 vec![c"VK_LAYER_KHRONOS_validation".as_ptr()]
             } else {
                 vec![]
             };
+            #[cfg(not(feature = "vulkan-validation"))]
+            let layer_names: Vec<*const i8> = Vec::new();
 
             let create_info = vk::InstanceCreateInfo::default()
                 .application_info(&app_info)
@@ -475,6 +482,7 @@ impl VulkanGraphicsDevice {
                 })?;
 
             // Setup debug messenger if validation is enabled
+            #[cfg(feature = "vulkan-validation")]
             let (debug_utils_loader, debug_messenger) = if config.enable_validation {
                 let debug_utils = ash::ext::debug_utils::Instance::new(&entry, &instance);
 
@@ -814,7 +822,9 @@ impl VulkanGraphicsDevice {
                 graphics_family_index,
                 upload_command_pool,
                 instance.clone(),
+                #[cfg(feature = "vulkan-validation")]
                 debug_utils_loader,
+                #[cfg(feature = "vulkan-validation")]
                 debug_messenger,
             ));
 
@@ -3210,9 +3220,11 @@ impl Drop for VulkanGraphicsDevice {
             }
 
             // 5. Cleanup debug config to prevent callbacks during destruction
+            #[cfg(feature = "vulkan-validation")]
             crate::debug::cleanup_debug_config();
 
             // 6. Destroy debug messenger BEFORE device and instance
+            #[cfg(feature = "vulkan-validation")]
             if let (Some(debug_utils), Some(messenger)) = (
                 &self.gpu_context.debug_utils_loader,
                 &self.gpu_context.debug_messenger,

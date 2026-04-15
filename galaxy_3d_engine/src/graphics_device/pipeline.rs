@@ -100,7 +100,7 @@ pub struct PushConstantRange {
 // ===== RASTERIZATION ENUMS =====
 
 /// Face culling mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CullMode {
     /// No culling
     None,
@@ -111,7 +111,7 @@ pub enum CullMode {
 }
 
 /// Front face winding order
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrontFace {
     /// Counter-clockwise vertices define front face
     CounterClockwise,
@@ -133,7 +133,7 @@ pub enum PolygonMode {
 // ===== DEPTH/STENCIL ENUMS =====
 
 /// Comparison operator for depth and stencil tests
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CompareOp {
     /// Never pass
     Never,
@@ -154,7 +154,7 @@ pub enum CompareOp {
 }
 
 /// Stencil operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StencilOp {
     /// Keep current value
     Keep,
@@ -263,7 +263,7 @@ impl Default for RasterizationState {
 // ===== DEPTH/STENCIL STATE =====
 
 /// Stencil operation state (per-face)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StencilOpState {
     /// Action on stencil test fail
     pub fail_op: StencilOp,
@@ -457,6 +457,61 @@ impl Default for DynamicRenderState {
             stencil_front: StencilOpState::default(),
             stencil_back: StencilOpState::default(),
             blend_constants: [0.0; 4],
+        }
+    }
+}
+
+/// Hashable key for a `DynamicRenderState`.
+///
+/// `DynamicRenderState` contains `f32` fields which do not implement
+/// `Hash`/`Eq`. This key stores the bit patterns of those floats
+/// (`f32::to_bits()`) so two equal states produce the same hash and compare
+/// equal. Used by `ResourceManager::get_or_assign_material_render_state_signature_id()`
+/// to deduplicate identical render states across materials.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct DynamicRenderStateKey {
+    cull_mode: CullMode,
+    front_face: FrontFace,
+    depth_test_enable: bool,
+    depth_write_enable: bool,
+    depth_compare_op: CompareOp,
+    depth_bias_enable: bool,
+    depth_bias_constant_factor_bits: u32,
+    depth_bias_clamp_bits: u32,
+    depth_bias_slope_factor_bits: u32,
+    depth_bounds_test_enable: bool,
+    depth_bounds_min_bits: u32,
+    depth_bounds_max_bits: u32,
+    stencil_test_enable: bool,
+    stencil_front: StencilOpState,
+    stencil_back: StencilOpState,
+    blend_constants_bits: [u32; 4],
+}
+
+impl From<&DynamicRenderState> for DynamicRenderStateKey {
+    fn from(s: &DynamicRenderState) -> Self {
+        Self {
+            cull_mode: s.cull_mode,
+            front_face: s.front_face,
+            depth_test_enable: s.depth_test_enable,
+            depth_write_enable: s.depth_write_enable,
+            depth_compare_op: s.depth_compare_op,
+            depth_bias_enable: s.depth_bias_enable,
+            depth_bias_constant_factor_bits: s.depth_bias.constant_factor.to_bits(),
+            depth_bias_clamp_bits: s.depth_bias.clamp.to_bits(),
+            depth_bias_slope_factor_bits: s.depth_bias.slope_factor.to_bits(),
+            depth_bounds_test_enable: s.depth_bounds_test_enable,
+            depth_bounds_min_bits: s.depth_bounds_min.to_bits(),
+            depth_bounds_max_bits: s.depth_bounds_max.to_bits(),
+            stencil_test_enable: s.stencil_test_enable,
+            stencil_front: s.stencil_front,
+            stencil_back: s.stencil_back,
+            blend_constants_bits: [
+                s.blend_constants[0].to_bits(),
+                s.blend_constants[1].to_bits(),
+                s.blend_constants[2].to_bits(),
+                s.blend_constants[3].to_bits(),
+            ],
         }
     }
 }

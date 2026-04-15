@@ -31,9 +31,11 @@ struct OctreeNode {
     aabb: AABB,
     /// Index of the first child in the flat array (0 = no children / leaf)
     first_child: usize,
-    /// Objects stored in this node, paired with their world-space positions.
+    /// Objects stored in this node, paired with their world-space position
+    /// and world-space AABB. Storing the AABB alongside avoids a HashMap
+    /// lookup during `query_frustum` for objects in partially-visible nodes.
     /// (Approach 1: objects that don't fit in any child.)
-    objects: Vec<(RenderInstanceKey, Vec3)>,
+    objects: Vec<(RenderInstanceKey, Vec3, AABB)>,
 }
 
 /// Static octree spatial index.
@@ -46,10 +48,11 @@ pub struct OctreeSceneIndex {
     nodes: Vec<OctreeNode>,
     /// Maximum depth of the tree (root = depth 0)
     max_depth: u32,
-    /// Reverse lookup: object key → (node index, world position, world AABB).
-    /// Needed for O(1) remove without tree traversal, and to recover the AABB
-    /// during partial-frustum queries.
-    object_locations: FxHashMap<RenderInstanceKey, (usize, Vec3, AABB)>,
+    /// Reverse lookup: object key → node index.
+    /// Needed for O(1) remove/update without tree traversal. Position and
+    /// AABB live directly in `OctreeNode.objects` so that `query_frustum`
+    /// does not touch this map.
+    object_locations: FxHashMap<RenderInstanceKey, usize>,
     /// Pre-computed subtree sizes indexed by remaining depth.
     /// subtree_sizes[d] = total node count for a subtree of depth d.
     subtree_sizes: Vec<usize>,
@@ -176,13 +179,13 @@ impl OctreeSceneIndex {
 
         loop {
             if depth >= self.max_depth {
-                self.nodes[node_idx].objects.push((key, world_position));
+                self.nodes[node_idx].objects.push((key, world_position, *world_aabb));
                 return node_idx;
             }
 
             let first_child = self.nodes[node_idx].first_child;
             if first_child == 0 {
-                self.nodes[node_idx].objects.push((key, world_position));
+                self.nodes[node_idx].objects.push((key, world_position, *world_aabb));
                 return node_idx;
             }
 
@@ -192,7 +195,7 @@ impl OctreeSceneIndex {
 
             if min_oct != max_oct {
                 // Straddles boundary — stays in current node
-                self.nodes[node_idx].objects.push((key, world_position));
+                self.nodes[node_idx].objects.push((key, world_position, *world_aabb));
                 return node_idx;
             }
 
@@ -272,14 +275,12 @@ impl OctreeSceneIndex {
             }
 
             FrustumTest::Partial => {
-                // Test objects at this node individually
-                for &(key, inst_pos) in &node.objects {
-                    // Recover the AABB from object_locations to perform a precise frustum test.
-                    if let Some((_, _, world_aabb)) = self.object_locations.get(&key) {
-                        if frustum.intersects_aabb(world_aabb) {
-                            let view_depth = (inst_pos - camera_pos).dot(camera_forward);
-                            results.push(VisibleInstance { key, distance: view_depth });
-                        }
+                // Test objects at this node individually. AABB is stored
+                // alongside the key/position, no HashMap lookup needed.
+                for (key, inst_pos, world_aabb) in &node.objects {
+                    if frustum.intersects_aabb(world_aabb) {
+                        let view_depth = (*inst_pos - camera_pos).dot(camera_forward);
+                        results.push(VisibleInstance { key: *key, distance: view_depth });
                     }
                 }
 
@@ -316,9 +317,9 @@ impl OctreeSceneIndex {
         depth: u32,
     ) {
         let node = &self.nodes[node_idx];
-        for &(key, inst_pos) in &node.objects {
-            let view_depth = (inst_pos - camera_pos).dot(camera_forward);
-            results.push(VisibleInstance { key, distance: view_depth });
+        for (key, inst_pos, _) in &node.objects {
+            let view_depth = (*inst_pos - camera_pos).dot(camera_forward);
+            results.push(VisibleInstance { key: *key, distance: view_depth });
         }
 
         if depth < self.max_depth {
@@ -340,19 +341,19 @@ impl SceneIndex for OctreeSceneIndex {
     fn insert(&mut self, key: RenderInstanceKey, world_position: Vec3, world_aabb: &AABB) {
         // If object is outside the octree bounds, store at root
         if !self.nodes[ROOT].aabb.contains(world_aabb) {
-            self.nodes[ROOT].objects.push((key, world_position));
-            self.object_locations.insert(key, (ROOT, world_position, *world_aabb));
+            self.nodes[ROOT].objects.push((key, world_position, *world_aabb));
+            self.object_locations.insert(key, ROOT);
             return;
         }
 
         let node_idx = self.insert_iterative(key, world_position, world_aabb);
-        self.object_locations.insert(key, (node_idx, world_position, *world_aabb));
+        self.object_locations.insert(key, node_idx);
     }
 
     fn remove(&mut self, key: RenderInstanceKey) {
-        if let Some((node_idx, _, _)) = self.object_locations.remove(&key) {
+        if let Some(node_idx) = self.object_locations.remove(&key) {
             let objects = &mut self.nodes[node_idx].objects;
-            if let Some(pos) = objects.iter().position(|(k, _)| *k == key) {
+            if let Some(pos) = objects.iter().position(|(k, _, _)| *k == key) {
                 objects.swap_remove(pos);
             }
         }
@@ -365,15 +366,13 @@ impl SceneIndex for OctreeSceneIndex {
             ROOT
         };
 
-        if let Some(entry) = self.object_locations.get_mut(&key) {
-            if entry.0 == target {
-                // Same node — update stored position + AABB in place,
-                // and update the position stored on the node itself.
-                entry.1 = world_position;
-                entry.2 = *world_aabb;
+        if let Some(&current_node) = self.object_locations.get(&key) {
+            if current_node == target {
+                // Same node — update stored position + AABB in place.
                 let objects = &mut self.nodes[target].objects;
-                if let Some(pos) = objects.iter().position(|(k, _)| *k == key) {
+                if let Some(pos) = objects.iter().position(|(k, _, _)| *k == key) {
                     objects[pos].1 = world_position;
+                    objects[pos].2 = *world_aabb;
                 }
                 return;
             }
@@ -381,8 +380,8 @@ impl SceneIndex for OctreeSceneIndex {
 
         // Different node — remove from old, place directly in target
         self.remove(key);
-        self.nodes[target].objects.push((key, world_position));
-        self.object_locations.insert(key, (target, world_position, *world_aabb));
+        self.nodes[target].objects.push((key, world_position, *world_aabb));
+        self.object_locations.insert(key, target);
     }
 
     fn query_frustum(
@@ -511,7 +510,7 @@ mod tests {
         octree.insert(key, aabb_center(&obj_aabb), &obj_aabb);
 
         // Should be stored at root
-        let root_keys: Vec<_> = octree.nodes[ROOT].objects.iter().map(|(k, _)| *k).collect();
+        let root_keys: Vec<_> = octree.nodes[ROOT].objects.iter().map(|(k, _, _)| *k).collect();
         assert!(root_keys.contains(&key));
     }
 
@@ -542,12 +541,12 @@ mod tests {
         // Start at one position
         let aabb1 = make_aabb(Vec3::new(50.0, 50.0, 50.0), Vec3::new(60.0, 60.0, 60.0));
         octree.insert(key, aabb_center(&aabb1), &aabb1);
-        let (node1, _, _) = octree.object_locations[&key];
+        let node1 = octree.object_locations[&key];
 
         // Move to a distant position
         let aabb2 = make_aabb(Vec3::new(-60.0, -60.0, -60.0), Vec3::new(-50.0, -50.0, -50.0));
         octree.update(key, aabb_center(&aabb2), &aabb2);
-        let (node2, _, _) = octree.object_locations[&key];
+        let node2 = octree.object_locations[&key];
 
         // Should be in a different node
         assert_ne!(node1, node2);
