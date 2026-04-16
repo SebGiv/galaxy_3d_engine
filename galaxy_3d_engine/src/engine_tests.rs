@@ -744,7 +744,7 @@ fn test_scene_manager_retrieval_success() {
 fn test_scene_manager_returned_is_usable() {
     setup();
 
-    let graphics_device = Engine::create_graphics_device("test_sm_usable", MockGraphicsDevice::new()).unwrap();
+    let _graphics_device = Engine::create_graphics_device("test_sm_usable", MockGraphicsDevice::new()).unwrap();
     Engine::create_scene_manager().unwrap();
 
     let sm = Engine::scene_manager().unwrap();
@@ -840,7 +840,7 @@ fn test_full_engine_lifecycle_with_scene_manager() {
 
     // Use scene manager
     {
-        let graphics_device = Engine::graphics_device("test_full_sm").unwrap();
+        let _graphics_device = Engine::graphics_device("test_full_sm").unwrap();
         let sm = Engine::scene_manager().unwrap();
         let mut guard = sm.lock().unwrap();
         guard.create_scene("main").unwrap();

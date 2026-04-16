@@ -6,6 +6,7 @@
 
 mod camera;
 mod frustum;
+mod lod;
 mod visible_instances;
 
 pub use camera::Camera;
@@ -13,4 +14,5 @@ pub use frustum::{
     Frustum, FrustumTest,
     PLANE_LEFT, PLANE_RIGHT, PLANE_BOTTOM, PLANE_TOP, PLANE_NEAR, PLANE_FAR,
 };
+pub use lod::project_sphere_diameter;
 pub use visible_instances::{VisibleInstances, VisibleInstance};

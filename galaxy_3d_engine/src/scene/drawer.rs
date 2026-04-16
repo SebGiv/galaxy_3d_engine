@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use crate::error::Result;
 use crate::engine::Engine;
-use crate::graphics_device::{CommandList, BindingGroup};
+use crate::graphics_device::{CommandList, BindingGroup, ShaderStageFlags};
 use crate::resource::resource_manager::PassInfo;
 use super::render_view::RenderView;
 use super::scene::Scene;
@@ -100,12 +100,17 @@ impl Drawer for ForwardDrawer {
             let lod_idx = item.lod_index as usize;
 
             // Read submesh + pass + cache-validity info + geometry key + LOD data.
+            // `cached_pipeline_key` is Some only when the cached key is still
+            // valid: we avoid re-fetching it from the scene after resolving.
+            // `geo_sort_id` is captured here to avoid a second `rm.geometry()`
+            // lookup later. `vertex_layout` is NOT cloned here — it is only
+            // needed on the slow `resolve_pipeline` path below.
             let (
-                vertex_shader, vertex_layout_arc, topology,
+                vertex_shader, topology,
                 sm_pass_material, sm_pass_mat_pass_idx, draw_slot,
                 vertex_offset, vertex_count, index_offset, index_count,
-                is_pipeline_valid, mat_gen,
-                geometry_key,
+                cached_pipeline_key, mat_gen,
+                geometry_key, geo_sort_id,
             ) = {
                 let inst = match scene.render_instance(key) {
                     Some(i) => i,
@@ -120,9 +125,13 @@ impl Drawer for ForwardDrawer {
                 let geo_sm_lod = match geo_sm.lod(lod_idx) { Some(l) => l, None => continue };
                 let mat = match rm.material(sm_pass.material()) { Some(m) => m, None => continue };
                 let mat_gen = mat.generation();
+                let cached = if sm_pass.is_pipeline_valid(pass_info_gen, mat_gen) {
+                    sm_pass.cached_pipeline_key()
+                } else {
+                    None
+                };
                 (
                     sm_pass.vertex_shader(),
-                    Arc::clone(geo.vertex_layout()),
                     geo_sm_lod.topology(),
                     sm_pass.material(),
                     sm_pass.material_pass_index(),
@@ -131,52 +140,54 @@ impl Drawer for ForwardDrawer {
                     geo_sm_lod.vertex_count(),
                     geo_sm_lod.index_offset(),
                     geo_sm_lod.index_count(),
-                    sm_pass.is_pipeline_valid(pass_info_gen, mat_gen),
+                    cached,
                     mat_gen,
                     geometry_key,
+                    geo.sort_id(),
                 )
             };
 
             // Resolve pipeline if stale or missing.
-            if !is_pipeline_valid {
-                let (frag_shader, color_blend, polygon_mode) = {
-                    let mat = rm.material(sm_pass_material).unwrap();
-                    let pass = mat.pass(sm_pass_mat_pass_idx).unwrap();
-                    (pass.fragment_shader(), *pass.color_blend(), pass.polygon_mode())
-                };
+            let pipeline_key = match cached_pipeline_key {
+                Some(k) => k,
+                None => {
+                    let (frag_shader, color_blend, polygon_mode, vertex_layout_arc) = {
+                        let mat = rm.material(sm_pass_material).unwrap();
+                        let pass = mat.pass(sm_pass_mat_pass_idx).unwrap();
+                        let geo = rm.geometry(geometry_key).unwrap();
+                        (pass.fragment_shader(), *pass.color_blend(), pass.polygon_mode(),
+                         Arc::clone(geo.vertex_layout()))
+                    };
 
-                let gd_arc = Engine::graphics_device("main")?;
-                let mut gd = gd_arc.lock().unwrap();
-                let pipeline_key = rm.resolve_pipeline(
-                    vertex_shader, frag_shader, vertex_layout_arc, topology,
-                    &color_blend, polygon_mode, pass_info, &mut *gd,
-                )?;
-                drop(gd);
+                    let gd_arc = Engine::graphics_device("main")?;
+                    let mut gd = gd_arc.lock().unwrap();
+                    let resolved = rm.resolve_pipeline(
+                        vertex_shader, frag_shader, vertex_layout_arc, topology,
+                        &color_blend, polygon_mode, pass_info, &mut *gd,
+                    )?;
+                    drop(gd);
 
-                scene.render_instance_mut(key).unwrap()
-                    .sub_mesh_mut(sm_idx).unwrap()
-                    .pass_by_index_mut(pass_idx).unwrap()
-                    .set_cached_pipeline(pipeline_key, pass_info_gen, mat_gen);
-            }
+                    scene.render_instance_mut(key).unwrap()
+                        .sub_mesh_mut(sm_idx).unwrap()
+                        .pass_by_index_mut(pass_idx).unwrap()
+                        .set_cached_pipeline(resolved, pass_info_gen, mat_gen);
+                    resolved
+                }
+            };
 
-            // Read final pipeline key + pipeline sort ids + material render state.
-            let pipeline_key = scene.render_instance(key).unwrap()
-                .sub_mesh(sm_idx).unwrap()
-                .pass_by_index(pass_idx).unwrap()
-                .cached_pipeline_key().unwrap();
+            // Read final pipeline sort ids + material render state.
             let pipeline = rm.pipeline(pipeline_key).unwrap();
             let signature_id = pipeline.signature_id();
             let pipeline_sort_id = pipeline.sort_id();
-            let geometry_sort_id = rm.geometry(geometry_key).unwrap().sort_id();
-            let pass = rm.material(sm_pass_material).unwrap()
+            let mat_pass = rm.material(sm_pass_material).unwrap()
                 .pass(sm_pass_mat_pass_idx).unwrap();
-            let render_state = *pass.render_state();
-            let render_state_sig = pass.render_state_signature_id();
+            let render_state = *mat_pass.render_state();
+            let render_state_sig = mat_pass.render_state_signature_id();
 
             let sort_key = build_sort_key(
                 signature_id,
                 pipeline_sort_id,
-                geometry_sort_id,
+                geo_sort_id,
                 render_state_sig,
             );
 
@@ -202,10 +213,15 @@ impl Drawer for ForwardDrawer {
         // ===== PHASE 3: emit with state tracking =====
         // Track the last bound pipeline/geometry/signature so identical values
         // on consecutive draw calls don't re-issue Vulkan bind commands.
+        // `bg_set_index` is invariant for the pass, hoist out of the loop.
+        // `current_pc_flags` caches the push-constant stage flags of the
+        // currently bound pipeline so we don't re-query reflection per draw.
+        let bg_set_index = binding_group.set_index();
         let mut last_pipeline_key = None;
         let mut last_geometry_key = None;
         let mut last_signature_id: Option<u16> = None;
         let mut last_render_state_sig: Option<u16> = None;
+        let mut current_pc_flags: Option<ShaderStageFlags> = None;
 
         for dc in self.queue.iter_sorted() {
             // Pipeline rebind if different from previous draw call.
@@ -224,11 +240,20 @@ impl Drawer for ForwardDrawer {
                     }
                     cmd.bind_binding_group(
                         gd_pipeline,
-                        binding_group.set_index(),
+                        bg_set_index,
                         binding_group,
                     )?;
                     last_signature_id = Some(sig);
                 }
+
+                // Cache push-constant stage flags for this pipeline; the
+                // reflection is static per pipeline so we only query it on
+                // rebind, not on every drawcall.
+                current_pc_flags = gd_pipeline
+                    .reflection()
+                    .push_constants()
+                    .first()
+                    .map(|pc| pc.stage_flags);
 
                 last_pipeline_key = Some(dc.pipeline_key);
             }
@@ -253,12 +278,9 @@ impl Drawer for ForwardDrawer {
             }
 
             // Push constants (draw slot) and the draw command.
-            let pipeline = rm.pipeline(dc.pipeline_key).unwrap();
-            let gd_pipeline = pipeline.graphics_device_pipeline();
-            let reflection = gd_pipeline.reflection();
-            if let Some(pc) = reflection.push_constants().first() {
+            if let Some(flags) = current_pc_flags {
                 cmd.push_constants(
-                    pc.stage_flags, 0, bytemuck::bytes_of(&dc.draw_slot),
+                    flags, 0, bytemuck::bytes_of(&dc.draw_slot),
                 )?;
             }
 

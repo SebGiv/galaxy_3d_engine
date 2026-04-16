@@ -9,54 +9,9 @@ mod gpu_test_utils;
 
 use galaxy_3d_engine::galaxy3d::Engine;
 use galaxy_3d_engine::galaxy3d::render::Config;
-use galaxy_3d_engine::galaxy3d::resource::{Buffer, BufferDesc, BufferKind, FieldDesc, FieldType};
 use galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanGraphicsDevice;
 use gpu_test_utils::create_test_window;
 use serial_test::serial;
-use std::sync::{Arc, Mutex};
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-fn create_test_buffers_via_rm(
-    graphics_device: Arc<Mutex<dyn galaxy_3d_engine::galaxy3d::render::GraphicsDevice>>,
-    prefix: &str,
-) -> (Arc<Buffer>, Arc<Buffer>, Arc<Buffer>, Arc<Buffer>) {
-    let rm_arc = Engine::resource_manager().unwrap();
-    let mut rm = rm_arc.lock().unwrap();
-
-    let frame_key = rm.create_buffer(format!("{}_frame", prefix), BufferDesc {
-        graphics_device: graphics_device.clone(),
-        kind: BufferKind::Uniform,
-        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
-        count: 1,
-    }).unwrap();
-    let instance_key = rm.create_buffer(format!("{}_instance", prefix), BufferDesc {
-        graphics_device: graphics_device.clone(),
-        kind: BufferKind::Storage,
-        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
-        count: 1,
-    }).unwrap();
-    let material_key = rm.create_buffer(format!("{}_material", prefix), BufferDesc {
-        graphics_device: graphics_device.clone(),
-        kind: BufferKind::Storage,
-        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
-        count: 1,
-    }).unwrap();
-    let light_key = rm.create_buffer(format!("{}_light", prefix), BufferDesc {
-        graphics_device,
-        kind: BufferKind::Storage,
-        fields: vec![FieldDesc { name: "dummy".to_string(), field_type: FieldType::Vec4 }],
-        count: 1,
-    }).unwrap();
-    (
-        rm.buffer(frame_key).unwrap().clone(),
-        rm.buffer(instance_key).unwrap().clone(),
-        rm.buffer(material_key).unwrap().clone(),
-        rm.buffer(light_key).unwrap().clone(),
-    )
-}
 
 // ============================================================================
 // SCENE MANAGER LIFECYCLE TESTS

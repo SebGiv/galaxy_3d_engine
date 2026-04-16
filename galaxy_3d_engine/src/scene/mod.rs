@@ -5,6 +5,7 @@
 
 mod render_instance;
 mod light;
+mod lod;
 mod scene;
 mod scene_manager;
 mod scene_index;
@@ -32,3 +33,4 @@ pub use culler::{CameraCuller, BruteForceCuller, FrustumCuller};
 pub use drawer::{Drawer, ForwardDrawer};
 pub use updater::{Updater, NoOpUpdater, DefaultUpdater};
 pub use render_queue::{RenderQueue, DrawCall, distance_to_u16, build_sort_key};
+pub use lod::apply_hysteresis;

@@ -103,15 +103,18 @@ fn create_test_resources() -> TestResources {
                 GeometrySubMeshDesc {
                     name: "body".to_string(),
                     lods: vec![lod(0, 4, 0, 6)],
-                },
+            lod_thresholds: Vec::new(),
+        },
                 GeometrySubMeshDesc {
                     name: "head".to_string(),
                     lods: vec![lod(4, 4, 6, 6)],
-                },
+            lod_thresholds: Vec::new(),
+        },
                 GeometrySubMeshDesc {
                     name: "legs".to_string(),
                     lods: vec![lod(8, 3, 12, 3)],
-                },
+            lod_thresholds: Vec::new(),
+        },
             ],
         }],
     }).unwrap();
@@ -155,7 +158,8 @@ fn create_non_indexed_resources() -> (TestResources, MeshKey) {
             submeshes: vec![GeometrySubMeshDesc {
                 name: "main".to_string(),
                 lods: vec![lod(0, 6, 0, 0)],
-            }],
+            lod_thresholds: Vec::new(),
+        }],
         }],
     }).unwrap();
 
@@ -334,11 +338,13 @@ fn test_from_mesh_material_with_texture() {
                 GeometrySubMeshDesc {
                     name: "body".to_string(),
                     lods: vec![lod(0, 4, 0, 6)],
-                },
+            lod_thresholds: Vec::new(),
+        },
                 GeometrySubMeshDesc {
                     name: "head".to_string(),
                     lods: vec![lod(4, 4, 6, 6)],
-                },
+            lod_thresholds: Vec::new(),
+        },
             ],
         }],
     }).unwrap();

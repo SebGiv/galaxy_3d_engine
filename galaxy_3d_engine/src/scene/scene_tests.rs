@@ -77,7 +77,8 @@ fn setup_resources() -> TestSetup {
                     index_offset: 0, index_count: 6,
                     topology: PrimitiveTopology::TriangleList,
                 }],
-            }],
+            lod_thresholds: Vec::new(),
+        }],
         }],
     }).unwrap();
 
@@ -390,7 +391,8 @@ fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey, Arc<dyn crate::graphi
                         index_offset: 0, index_count: 6,
                         topology: PrimitiveTopology::TriangleList,
                     }],
-                }],
+            lod_thresholds: Vec::new(),
+        }],
             }],
         }).unwrap();
 
@@ -449,7 +451,11 @@ fn test_draw_empty_view() {
     let mut culled = crate::camera::VisibleInstances::new_empty();
     culler.cull_into(&scene, &camera, None, &mut culled);
     let mut render_view = RenderView::new(camera.clone(), 0);
-    ViewDispatcher::dispatch(&culled, &scene, std::slice::from_mut(&mut render_view));
+    {
+        let rm_arc = Engine::resource_manager().unwrap();
+        let rm = rm_arc.lock().unwrap();
+        ViewDispatcher::dispatch(&culled, &mut scene, &rm, std::slice::from_mut(&mut render_view));
+    }
     let mut cmd = MockCommandList::new();
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
@@ -474,7 +480,11 @@ fn test_draw_single_instance() {
     let mut culled = crate::camera::VisibleInstances::new_empty();
     culler.cull_into(&scene, &camera, None, &mut culled);
     let mut render_view = RenderView::new(camera.clone(), 0);
-    ViewDispatcher::dispatch(&culled, &scene, std::slice::from_mut(&mut render_view));
+    {
+        let rm_arc = Engine::resource_manager().unwrap();
+        let rm = rm_arc.lock().unwrap();
+        ViewDispatcher::dispatch(&culled, &mut scene, &rm, std::slice::from_mut(&mut render_view));
+    }
     let mut cmd = MockCommandList::new();
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
@@ -510,7 +520,11 @@ fn test_draw_skips_committed_removal() {
     let mut culled = crate::camera::VisibleInstances::new_empty();
     culler.cull_into(&scene, &camera, None, &mut culled);
     let mut render_view = RenderView::new(camera.clone(), 0);
-    ViewDispatcher::dispatch(&culled, &scene, std::slice::from_mut(&mut render_view));
+    {
+        let rm_arc = Engine::resource_manager().unwrap();
+        let rm = rm_arc.lock().unwrap();
+        ViewDispatcher::dispatch(&culled, &mut scene, &rm, std::slice::from_mut(&mut render_view));
+    }
     let mut cmd = MockCommandList::new();
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
@@ -536,7 +550,11 @@ fn test_draw_multiple_instances() {
     let mut culled = crate::camera::VisibleInstances::new_empty();
     culler.cull_into(&scene, &camera, None, &mut culled);
     let mut render_view = RenderView::new(camera.clone(), 0);
-    ViewDispatcher::dispatch(&culled, &scene, std::slice::from_mut(&mut render_view));
+    {
+        let rm_arc = Engine::resource_manager().unwrap();
+        let rm = rm_arc.lock().unwrap();
+        ViewDispatcher::dispatch(&culled, &mut scene, &rm, std::slice::from_mut(&mut render_view));
+    }
     let mut cmd = MockCommandList::new();
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,

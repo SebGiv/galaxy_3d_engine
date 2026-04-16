@@ -277,20 +277,25 @@ impl OctreeSceneIndex {
             FrustumTest::Partial => {
                 // Test objects at this node individually. AABB is stored
                 // alongside the key/position, no HashMap lookup needed.
+                // `c_dot` is the invariant part of the view-space depth formula
+                // `(inst_pos - camera_pos).dot(camera_forward)` so it can be
+                // hoisted out of the inner loop: `inst_pos.dot(camera_forward) - c_dot`.
+                let c_dot = camera_pos.dot(camera_forward);
                 for (key, inst_pos, world_aabb) in &node.objects {
                     if frustum.intersects_aabb(world_aabb) {
-                        let view_depth = (*inst_pos - camera_pos).dot(camera_forward);
+                        let view_depth = inst_pos.dot(camera_forward) - c_dot;
                         results.push(VisibleInstance { key: *key, distance: view_depth });
                     }
                 }
 
-                // Recurse into children
+                // Recurse into children. `stride` is the subtree size shared by
+                // all 8 children, so we avoid recomputing it per octant.
                 if depth < self.max_depth {
                     let first_child = node.first_child;
                     if first_child != 0 {
+                        let stride = self.subtree_sizes[(self.max_depth - depth - 1) as usize];
                         for octant in 0..8u8 {
-                            let child_idx = first_child
-                                + self.subtree_offset(octant, self.max_depth - depth - 1);
+                            let child_idx = first_child + (octant as usize) * stride;
                             let child_aabb = &self.nodes[child_idx].aabb;
                             let child_class = frustum.classify_aabb(child_aabb);
                             self.query_recursive(
@@ -317,17 +322,19 @@ impl OctreeSceneIndex {
         depth: u32,
     ) {
         let node = &self.nodes[node_idx];
+        // Same hoisted invariant as `query_recursive` Partial branch.
+        let c_dot = camera_pos.dot(camera_forward);
         for (key, inst_pos, _) in &node.objects {
-            let view_depth = (*inst_pos - camera_pos).dot(camera_forward);
+            let view_depth = inst_pos.dot(camera_forward) - c_dot;
             results.push(VisibleInstance { key: *key, distance: view_depth });
         }
 
         if depth < self.max_depth {
             let first_child = node.first_child;
             if first_child != 0 {
+                let stride = self.subtree_sizes[(self.max_depth - depth - 1) as usize];
                 for octant in 0..8u8 {
-                    let child_idx = first_child
-                        + self.subtree_offset(octant, self.max_depth - depth - 1);
+                    let child_idx = first_child + (octant as usize) * stride;
                     self.collect_all(child_idx, camera_pos, camera_forward, results, depth + 1);
                 }
             }

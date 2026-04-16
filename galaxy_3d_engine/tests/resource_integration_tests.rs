@@ -135,6 +135,7 @@ fn test_integration_create_geometry_with_vulkan() {
                             index_count: 6,
                             topology: PrimitiveTopology::TriangleList,
                         }],
+                        lod_thresholds: Vec::new(),
                     }
                 ],
             }
@@ -304,6 +305,7 @@ fn test_integration_geometry_with_multiple_lods() {
                                 topology: PrimitiveTopology::TriangleList,
                             },
                         ],
+                        lod_thresholds: Vec::new(),
                     }
                 ],
             }
@@ -397,6 +399,7 @@ fn test_integration_geometry_with_multiple_submeshes() {
                             index_count: 4,
                             topology: PrimitiveTopology::TriangleList,
                         }],
+                        lod_thresholds: Vec::new(),
                     },
                     GeometrySubMeshDesc {
                         name: "body".to_string(),
@@ -407,6 +410,7 @@ fn test_integration_geometry_with_multiple_submeshes() {
                             index_count: 4,
                             topology: PrimitiveTopology::TriangleList,
                         }],
+                        lod_thresholds: Vec::new(),
                     },
                     GeometrySubMeshDesc {
                         name: "legs".to_string(),
@@ -417,6 +421,7 @@ fn test_integration_geometry_with_multiple_submeshes() {
                             index_count: 4,
                             topology: PrimitiveTopology::TriangleList,
                         }],
+                        lod_thresholds: Vec::new(),
                     },
                 ],
             }
@@ -529,7 +534,8 @@ fn test_integration_many_resources_stress_test() {
                                 index_count: 6,
                                 topology: PrimitiveTopology::TriangleList,
                             }],
-                        }
+                        lod_thresholds: Vec::new(),
+                    }
                     ],
                 }
             ],

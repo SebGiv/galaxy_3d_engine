@@ -100,12 +100,15 @@ impl GeometrySubMeshLOD {
 pub struct GeometrySubMesh {
     /// LOD variants (index 0 = most detailed)
     lods: Vec<GeometrySubMeshLOD>,
+    /// Screen-size thresholds (drop, raise) between consecutive LODs.
+    /// Size = lods.len() - 1. See `GeometrySubMeshDesc::lod_thresholds`.
+    lod_thresholds: Vec<(f32, f32)>,
 }
 
 impl GeometrySubMesh {
     /// Create a new empty submesh
     fn new() -> Self {
-        Self { lods: Vec::new() }
+        Self { lods: Vec::new(), lod_thresholds: Vec::new() }
     }
 
     /// Get a LOD variant by index (0 = most detailed)
@@ -121,6 +124,12 @@ impl GeometrySubMesh {
     /// Iterate over all LOD variants of this submesh
     pub fn lods(&self) -> impl Iterator<Item = &GeometrySubMeshLOD> {
         self.lods.iter()
+    }
+
+    /// Get the LOD transition thresholds (drop, raise) in projected-pixel
+    /// diameter. Slice length is `lod_count() - 1`.
+    pub fn lod_thresholds(&self) -> &[(f32, f32)] {
+        &self.lod_thresholds
     }
 }
 
@@ -506,6 +515,7 @@ impl Geometry {
         for lod_desc in &desc.lods {
             self.validate_submesh_lod_desc(&desc.name, lod_desc)?;
         }
+        Self::validate_lod_thresholds(&desc.name, &desc.lods, &desc.lod_thresholds)?;
 
         let mesh = self.meshes.get_mut(mesh_id)
             .ok_or_else(|| engine_err!("galaxy3d::Geometry",
@@ -518,27 +528,23 @@ impl Geometry {
                 desc.name, mesh_id);
         }
 
-        let mut submesh = GeometrySubMesh::new();
-        for lod_desc in desc.lods {
-            submesh.lods.push(GeometrySubMeshLOD {
-                vertex_offset: lod_desc.vertex_offset,
-                vertex_count: lod_desc.vertex_count,
-                index_offset: lod_desc.index_offset,
-                index_count: lod_desc.index_count,
-                topology: lod_desc.topology,
-            });
-        }
-
-        let submesh_id = mesh.add_submesh_internal(desc.name, submesh);
+        let (name, submesh) = Self::build_submesh_from_desc(desc);
+        let submesh_id = mesh.add_submesh_internal(name, submesh);
         Ok(submesh_id)
     }
 
     /// Add a single LOD variant to an existing submesh, returns the new lod index.
+    ///
+    /// `threshold` is the `(drop, raise)` pair for the new frontier introduced
+    /// between the previously last LOD and the one being added. It must be
+    /// `None` when adding the very first LOD (no frontier), and `Some` for any
+    /// subsequent LOD.
     pub fn add_submesh_lod(
         &mut self,
         mesh_id: usize,
         submesh_id: usize,
         desc: GeometrySubMeshLODDesc,
+        threshold: Option<(f32, f32)>,
     ) -> Result<usize> {
         // Validate the LOD offsets first
         self.validate_submesh_lod_desc("<submesh_id>", &desc)?;
@@ -553,6 +559,29 @@ impl Geometry {
                 "GeometrySubMesh id {} not found in GeometryMesh id {}",
                 submesh_id, mesh_id))?;
 
+        // Validate threshold argument against current LOD count
+        match (submesh.lods.is_empty(), threshold) {
+            (true, Some(_)) => engine_bail!("galaxy3d::Geometry",
+                "add_submesh_lod: first LOD must have threshold = None"),
+            (false, None) => engine_bail!("galaxy3d::Geometry",
+                "add_submesh_lod: threshold must be Some when adding a LOD after the first"),
+            _ => {}
+        }
+        if let Some((drop, raise)) = threshold {
+            if !(raise > drop) {
+                engine_bail!("galaxy3d::Geometry",
+                    "add_submesh_lod: threshold raise ({}) must be > drop ({})",
+                    raise, drop);
+            }
+            if let Some(&(prev_drop, _)) = submesh.lod_thresholds.last() {
+                if !(prev_drop > raise) {
+                    engine_bail!("galaxy3d::Geometry",
+                        "add_submesh_lod: new threshold raise ({}) must be < previous drop ({})",
+                        raise, prev_drop);
+                }
+            }
+        }
+
         let lod_index = submesh.lods.len();
         submesh.lods.push(GeometrySubMeshLOD {
             vertex_offset: desc.vertex_offset,
@@ -561,6 +590,9 @@ impl Geometry {
             index_count: desc.index_count,
             topology: desc.topology,
         });
+        if let Some(t) = threshold {
+            submesh.lod_thresholds.push(t);
+        }
 
         Ok(lod_index)
     }
@@ -609,7 +641,49 @@ impl Geometry {
         for lod_desc in &desc.lods {
             self.validate_submesh_lod_desc(&desc.name, lod_desc)?;
         }
+        Self::validate_lod_thresholds(&desc.name, &desc.lods, &desc.lod_thresholds)?;
 
+        let (name, submesh) = Self::build_submesh_from_desc(desc);
+        mesh.add_submesh_internal(name, submesh);
+        Ok(())
+    }
+
+    /// Validate the LOD transition thresholds against the LOD chain.
+    ///
+    /// * `thresholds.len()` must equal `lods.len() - 1`
+    /// * Each pair must satisfy `raise > drop`
+    /// * Thresholds must be strictly decreasing across frontiers
+    ///   (`thresholds[i].0 > thresholds[i+1].1`) so each LOD occupies a
+    ///   contiguous screen-size interval without overlap.
+    fn validate_lod_thresholds(
+        submesh_name: &str,
+        lods: &[GeometrySubMeshLODDesc],
+        thresholds: &[(f32, f32)],
+    ) -> Result<()> {
+        let expected = lods.len().saturating_sub(1);
+        if thresholds.len() != expected {
+            engine_bail!("galaxy3d::Geometry",
+                "GeometrySubMesh '{}' lod_thresholds length {} does not match expected {} (lods.len() - 1)",
+                submesh_name, thresholds.len(), expected);
+        }
+        for (i, &(drop, raise)) in thresholds.iter().enumerate() {
+            if !(raise > drop) {
+                engine_bail!("galaxy3d::Geometry",
+                    "GeometrySubMesh '{}' lod_thresholds[{}]: raise ({}) must be > drop ({})",
+                    submesh_name, i, raise, drop);
+            }
+            if i > 0 && !(thresholds[i - 1].0 > raise) {
+                engine_bail!("galaxy3d::Geometry",
+                    "GeometrySubMesh '{}' lod_thresholds not strictly decreasing at frontier {} (raise {} must be < previous drop {})",
+                    submesh_name, i, raise, thresholds[i - 1].0);
+            }
+        }
+        Ok(())
+    }
+
+    /// Build a `GeometrySubMesh` from its descriptor (thresholds already
+    /// validated). Returns `(name, submesh)`.
+    fn build_submesh_from_desc(desc: GeometrySubMeshDesc) -> (String, GeometrySubMesh) {
         let mut submesh = GeometrySubMesh::new();
         for lod_desc in desc.lods {
             submesh.lods.push(GeometrySubMeshLOD {
@@ -620,9 +694,8 @@ impl Geometry {
                 topology: lod_desc.topology,
             });
         }
-
-        mesh.add_submesh_internal(desc.name, submesh);
-        Ok(())
+        submesh.lod_thresholds = desc.lod_thresholds;
+        (desc.name, submesh)
     }
 }
 
@@ -653,6 +726,16 @@ pub struct GeometrySubMeshDesc {
     /// LOD variants (index 0 = most detailed). Submeshes may have different
     /// LOD counts (e.g., a cape may have fewer LODs than the body).
     pub lods: Vec<GeometrySubMeshLODDesc>,
+    /// LOD transition thresholds, one pair per frontier between consecutive
+    /// LODs. Size must be `lods.len() - 1`. Each pair is `(drop, raise)` in
+    /// pixels of projected sphere diameter: `drop` is the screen size under
+    /// which the renderer switches to the coarser LOD; `raise > drop` is the
+    /// screen size above which it comes back to the finer one (hysteresis).
+    ///
+    /// Thresholds must be strictly decreasing across frontiers
+    /// (`thresholds[i].0 > thresholds[i+1].1`) so each LOD maps to a contiguous
+    /// screen-size interval.
+    pub lod_thresholds: Vec<(f32, f32)>,
 }
 
 /// Descriptor for creating a GeometryMesh

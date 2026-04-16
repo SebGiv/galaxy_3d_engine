@@ -142,6 +142,10 @@ pub struct RenderSubMeshPass {
     cached_pass_info_gen: u64,
     /// Material generation at the time of pipeline resolution
     cached_material_gen: u64,
+    /// LOD index selected for this pass last frame. Used as the previous
+    /// state for LOD hysteresis in the `ViewDispatcher`. Initial value 0
+    /// (highest-detail LOD).
+    current_lod: u8,
 }
 
 // ===== RENDER SUBMESH =====
@@ -268,6 +272,7 @@ impl RenderInstance {
                     cached_pipeline_key: None,
                     cached_pass_info_gen: 0,
                     cached_material_gen: 0,
+                    current_lod: 0,
                 });
 
                 pass_mask |= 1u64 << pt;
@@ -501,6 +506,16 @@ impl RenderSubMeshPass {
         self.cached_pipeline_key = Some(key);
         self.cached_pass_info_gen = pass_info_gen;
         self.cached_material_gen = material_gen;
+    }
+
+    /// Get the last LOD index selected for this pass (hysteresis state).
+    pub fn current_lod(&self) -> u8 {
+        self.current_lod
+    }
+
+    /// Update the current LOD (called by the `ViewDispatcher` each frame).
+    pub(crate) fn set_current_lod(&mut self, lod: u8) {
+        self.current_lod = lod;
     }
 }
 

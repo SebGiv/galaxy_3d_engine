@@ -75,6 +75,7 @@ fn create_test_resources() -> (
                             lod(0, 4, 0, 6),
                             lod(0, 4, 0, 6),
                         ],
+                        lod_thresholds: vec![(30.0, 40.0)],
                     },
                     GeometrySubMeshDesc {
                         name: "torso".to_string(),
@@ -82,13 +83,15 @@ fn create_test_resources() -> (
                             lod(4, 4, 6, 6),
                             lod(4, 4, 6, 6),
                         ],
+                        lod_thresholds: vec![(30.0, 40.0)],
                     },
                     GeometrySubMeshDesc {
                         name: "legs".to_string(),
                         lods: vec![
                             lod(8, 4, 12, 6),
                         ],
-                    },
+            lod_thresholds: Vec::new(),
+        },
                 ],
             },
             GeometryMeshDesc {
@@ -99,7 +102,8 @@ fn create_test_resources() -> (
                         lods: vec![
                             lod(12, 4, 18, 6),
                         ],
-                    },
+            lod_thresholds: Vec::new(),
+        },
                 ],
             },
         ],

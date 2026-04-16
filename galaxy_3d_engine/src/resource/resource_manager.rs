@@ -492,13 +492,17 @@ impl ResourceManager {
         geometry.add_submesh(mesh_id, desc)
     }
 
-    /// Add a single LOD variant to an existing submesh
+    /// Add a single LOD variant to an existing submesh.
+    ///
+    /// `threshold` is the `(drop, raise)` pair for the new frontier; pass
+    /// `None` only when adding the very first LOD of the submesh.
     pub fn add_geometry_submesh_lod(
         &mut self,
         geom_key: GeometryKey,
         mesh_id: usize,
         submesh_id: usize,
         desc: GeometrySubMeshLODDesc,
+        threshold: Option<(f32, f32)>,
     ) -> Result<usize> {
         let arc = self.geometries.get_mut(geom_key)
             .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Geometry not found"))?;
@@ -506,7 +510,7 @@ impl ResourceManager {
         let geometry = Arc::get_mut(arc)
             .ok_or_else(|| crate::engine_warn_err!("galaxy3d::ResourceManager", "Cannot mutate Geometry: other references exist"))?;
 
-        geometry.add_submesh_lod(mesh_id, submesh_id, desc)
+        geometry.add_submesh_lod(mesh_id, submesh_id, desc, threshold)
     }
 
     // ===== SHADER CREATION =====

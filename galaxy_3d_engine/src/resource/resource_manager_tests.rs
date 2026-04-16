@@ -120,7 +120,8 @@ fn create_test_geometry_desc(
                     index_count: 6,
                     topology: graphics_device::PrimitiveTopology::TriangleList,
                 }],
-            }],
+            lod_thresholds: Vec::new(),
+        }],
         }],
     }
 }
@@ -1112,7 +1113,8 @@ fn test_add_geometry_mesh_to_existing_geometry() {
                     index_count: 6,
                     topology: graphics_device::PrimitiveTopology::TriangleList,
                 }],
-            }
+            lod_thresholds: Vec::new(),
+        }
         ],
     };
 
@@ -1175,7 +1177,8 @@ fn test_add_geometry_submesh_lod() {
                             index_count: 6,
                             topology: graphics_device::PrimitiveTopology::TriangleList,
                         }],
-                    }
+            lod_thresholds: Vec::new(),
+        }
                 ],
             }
         ],
@@ -1192,7 +1195,7 @@ fn test_add_geometry_submesh_lod() {
         topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
-    let result = rm.add_geometry_submesh_lod(geom_key, 0, 0, lod);
+    let result = rm.add_geometry_submesh_lod(geom_key, 0, 0, lod, Some((30.0, 40.0)));
     assert!(result.is_ok());
 
     // Verify LOD was added
@@ -1214,7 +1217,7 @@ fn test_add_geometry_submesh_lod_to_nonexistent_geometry() {
         topology: graphics_device::PrimitiveTopology::TriangleList,
     };
 
-    let result = rm.add_geometry_submesh_lod(GeometryKey::default(), 0, 0, lod);
+    let result = rm.add_geometry_submesh_lod(GeometryKey::default(), 0, 0, lod, None);
     assert!(result.is_err());
 }
 
@@ -1256,7 +1259,8 @@ fn test_add_geometry_submesh() {
                             index_count: 6,
                             topology: graphics_device::PrimitiveTopology::TriangleList,
                         }],
-                    }
+            lod_thresholds: Vec::new(),
+        }
                 ],
             }
         ],
@@ -1274,7 +1278,8 @@ fn test_add_geometry_submesh() {
             index_count: 6,
             topology: graphics_device::PrimitiveTopology::TriangleList,
         }],
-    };
+            lod_thresholds: Vec::new(),
+        };
 
     let result = rm.add_geometry_submesh(geom_key, 0, submesh);
     assert!(result.is_ok());
@@ -1298,7 +1303,8 @@ fn test_add_geometry_submesh_to_nonexistent_geometry() {
             index_count: 6,
             topology: graphics_device::PrimitiveTopology::TriangleList,
         }],
-    };
+            lod_thresholds: Vec::new(),
+        };
 
     let result = rm.add_geometry_submesh(GeometryKey::default(), 0, submesh);
     assert!(result.is_err());

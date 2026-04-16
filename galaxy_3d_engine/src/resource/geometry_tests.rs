@@ -77,6 +77,7 @@ fn make_quad_submesh_desc(name: &str) -> GeometrySubMeshDesc {
     GeometrySubMeshDesc {
         name: name.to_string(),
         lods: vec![make_quad_lod_desc()],
+        lod_thresholds: Vec::new(),
     }
 }
 
@@ -360,7 +361,7 @@ fn test_add_submesh_lod_to_existing_submesh() {
     assert_eq!(geom.mesh(mesh_id).unwrap().submesh(submesh_id).unwrap().lod_count(), 1);
 
     // Add a second LOD
-    let new_lod_index = geom.add_submesh_lod(mesh_id, submesh_id, make_quad_lod_desc()).unwrap();
+    let new_lod_index = geom.add_submesh_lod(mesh_id, submesh_id, make_quad_lod_desc(), Some((30.0, 40.0))).unwrap();
     assert_eq!(new_lod_index, 1);
     assert_eq!(geom.mesh(mesh_id).unwrap().submesh(submesh_id).unwrap().lod_count(), 2);
 }
@@ -392,7 +393,8 @@ fn test_submesh_lod_accessors() {
                 submeshes: vec![GeometrySubMeshDesc {
                     name: "test".to_string(),
                     lods: vec![lod_desc],
-                }],
+            lod_thresholds: Vec::new(),
+        }],
             }
         ],
     };
@@ -435,6 +437,7 @@ fn test_submesh_validation_vertex_overflow() {
                 index_count: 6,
                 topology: graphics_device::PrimitiveTopology::TriangleList,
             }],
+            lod_thresholds: Vec::new(),
         }],
     };
 
@@ -468,6 +471,7 @@ fn test_submesh_validation_index_overflow() {
                 index_count: 20, // exceeds total_index_count (6)
                 topology: graphics_device::PrimitiveTopology::TriangleList,
             }],
+            lod_thresholds: Vec::new(),
         }],
     };
 
@@ -532,7 +536,8 @@ fn test_multiple_submeshes() {
                             index_offset: 0, index_count: 3,
                             topology: graphics_device::PrimitiveTopology::TriangleList,
                         }],
-                    },
+            lod_thresholds: Vec::new(),
+        },
                     GeometrySubMeshDesc {
                         name: "armor".to_string(),
                         lods: vec![GeometrySubMeshLODDesc {
@@ -540,7 +545,8 @@ fn test_multiple_submeshes() {
                             index_offset: 3, index_count: 3,
                             topology: graphics_device::PrimitiveTopology::TriangleList,
                         }],
-                    },
+            lod_thresholds: Vec::new(),
+        },
                 ],
             }
         ],
@@ -592,6 +598,7 @@ fn test_complex_geometry_hierarchy() {
                                 topology: graphics_device::PrimitiveTopology::TriangleList,
                             },
                         ],
+                        lod_thresholds: vec![(30.0, 40.0)],
                     },
                     // armor has only 1 LOD (disappears at lower LOD)
                     GeometrySubMeshDesc {
@@ -601,7 +608,8 @@ fn test_complex_geometry_hierarchy() {
                             index_offset: 15, index_count: 9,
                             topology: graphics_device::PrimitiveTopology::TriangleList,
                         }],
-                    },
+            lod_thresholds: Vec::new(),
+        },
                 ],
             },
             GeometryMeshDesc {
@@ -614,7 +622,8 @@ fn test_complex_geometry_hierarchy() {
                             index_offset: 30, index_count: 18,
                             topology: graphics_device::PrimitiveTopology::TriangleList,
                         }],
-                    }
+            lod_thresholds: Vec::new(),
+        }
                 ],
             }
         ],
@@ -689,7 +698,8 @@ fn test_submesh_by_id_path() {
                             index_offset: 0, index_count: 3,
                             topology: graphics_device::PrimitiveTopology::TriangleList,
                         }],
-                    },
+            lod_thresholds: Vec::new(),
+        },
                     GeometrySubMeshDesc {
                         name: "armor".to_string(),
                         lods: vec![GeometrySubMeshLODDesc {
@@ -697,7 +707,8 @@ fn test_submesh_by_id_path() {
                             index_offset: 3, index_count: 3,
                             topology: graphics_device::PrimitiveTopology::TriangleList,
                         }],
-                    },
+            lod_thresholds: Vec::new(),
+        },
                 ],
             }
         ],
