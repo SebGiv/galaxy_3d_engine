@@ -66,10 +66,10 @@ impl ViewDispatcher {
 
             let sm_count = instance.sub_mesh_count();
             for sm_idx in 0..sm_count {
-                let sub_mesh = match instance.sub_mesh_mut(sm_idx) {
-                    Some(sm) => sm,
-                    None => continue,
-                };
+                // SAFETY: `sm_idx` ranges over `0..sub_mesh_count()` which
+                // is the length of the underlying `sub_meshes` vec, so
+                // `sub_mesh_mut(sm_idx)` is always `Some`.
+                let sub_mesh = unsafe { instance.sub_mesh_mut(sm_idx).unwrap_unchecked() };
 
                 let mask = sub_mesh.pass_mask();
                 if mask == 0 { continue; }

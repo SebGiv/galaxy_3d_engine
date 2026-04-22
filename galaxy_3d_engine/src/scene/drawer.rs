@@ -176,11 +176,20 @@ impl Drawer for ForwardDrawer {
             };
 
             // Read final pipeline sort ids + material render state.
-            let pipeline = rm.pipeline(pipeline_key).unwrap();
+            // SAFETY: `pipeline_key` is either the cached key (produced by
+            // a prior successful `resolve_pipeline`) or the one just returned
+            // by the resolve above, which inserts into the cache before
+            // returning. `sm_pass_material` was read from a `MaterialPass`
+            // that we just dereferenced, and `sm_pass_mat_pass_idx` came from
+            // the same `MaterialPass`. The `rm` lock is held continuously
+            // from line ~89 to the end of PHASE 3, so no removal can occur.
+            let pipeline = unsafe { rm.pipeline(pipeline_key).unwrap_unchecked() };
             let signature_id = pipeline.signature_id();
             let pipeline_sort_id = pipeline.sort_id();
-            let mat_pass = rm.material(sm_pass_material).unwrap()
-                .pass(sm_pass_mat_pass_idx).unwrap();
+            let mat_pass = unsafe {
+                rm.material(sm_pass_material).unwrap_unchecked()
+                    .pass(sm_pass_mat_pass_idx).unwrap_unchecked()
+            };
             let render_state = *mat_pass.render_state();
             let render_state_sig = mat_pass.render_state_signature_id();
 
@@ -226,7 +235,11 @@ impl Drawer for ForwardDrawer {
         for dc in self.queue.iter_sorted() {
             // Pipeline rebind if different from previous draw call.
             if last_pipeline_key != Some(dc.pipeline_key) {
-                let pipeline = rm.pipeline(dc.pipeline_key).unwrap();
+                // SAFETY: `dc.pipeline_key` was pushed into the queue during
+                // PHASE 1 after a successful lookup under the same `rm` lock
+                // that we still hold. Nothing can have removed the pipeline
+                // between PHASE 1 and PHASE 3.
+                let pipeline = unsafe { rm.pipeline(dc.pipeline_key).unwrap_unchecked() };
                 let gd_pipeline = pipeline.graphics_device_pipeline();
                 cmd.bind_pipeline(gd_pipeline)?;
 
@@ -260,7 +273,9 @@ impl Drawer for ForwardDrawer {
 
             // Geometry rebind if different from previous draw call.
             if last_geometry_key != Some(dc.geometry_key) {
-                let geo = rm.geometry(dc.geometry_key).unwrap();
+                // SAFETY: same rationale as the pipeline lookup above —
+                // `dc.geometry_key` was validated under the still-held `rm` lock.
+                let geo = unsafe { rm.geometry(dc.geometry_key).unwrap_unchecked() };
                 cmd.bind_vertex_buffer(geo.vertex_buffer(), 0)?;
                 if let Some(ib) = geo.index_buffer() {
                     cmd.bind_index_buffer(ib, 0, geo.index_type())?;

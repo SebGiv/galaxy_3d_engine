@@ -240,7 +240,10 @@ impl OctreeSceneIndex {
     ///
     /// Uses pre-computed subtree sizes for O(1) lookup.
     fn subtree_offset(&self, octant: u8, remaining_depth: u32) -> usize {
-        octant as usize * self.subtree_sizes[remaining_depth as usize]
+        // SAFETY: `subtree_sizes` is populated with entries for depths `0..=max_depth`
+        // in `new()` and never resized. Every call-site guarantees
+        // `remaining_depth <= max_depth`, so the index is always in range.
+        octant as usize * unsafe { *self.subtree_sizes.get_unchecked(remaining_depth as usize) }
     }
 
     /// Recursively query the octree with a frustum.
@@ -263,7 +266,11 @@ impl OctreeSceneIndex {
         results: &mut Vec<VisibleInstance>,
         depth: u32,
     ) {
-        let node = &self.nodes[node_idx];
+        // SAFETY: `node_idx` is either ROOT (=0) or `first_child + octant*stride`,
+        // both computed so they fall within the depth-first range pre-allocated
+        // by `build_recursive()` (asserted to equal `total_node_count(max_depth)`
+        // in `new()`).
+        let node = unsafe { self.nodes.get_unchecked(node_idx) };
 
         match classification {
             FrustumTest::Outside => return,
@@ -293,10 +300,17 @@ impl OctreeSceneIndex {
                 if depth < self.max_depth {
                     let first_child = node.first_child;
                     if first_child != 0 {
-                        let stride = self.subtree_sizes[(self.max_depth - depth - 1) as usize];
+                        // SAFETY: `max_depth - depth - 1` < `max_depth` since
+                        // we entered the `depth < max_depth` branch. The
+                        // `subtree_sizes` vec has `max_depth + 1` entries.
+                        let stride = unsafe {
+                            *self.subtree_sizes.get_unchecked((self.max_depth - depth - 1) as usize)
+                        };
                         for octant in 0..8u8 {
                             let child_idx = first_child + (octant as usize) * stride;
-                            let child_aabb = &self.nodes[child_idx].aabb;
+                            // SAFETY: `first_child` + 8 * `stride` stays within the
+                            // depth-first range allocated for this subtree.
+                            let child_aabb = &unsafe { self.nodes.get_unchecked(child_idx) }.aabb;
                             let child_class = frustum.classify_aabb(child_aabb);
                             self.query_recursive(
                                 child_idx, frustum, child_class,
@@ -321,7 +335,9 @@ impl OctreeSceneIndex {
         results: &mut Vec<VisibleInstance>,
         depth: u32,
     ) {
-        let node = &self.nodes[node_idx];
+        // SAFETY: same invariant as `query_recursive` — `node_idx` is always
+        // a valid index into the pre-allocated `nodes` vec.
+        let node = unsafe { self.nodes.get_unchecked(node_idx) };
         // Same hoisted invariant as `query_recursive` Partial branch.
         let c_dot = camera_pos.dot(camera_forward);
         for (key, inst_pos, _) in &node.objects {
@@ -332,7 +348,10 @@ impl OctreeSceneIndex {
         if depth < self.max_depth {
             let first_child = node.first_child;
             if first_child != 0 {
-                let stride = self.subtree_sizes[(self.max_depth - depth - 1) as usize];
+                // SAFETY: same invariant as in `query_recursive`.
+                let stride = unsafe {
+                    *self.subtree_sizes.get_unchecked((self.max_depth - depth - 1) as usize)
+                };
                 for octant in 0..8u8 {
                     let child_idx = first_child + (octant as usize) * stride;
                     self.collect_all(child_idx, camera_pos, camera_forward, results, depth + 1);
