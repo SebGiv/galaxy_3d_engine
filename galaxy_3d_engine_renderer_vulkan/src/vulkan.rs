@@ -14,7 +14,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     ReflectedBinding, ReflectedPushConstant, ReflectedMember, ReflectedMemberType,
     ScalarKind, PipelineReflection,
     TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
-    LoadOp, StoreOp, ImageLayout,
+    ImageLayout,
     GraphicsDeviceStats, VertexInputRate,
     Config, BindlessConfig, TextureUsage, SamplerType,
     MipmapMode, ManualMipmapData,
@@ -1247,22 +1247,6 @@ impl VulkanGraphicsDevice {
     }
 
     /// Convert LoadOp to Vulkan
-    fn load_op_to_vk(&self, load_op: LoadOp) -> vk::AttachmentLoadOp {
-        match load_op {
-            LoadOp::Load => vk::AttachmentLoadOp::LOAD,
-            LoadOp::Clear => vk::AttachmentLoadOp::CLEAR,
-            LoadOp::DontCare => vk::AttachmentLoadOp::DONT_CARE,
-        }
-    }
-
-    /// Convert StoreOp to Vulkan
-    fn store_op_to_vk(&self, store_op: StoreOp) -> vk::AttachmentStoreOp {
-        match store_op {
-            StoreOp::Store => vk::AttachmentStoreOp::STORE,
-            StoreOp::DontCare => vk::AttachmentStoreOp::DONT_CARE,
-        }
-    }
-
     /// Convert ImageLayout to Vulkan (used by future dynamic barrier tracking)
     #[allow(dead_code)]
     fn image_layout_to_vk(&self, layout: ImageLayout) -> vk::ImageLayout {
@@ -1448,171 +1432,51 @@ impl GraphicsDevice for VulkanGraphicsDevice {
 
     fn create_framebuffer(&self, desc: &FramebufferDesc) -> Result<Arc<dyn RendererFramebuffer>> {
         unsafe {
-            // Downcast render pass to Vulkan type
-            let vk_render_pass = desc.render_pass.as_ref()
-                as *const dyn RendererRenderPass
-                as *const crate::vulkan_render_pass::RenderPass;
-            let vk_render_pass = &*vk_render_pass;
-
-            // Collect image views from attachments.
-            // Order must match the render pass: color → depth → resolve
-            let mut attachments = Vec::with_capacity(
-                desc.color_attachments.len()
-                    + if desc.depth_stencil_attachment.is_some() { 1 } else { 0 }
-                    + desc.color_resolve_attachments.len(),
-            );
-
+            // With dynamic rendering, no `VkFramebuffer` is created. We only
+            // collect the per-attachment `VkImageView` handles so the command
+            // list can plug them into a `VkRenderingInfo` at record time.
+            let mut color_image_views = Vec::with_capacity(desc.color_attachments.len());
             for color_rt in &desc.color_attachments {
                 let vk_rt = color_rt.as_ref()
                     as *const dyn RendererRenderTarget
                     as *const crate::vulkan_render_target::RenderTarget;
-                attachments.push((*vk_rt).image_view);
+                color_image_views.push((*vk_rt).image_view);
             }
 
-            if let Some(depth_rt) = &desc.depth_stencil_attachment {
+            let depth_image_view = desc.depth_stencil_attachment.as_ref().map(|depth_rt| {
                 let vk_rt = depth_rt.as_ref()
                     as *const dyn RendererRenderTarget
                     as *const crate::vulkan_render_target::RenderTarget;
-                attachments.push((*vk_rt).image_view);
-            }
+                (*vk_rt).image_view
+            });
 
-            // Resolve attachments (MSAA → 1x, appended after depth)
+            let mut resolve_image_views = Vec::with_capacity(desc.color_resolve_attachments.len());
             for resolve_rt in &desc.color_resolve_attachments {
                 let vk_rt = resolve_rt.as_ref()
                     as *const dyn RendererRenderTarget
                     as *const crate::vulkan_render_target::RenderTarget;
-                attachments.push((*vk_rt).image_view);
+                resolve_image_views.push((*vk_rt).image_view);
             }
 
-            let framebuffer_info = vk::FramebufferCreateInfo::default()
-                .render_pass(vk_render_pass.render_pass)
-                .attachments(&attachments)
-                .width(desc.width)
-                .height(desc.height)
-                .layers(1);
-
-            let framebuffer = self.device.create_framebuffer(&framebuffer_info, None)
-                .map_err(|e| engine_err!("galaxy3d::vulkan",
-                    "Failed to create framebuffer: {:?}", e))?;
-
             Ok(Arc::new(crate::vulkan_frame_buffer::Framebuffer::new(
-                framebuffer, desc.width, desc.height, (*self.device).clone(),
+                color_image_views,
+                depth_image_view,
+                resolve_image_views,
+                desc.width,
+                desc.height,
             )))
         }
     }
 
     fn create_render_pass(&self, desc: &RenderPassDesc) -> Result<Arc<dyn RendererRenderPass>> {
-        unsafe {
-            // Convert attachment descriptions
-            let mut attachments = Vec::new();
-            let mut color_attachment_refs = Vec::new();
-            let mut depth_attachment_ref: Option<vk::AttachmentReference> = None;
-
-            for (i, color_attachment) in desc.color_attachments.iter().enumerate() {
-                attachments.push(vk::AttachmentDescription::default()
-                    .format(self.format_to_vk(color_attachment.format))
-                    .samples(self.sample_count_to_vk(color_attachment.samples))
-                    .load_op(self.load_op_to_vk(color_attachment.load_op))
-                    .store_op(self.store_op_to_vk(color_attachment.store_op))
-                    .stencil_load_op(self.load_op_to_vk(color_attachment.stencil_load_op))
-                    .stencil_store_op(self.store_op_to_vk(color_attachment.stencil_store_op))
-                    .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
-
-                color_attachment_refs.push(vk::AttachmentReference::default()
-                    .attachment(i as u32)
-                    .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
-            }
-
-            if let Some(depth_attachment) = &desc.depth_stencil_attachment {
-                let depth_index = attachments.len() as u32;
-                attachments.push(vk::AttachmentDescription::default()
-                    .format(self.format_to_vk(depth_attachment.format))
-                    .samples(self.sample_count_to_vk(depth_attachment.samples))
-                    .load_op(self.load_op_to_vk(depth_attachment.load_op))
-                    .store_op(self.store_op_to_vk(depth_attachment.store_op))
-                    .stencil_load_op(self.load_op_to_vk(depth_attachment.stencil_load_op))
-                    .stencil_store_op(self.store_op_to_vk(depth_attachment.stencil_store_op))
-                    .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
-
-                depth_attachment_ref = Some(vk::AttachmentReference::default()
-                    .attachment(depth_index)
-                    .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
-            }
-
-            // Add resolve attachments (appended after depth in the attachment list)
-            let mut resolve_attachment_refs = Vec::new();
-            if !desc.color_resolve_attachments.is_empty() {
-                for resolve_attachment in &desc.color_resolve_attachments {
-                    let resolve_index = attachments.len() as u32;
-                    attachments.push(vk::AttachmentDescription::default()
-                        .format(self.format_to_vk(resolve_attachment.format))
-                        .samples(vk::SampleCountFlags::TYPE_1)
-                        .load_op(vk::AttachmentLoadOp::DONT_CARE)
-                        .store_op(vk::AttachmentStoreOp::STORE)
-                        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                        .initial_layout(vk::ImageLayout::UNDEFINED)
-                        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
-
-                    resolve_attachment_refs.push(vk::AttachmentReference::default()
-                        .attachment(resolve_index)
-                        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
-                }
-            }
-
-            // Create subpass
-            let mut subpass = vk::SubpassDescription::default()
-                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                .color_attachments(&color_attachment_refs);
-
-            if !resolve_attachment_refs.is_empty() {
-                subpass = subpass.resolve_attachments(&resolve_attachment_refs);
-            }
-
-            if let Some(ref depth_ref) = depth_attachment_ref {
-                subpass = subpass.depth_stencil_attachment(depth_ref);
-            }
-
-            // Subpass dependency — include depth stages when depth attachment is present
-            let has_depth = depth_attachment_ref.is_some();
-            let (stage_mask, access_mask) = if has_depth {
-                (
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE
-                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                )
-            } else {
-                (
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                )
-            };
-
-            let dependency = vk::SubpassDependency::default()
-                .src_subpass(vk::SUBPASS_EXTERNAL)
-                .dst_subpass(0)
-                .src_stage_mask(stage_mask)
-                .src_access_mask(vk::AccessFlags::empty())
-                .dst_stage_mask(stage_mask)
-                .dst_access_mask(access_mask);
-
-            // Create render pass
-            let render_pass_info = vk::RenderPassCreateInfo::default()
-                .attachments(&attachments)
-                .subpasses(std::slice::from_ref(&subpass))
-                .dependencies(std::slice::from_ref(&dependency));
-
-            let render_pass = self.device.create_render_pass(&render_pass_info, None)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create render pass: {:?}", e))?;
-
-            Ok(Arc::new(RenderPass {
-                render_pass,
-                device: (*self.device).clone(),
-            }))
-        }
+        // With dynamic rendering, no `VkRenderPass` is created. We just clone
+        // the attachment descriptors so that `begin_render_pass` can build a
+        // `VkRenderingInfo` inline at record time.
+        Ok(Arc::new(RenderPass {
+            color_attachments: desc.color_attachments.clone(),
+            depth_stencil_attachment: desc.depth_stencil_attachment.clone(),
+            color_resolve_attachments: desc.color_resolve_attachments.clone(),
+        }))
     }
 
     fn create_binding_group(
@@ -2753,82 +2617,40 @@ impl GraphicsDevice for VulkanGraphicsDevice {
         fragment_shader: &Arc<dyn RendererShader>,
     ) -> Result<Arc<dyn RendererPipeline>> {
         unsafe {
-            // Build color attachments from PipelineDesc::color_formats
-            let mut attachments = Vec::new();
-            let mut color_attachment_refs = Vec::new();
+            // Dynamic rendering: describe the attachment formats inline via
+            // `VkPipelineRenderingCreateInfo` instead of building a temporary
+            // VkRenderPass. The pipeline is not tied to a concrete render pass
+            // object; it is only compiled for this specific attachment layout.
+            let color_formats: Vec<vk::Format> = desc
+                .color_formats
+                .iter()
+                .map(|&f| self.format_to_vk(f))
+                .collect();
 
-            let vk_sample_count = self.sample_count_to_vk(desc.multisample.sample_count);
-
-            for (i, &format) in desc.color_formats.iter().enumerate() {
-                attachments.push(vk::AttachmentDescription::default()
-                    .format(self.format_to_vk(format))
-                    .samples(vk_sample_count)
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE)
-                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                    .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
-
-                color_attachment_refs.push(vk::AttachmentReference::default()
-                    .attachment(i as u32)
-                    .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL));
-            }
-
-            let has_depth = desc.depth_format.is_some();
-
-            let depth_attachment_ref = vk::AttachmentReference::default()
-                .attachment(attachments.len() as u32)
-                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-            if let Some(depth_format) = desc.depth_format {
-                attachments.push(vk::AttachmentDescription::default()
-                    .format(self.format_to_vk(depth_format))
-                    .samples(vk_sample_count)
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::DONT_CARE)
-                    .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-                    .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-                    .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL));
-            }
-
-            let mut subpass = vk::SubpassDescription::default()
-                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-                .color_attachments(&color_attachment_refs);
-
-            if has_depth {
-                subpass = subpass.depth_stencil_attachment(&depth_attachment_ref);
-            }
-
-            let dst_stage = if has_depth {
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-            } else {
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-            };
-            let dst_access = if has_depth {
-                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
-                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
-            } else {
-                vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+            // Depth/stencil formats are derived from `desc.depth_format`.
+            // When the depth format also contains stencil (D24_UNORM_S8_UINT,
+            // D32_SFLOAT_S8_UINT), `stencil_attachment_format` is set to the
+            // same value so the pipeline remains compatible with both aspects.
+            let (depth_format_vk, stencil_format_vk) = match desc.depth_format {
+                Some(fmt) => {
+                    let vk_fmt = self.format_to_vk(fmt);
+                    let stencil_fmt = if matches!(
+                        fmt,
+                        TextureFormat::D24_UNORM_S8_UINT | TextureFormat::D32_FLOAT_S8_UINT,
+                    ) {
+                        vk_fmt
+                    } else {
+                        vk::Format::UNDEFINED
+                    };
+                    (vk_fmt, stencil_fmt)
+                }
+                None => (vk::Format::UNDEFINED, vk::Format::UNDEFINED),
             };
 
-            let dependency = vk::SubpassDependency::default()
-                .src_subpass(vk::SUBPASS_EXTERNAL)
-                .dst_subpass(0)
-                .src_stage_mask(dst_stage)
-                .src_access_mask(vk::AccessFlags::empty())
-                .dst_stage_mask(dst_stage)
-                .dst_access_mask(dst_access);
-
-            let render_pass_info = vk::RenderPassCreateInfo::default()
-                .attachments(&attachments)
-                .subpasses(std::slice::from_ref(&subpass))
-                .dependencies(std::slice::from_ref(&dependency));
-
-            let temp_render_pass = self.device.create_render_pass(&render_pass_info, None)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create temporary render pass for pipeline: {:?}", e))?;
+            let mut pipeline_rendering_info = vk::PipelineRenderingCreateInfo::default()
+                .color_attachment_formats(&color_formats)
+                .depth_attachment_format(depth_format_vk)
+                .stencil_attachment_format(stencil_format_vk);
 
             // Downcast shaders to Vulkan types
             let vertex_shader_vk = vertex_shader
@@ -3005,8 +2827,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             let layout = self.device.create_pipeline_layout(&layout_create_info, None)
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create pipeline layout: {:?}", e))?;
 
-            // Create pipeline
+            // Create pipeline. With dynamic rendering, no VkRenderPass is
+            // bound — the attachment formats are carried by
+            // `VkPipelineRenderingCreateInfo` chained via `pNext`.
             let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
+                .push_next(&mut pipeline_rendering_info)
                 .stages(&shader_stages)
                 .vertex_input_state(&vertex_input_state)
                 .input_assembly_state(&input_assembly_state)
@@ -3016,9 +2841,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 .multisample_state(&multisample_state)
                 .color_blend_state(&color_blend_state)
                 .dynamic_state(&dynamic_state)
-                .layout(layout)
-                .render_pass(temp_render_pass) // Using temporary render pass
-                .subpass(0);
+                .layout(layout);
 
             let pipelines = self.device.create_graphics_pipelines(
                 vk::PipelineCache::null(),
@@ -3028,9 +2851,6 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create graphics pipeline: {:?}", e.1))?;
 
             let pipeline = pipelines[0];
-
-            // Destroy temporary render pass
-            self.device.destroy_render_pass(temp_render_pass, None);
 
             // Merge SPIR-V reflections from vertex + fragment shaders
             let reflection = Self::merge_shader_reflections(vertex_shader, fragment_shader)?;

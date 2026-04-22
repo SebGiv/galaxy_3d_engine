@@ -11,7 +11,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     Texture as RendererTexture,
     Viewport, Rect2D, ClearValue, IndexType, ShaderStageFlags,
     ImageAccess, AccessType, TextureFormat,
-    DynamicRenderState,
+    DynamicRenderState, LoadOp, StoreOp,
     CullMode, FrontFace, CompareOp, StencilOp, ColorWriteMask,
 };
 use galaxy_3d_engine::{engine_bail, engine_err};
@@ -183,6 +183,23 @@ impl CommandList {
         )
     }
 
+    /// Map an engine `LoadOp` to the Vulkan attachment load op.
+    fn load_op_to_vk(op: LoadOp) -> vk::AttachmentLoadOp {
+        match op {
+            LoadOp::Load => vk::AttachmentLoadOp::LOAD,
+            LoadOp::Clear => vk::AttachmentLoadOp::CLEAR,
+            LoadOp::DontCare => vk::AttachmentLoadOp::DONT_CARE,
+        }
+    }
+
+    /// Map an engine `StoreOp` to the Vulkan attachment store op.
+    fn store_op_to_vk(op: StoreOp) -> vk::AttachmentStoreOp {
+        match op {
+            StoreOp::Store => vk::AttachmentStoreOp::STORE,
+            StoreOp::DontCare => vk::AttachmentStoreOp::DONT_CARE,
+        }
+    }
+
     /// Bind a single descriptor set to the command buffer at a given set index
     ///
     /// # Arguments
@@ -282,18 +299,32 @@ impl RendererCommandList for CommandList {
         }
 
         unsafe {
-            // Emit layout transition barriers for non-attachment accesses
+            // Dynamic rendering: with no VkRenderPass, layout transitions that
+            // used to be carried by subpass dependencies / initialLayout must
+            // now be emitted explicitly here, for ALL accesses (attachments
+            // included). When `previous_access_type` is None (first use of
+            // the texture in this frame) we transition from UNDEFINED.
             for access in accesses {
-                if access.access_type.is_attachment() {
-                    continue;
-                }
-                let prev = match access.previous_access_type {
-                    Some(p) => p,
-                    None => continue,
-                };
-                let old_layout = Self::access_type_to_layout(prev);
                 let new_layout = Self::access_type_to_layout(access.access_type);
-                if old_layout == new_layout {
+                let (dst_stage, dst_access) =
+                    Self::access_type_to_stage_access(access.access_type);
+
+                let (old_layout, src_stage, src_access) = match access.previous_access_type {
+                    Some(prev) => {
+                        let layout = Self::access_type_to_layout(prev);
+                        let (stage, acc) = Self::access_type_to_stage_access(prev);
+                        (layout, stage, acc)
+                    }
+                    None => (
+                        vk::ImageLayout::UNDEFINED,
+                        vk::PipelineStageFlags::TOP_OF_PIPE,
+                        vk::AccessFlags::empty(),
+                    ),
+                };
+
+                // Skip emission when neither a layout transition nor a
+                // synchronization between two accesses is required.
+                if old_layout == new_layout && access.previous_access_type.is_none() {
                     continue;
                 }
 
@@ -307,9 +338,6 @@ impl RendererCommandList for CommandList {
                 } else {
                     vk::ImageAspectFlags::COLOR
                 };
-
-                let (src_stage, src_access) = Self::access_type_to_stage_access(prev);
-                let (dst_stage, dst_access) = Self::access_type_to_stage_access(access.access_type);
 
                 let barrier = vk::ImageMemoryBarrier::default()
                     .old_layout(old_layout)
@@ -348,23 +376,60 @@ impl RendererCommandList for CommandList {
                 as *const Framebuffer;
             let vk_framebuffer = &*vk_framebuffer;
 
-            // Convert clear values
-            let vk_clear_values: Vec<vk::ClearValue> = clear_values
-                .iter()
-                .map(|cv| match cv {
-                    ClearValue::Color(rgba) => vk::ClearValue {
-                        color: vk::ClearColorValue {
-                            float32: *rgba,
-                        },
+            // Dynamic rendering: build `VkRenderingAttachmentInfo` per
+            // attachment inline instead of a pre-baked VkRenderPass. Clear
+            // values are expected in the same order as the render pass's
+            // attachments: color_0, color_1, ..., then depth if present.
+            let color_count = vk_render_pass.color_attachments.len();
+            let has_depth = vk_render_pass.depth_stencil_attachment.is_some();
+            let has_resolve = !vk_render_pass.color_resolve_attachments.is_empty();
+
+            let mut color_rendering_infos = Vec::with_capacity(color_count);
+            for (i, color_att) in vk_render_pass.color_attachments.iter().enumerate() {
+                let clear_value = match clear_values.get(i) {
+                    Some(ClearValue::Color(rgba)) => vk::ClearValue {
+                        color: vk::ClearColorValue { float32: *rgba },
                     },
-                    ClearValue::DepthStencil { depth, stencil } => vk::ClearValue {
+                    _ => vk::ClearValue::default(),
+                };
+
+                let mut info = vk::RenderingAttachmentInfo::default()
+                    .image_view(vk_framebuffer.color_image_views[i])
+                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .load_op(Self::load_op_to_vk(color_att.load_op))
+                    .store_op(Self::store_op_to_vk(color_att.store_op))
+                    .clear_value(clear_value);
+
+                if has_resolve {
+                    info = info
+                        .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+                        .resolve_image_view(vk_framebuffer.resolve_image_views[i])
+                        .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+                }
+
+                color_rendering_infos.push(info);
+            }
+
+            let depth_rendering_info = vk_render_pass.depth_stencil_attachment.as_ref().map(|d| {
+                let clear_value = match clear_values.get(color_count) {
+                    Some(ClearValue::DepthStencil { depth, stencil }) => vk::ClearValue {
                         depth_stencil: vk::ClearDepthStencilValue {
                             depth: *depth,
                             stencil: *stencil,
                         },
                     },
-                })
-                .collect();
+                    _ => vk::ClearValue::default(),
+                };
+
+                vk::RenderingAttachmentInfo::default()
+                    .image_view(vk_framebuffer.depth_image_view.expect(
+                        "Framebuffer has no depth image view but RenderPass declared one",
+                    ))
+                    .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .load_op(Self::load_op_to_vk(d.load_op))
+                    .store_op(Self::store_op_to_vk(d.store_op))
+                    .clear_value(clear_value)
+            });
 
             let render_area = vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
@@ -374,17 +439,18 @@ impl RendererCommandList for CommandList {
                 },
             };
 
-            let render_pass_begin_info = vk::RenderPassBeginInfo::default()
-                .render_pass(vk_render_pass.render_pass)
-                .framebuffer(vk_framebuffer.framebuffer)
+            let mut rendering_info = vk::RenderingInfo::default()
                 .render_area(render_area)
-                .clear_values(&vk_clear_values);
+                .layer_count(1)
+                .color_attachments(&color_rendering_infos);
 
-            self.device.cmd_begin_render_pass(
-                self.command_buffer,
-                &render_pass_begin_info,
-                vk::SubpassContents::INLINE,
-            );
+            if let Some(ref depth_info) = depth_rendering_info {
+                rendering_info = rendering_info.depth_attachment(depth_info);
+            }
+            // Silence unused-var warning in the no-depth branch.
+            let _ = has_depth;
+
+            self.device.cmd_begin_rendering(self.command_buffer, &rendering_info);
 
             self.in_render_pass = true;
 
@@ -402,7 +468,7 @@ impl RendererCommandList for CommandList {
         }
 
         unsafe {
-            self.device.cmd_end_render_pass(self.command_buffer);
+            self.device.cmd_end_rendering(self.command_buffer);
             self.in_render_pass = false;
 
             Ok(())
