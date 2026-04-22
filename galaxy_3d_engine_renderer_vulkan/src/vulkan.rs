@@ -350,33 +350,30 @@ impl VulkanGraphicsDevice {
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to reset submit fence: {:?}", e))?;
 
-            // Collect command buffers
-            let command_buffers: Vec<vk::CommandBuffer> = commands
-                .iter()
-                .map(|cmd| {
-                    let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
-                    (&*vk_cmd).command_buffer()
-                })
-                .collect();
+            // Collect command buffers into a stack-allocated fixed-capacity
+            // array (no heap allocation per submit).
+            const MAX_CMDS: usize = 8;
+            if commands.len() > MAX_CMDS {
+                engine_bail!("galaxy3d::vulkan",
+                    "submit_with_swapchain: too many command buffers ({} > {})",
+                    commands.len(), MAX_CMDS);
+            }
+            let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
+                [vk::CommandBuffer::null(); MAX_CMDS];
+            for (i, cmd) in commands.iter().enumerate() {
+                let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
+                cmd_bufs[i] = (*vk_cmd).command_buffer();
+            }
 
-            // Submit with synchronization
-            let wait_semaphores = [wait_semaphore];
-            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let signal_semaphores = [signal_semaphore];
-
-            let submit_info = vk::SubmitInfo::default()
-                .wait_semaphores(&wait_semaphores)
-                .wait_dst_stage_mask(&wait_stages)
-                .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores);
-
-            self.device
-                .queue_submit(
-                    self.graphics_queue,
-                    &[submit_info],
-                    self.submit_fences[self.current_submit_fence],
-                )
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to submit commands to GPU queue: {:?}", e))?;
+            // Submit with synchronization (vkQueueSubmit2 via helper).
+            crate::vulkan_sync::submit_command_buffers(
+                &self.device,
+                self.graphics_queue,
+                &cmd_bufs[..commands.len()],
+                &[(wait_semaphore, vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)],
+                &[(signal_semaphore, vk::PipelineStageFlags2::ALL_COMMANDS)],
+                self.submit_fences[self.current_submit_fence],
+            )?;
 
             Ok(())
         }
@@ -1960,7 +1957,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                     .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to begin command buffer for texture upload: {:?}", e))?;
 
                 // Transition all layers: UNDEFINED → TRANSFER_DST_OPTIMAL
-                let barrier_to_transfer = vk::ImageMemoryBarrier::default()
+                let barrier_to_transfer = vk::ImageMemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -1972,17 +1973,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                         level_count: mip_levels,
                         base_array_layer: 0,
                         layer_count: array_layers,
-                    })
-                    .src_access_mask(vk::AccessFlags::empty())
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
+                    });
 
-                self.device.cmd_pipeline_barrier(
+                crate::vulkan_sync::emit_image_barriers2(
+                    &self.device,
                     command_buffer,
-                    vk::PipelineStageFlags::TOP_OF_PIPE,
-                    vk::PipelineStageFlags::TRANSFER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
                     &[barrier_to_transfer],
                 );
 
@@ -2066,7 +2061,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                             let dst_height = (desc.height >> mip).max(1);
 
                             // Transition src mip to TRANSFER_SRC_OPTIMAL
-                            let barrier_src = vk::ImageMemoryBarrier::default()
+                            let barrier_src = vk::ImageMemoryBarrier2::default()
+                                .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                                .dst_stage_mask(vk::PipelineStageFlags2::BLIT)
+                                .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
                                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                                 .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -2078,17 +2077,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                                     level_count: 1,
                                     base_array_layer: 0,
                                     layer_count: array_layers,
-                                })
-                                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                                .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
+                                });
 
-                            self.device.cmd_pipeline_barrier(
+                            crate::vulkan_sync::emit_image_barriers2(
+                                &self.device,
                                 command_buffer,
-                                vk::PipelineStageFlags::TRANSFER,
-                                vk::PipelineStageFlags::TRANSFER,
-                                vk::DependencyFlags::empty(),
-                                &[],
-                                &[],
                                 &[barrier_src],
                             );
 
@@ -2134,7 +2127,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                             );
 
                             // Transition src mip to SHADER_READ_ONLY (done with this level)
-                            let barrier_src_final = vk::ImageMemoryBarrier::default()
+                            let barrier_src_final = vk::ImageMemoryBarrier2::default()
+                                .src_stage_mask(vk::PipelineStageFlags2::BLIT)
+                                .src_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                                .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                                 .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -2146,23 +2143,21 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                                     level_count: 1,
                                     base_array_layer: 0,
                                     layer_count: array_layers,
-                                })
-                                .src_access_mask(vk::AccessFlags::TRANSFER_READ)
-                                .dst_access_mask(vk::AccessFlags::SHADER_READ);
+                                });
 
-                            self.device.cmd_pipeline_barrier(
+                            crate::vulkan_sync::emit_image_barriers2(
+                                &self.device,
                                 command_buffer,
-                                vk::PipelineStageFlags::TRANSFER,
-                                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                                vk::DependencyFlags::empty(),
-                                &[],
-                                &[],
                                 &[barrier_src_final],
                             );
                         }
 
                         // Transition last mip level to SHADER_READ_ONLY
-                        let barrier_last_mip = vk::ImageMemoryBarrier::default()
+                        let barrier_last_mip = vk::ImageMemoryBarrier2::default()
+                            .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                            .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                            .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                             .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                             .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -2174,17 +2169,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                                 level_count: 1,
                                 base_array_layer: 0,
                                 layer_count: array_layers,
-                            })
-                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+                            });
 
-                        self.device.cmd_pipeline_barrier(
+                        crate::vulkan_sync::emit_image_barriers2(
+                            &self.device,
                             command_buffer,
-                            vk::PipelineStageFlags::TRANSFER,
-                            vk::PipelineStageFlags::FRAGMENT_SHADER,
-                            vk::DependencyFlags::empty(),
-                            &[],
-                            &[],
                             &[barrier_last_mip],
                         );
                     }
@@ -2351,7 +2340,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                         }
 
                         // Transition all mip levels to SHADER_READ_ONLY
-                        let barrier_all_mips = vk::ImageMemoryBarrier::default()
+                        let barrier_all_mips = vk::ImageMemoryBarrier2::default()
+                            .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                            .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                            .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                             .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                             .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -2363,23 +2356,21 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                                 level_count: mip_levels,
                                 base_array_layer: 0,
                                 layer_count: array_layers,
-                            })
-                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+                            });
 
-                        self.device.cmd_pipeline_barrier(
+                        crate::vulkan_sync::emit_image_barriers2(
+                            &self.device,
                             command_buffer,
-                            vk::PipelineStageFlags::TRANSFER,
-                            vk::PipelineStageFlags::FRAGMENT_SHADER,
-                            vk::DependencyFlags::empty(),
-                            &[],
-                            &[],
                             &[barrier_all_mips],
                         );
                     }
                     _ => {
                         // No mipmaps or mip_levels == 1, transition all to SHADER_READ_ONLY
-                        let barrier_to_shader = vk::ImageMemoryBarrier::default()
+                        let barrier_to_shader = vk::ImageMemoryBarrier2::default()
+                            .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                            .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                            .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                             .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                             .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -2391,17 +2382,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                                 level_count: mip_levels,
                                 base_array_layer: 0,
                                 layer_count: array_layers,
-                            })
-                            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                            .dst_access_mask(vk::AccessFlags::SHADER_READ);
+                            });
 
-                        self.device.cmd_pipeline_barrier(
+                        crate::vulkan_sync::emit_image_barriers2(
+                            &self.device,
                             command_buffer,
-                            vk::PipelineStageFlags::TRANSFER,
-                            vk::PipelineStageFlags::FRAGMENT_SHADER,
-                            vk::DependencyFlags::empty(),
-                            &[],
-                            &[],
                             &[barrier_to_shader],
                         );
                     }
@@ -2411,12 +2396,14 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 self.device.end_command_buffer(command_buffer)
                     .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to end command buffer for texture upload: {:?}", e))?;
 
-                let command_buffers_submit = [command_buffer];
-                let submit_info = vk::SubmitInfo::default()
-                    .command_buffers(&command_buffers_submit);
-
-                self.device.queue_submit(self.graphics_queue, &[submit_info], vk::Fence::null())
-                    .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to submit texture upload commands to GPU: {:?}", e))?;
+                crate::vulkan_sync::submit_command_buffers(
+                    &self.device,
+                    self.graphics_queue,
+                    &[command_buffer],
+                    &[],
+                    &[],
+                    vk::Fence::null(),
+                )?;
 
                 self.device.queue_wait_idle(self.graphics_queue)
                     .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to wait for texture upload completion: {:?}", e))?;
@@ -2454,7 +2441,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 self.device.begin_command_buffer(command_buffer, &begin_info)
                     .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to begin command buffer for layout transition: {:?}", e))?;
 
-                let barrier = vk::ImageMemoryBarrier::default()
+                let barrier = vk::ImageMemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -2466,29 +2457,25 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                         level_count: mip_levels,
                         base_array_layer: 0,
                         layer_count: array_layers,
-                    })
-                    .src_access_mask(vk::AccessFlags::empty())
-                    .dst_access_mask(vk::AccessFlags::SHADER_READ);
+                    });
 
-                self.device.cmd_pipeline_barrier(
+                crate::vulkan_sync::emit_image_barriers2(
+                    &self.device,
                     command_buffer,
-                    vk::PipelineStageFlags::TOP_OF_PIPE,
-                    vk::PipelineStageFlags::FRAGMENT_SHADER,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
                     &[barrier],
                 );
 
                 self.device.end_command_buffer(command_buffer)
                     .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to end command buffer for layout transition: {:?}", e))?;
 
-                let command_buffers_submit = [command_buffer];
-                let submit_info = vk::SubmitInfo::default()
-                    .command_buffers(&command_buffers_submit);
-
-                self.device.queue_submit(self.graphics_queue, &[submit_info], vk::Fence::null())
-                    .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to submit layout transition: {:?}", e))?;
+                crate::vulkan_sync::submit_command_buffers(
+                    &self.device,
+                    self.graphics_queue,
+                    &[command_buffer],
+                    &[],
+                    &[],
+                    vk::Fence::null(),
+                )?;
 
                 self.device.queue_wait_idle(self.graphics_queue)
                     .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to wait for layout transition: {:?}", e))?;
@@ -2883,26 +2870,30 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "submit: failed to reset fence: {:?}", e))?;
 
-            // Collect command buffers
-            let command_buffers: Vec<vk::CommandBuffer> = commands
-                .iter()
-                .map(|cmd| {
-                    let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
-                    (&*vk_cmd).command_buffer()
-                })
-                .collect();
+            // Collect command buffers into a stack-allocated fixed-capacity
+            // array (no heap allocation per submit).
+            const MAX_CMDS: usize = 8;
+            if commands.len() > MAX_CMDS {
+                engine_bail!("galaxy3d::vulkan",
+                    "submit: too many command buffers ({} > {})",
+                    commands.len(), MAX_CMDS);
+            }
+            let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
+                [vk::CommandBuffer::null(); MAX_CMDS];
+            for (i, cmd) in commands.iter().enumerate() {
+                let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
+                cmd_bufs[i] = (*vk_cmd).command_buffer();
+            }
 
-            // Submit
-            let submit_info = vk::SubmitInfo::default()
-                .command_buffers(&command_buffers);
-
-            self.device
-                .queue_submit(
-                    self.graphics_queue,
-                    &[submit_info],
-                    self.submit_fences[self.current_submit_fence],
-                )
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "submit: failed to submit queue: {:?}", e))?;
+            // Submit (vkQueueSubmit2 via helper, no semaphores).
+            crate::vulkan_sync::submit_command_buffers(
+                &self.device,
+                self.graphics_queue,
+                &cmd_bufs[..commands.len()],
+                &[],
+                &[],
+                self.submit_fences[self.current_submit_fence],
+            )?;
 
             Ok(())
         }
@@ -2936,33 +2927,30 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 .reset_fences(&[self.submit_fences[self.current_submit_fence]])
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to reset submit fence (swapchain): {:?}", e))?;
 
-            // Collect command buffers
-            let command_buffers: Vec<vk::CommandBuffer> = commands
-                .iter()
-                .map(|cmd| {
-                    let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
-                    (&*vk_cmd).command_buffer()
-                })
-                .collect();
+            // Collect command buffers into a stack-allocated fixed-capacity
+            // array (no heap allocation per submit).
+            const MAX_CMDS: usize = 8;
+            if commands.len() > MAX_CMDS {
+                engine_bail!("galaxy3d::vulkan",
+                    "submit_with_swapchain: too many command buffers ({} > {})",
+                    commands.len(), MAX_CMDS);
+            }
+            let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
+                [vk::CommandBuffer::null(); MAX_CMDS];
+            for (i, cmd) in commands.iter().enumerate() {
+                let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
+                cmd_bufs[i] = (*vk_cmd).command_buffer();
+            }
 
-            // Submit with synchronization
-            let wait_semaphores = [wait_semaphore];
-            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let signal_semaphores = [signal_semaphore];
-
-            let submit_info = vk::SubmitInfo::default()
-                .wait_semaphores(&wait_semaphores)
-                .wait_dst_stage_mask(&wait_stages)
-                .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores);
-
-            self.device
-                .queue_submit(
-                    self.graphics_queue,
-                    &[submit_info],
-                    self.submit_fences[self.current_submit_fence],
-                )
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to submit commands to GPU queue (swapchain): {:?}", e))?;
+            // Submit with synchronization (vkQueueSubmit2 via helper).
+            crate::vulkan_sync::submit_command_buffers(
+                &self.device,
+                self.graphics_queue,
+                &cmd_bufs[..commands.len()],
+                &[(wait_semaphore, vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)],
+                &[(signal_semaphore, vk::PipelineStageFlags2::ALL_COMMANDS)],
+                self.submit_fences[self.current_submit_fence],
+            )?;
 
             Ok(())
         }

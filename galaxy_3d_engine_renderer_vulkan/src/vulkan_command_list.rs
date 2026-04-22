@@ -35,6 +35,12 @@ impl CommandList {
     }
 }
 
+/// Initial capacity reserved in the `CommandList` scratch buffers. Chosen so
+/// that the capacity usually covers the largest render pass the engine ever
+/// builds — past that, the `Vec` will grow once and keep its new capacity
+/// for all subsequent frames (no per-frame allocation in steady state).
+const SCRATCH_CAPACITY: usize = 8;
+
 /// Vulkan command list implementation
 ///
 /// Records rendering commands for later submission to the GPU.
@@ -53,6 +59,15 @@ pub struct CommandList {
     bound_pipeline_layout: Option<vk::PipelineLayout>,
     /// Bindless descriptor set (set 0) — bound on every bind_pipeline
     bindless_descriptor_set: vk::DescriptorSet,
+    /// Scratch buffer reused every `begin_render_pass` to collect image
+    /// barriers. Cleared before use; capacity grows to fit the largest
+    /// render pass seen so far, then stays allocated — no heap
+    /// allocation in steady state.
+    barriers_scratch: Vec<vk::ImageMemoryBarrier2<'static>>,
+    /// Scratch buffer reused every `begin_render_pass` to collect the
+    /// per-color-attachment `VkRenderingAttachmentInfo`. Same policy as
+    /// `barriers_scratch`.
+    color_infos_scratch: Vec<vk::RenderingAttachmentInfo<'static>>,
 }
 
 impl CommandList {
@@ -93,6 +108,8 @@ impl CommandList {
                 in_render_pass: false,
                 bound_pipeline_layout: None,
                 bindless_descriptor_set,
+                barriers_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
+                color_infos_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
             })
         }
     }
@@ -120,56 +137,6 @@ impl CommandList {
                 => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
             AccessType::TransferWrite
                 => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        }
-    }
-
-    /// Map an AccessType to the Vulkan pipeline stage and access flags.
-    fn access_type_to_stage_access(access: AccessType) -> (vk::PipelineStageFlags, vk::AccessFlags) {
-        match access {
-            AccessType::ColorAttachmentWrite => (
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            ),
-            AccessType::ColorAttachmentRead => (
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::AccessFlags::COLOR_ATTACHMENT_READ,
-            ),
-            AccessType::DepthStencilWrite => (
-                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            ),
-            AccessType::DepthStencilReadOnly => (
-                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
-            ),
-            AccessType::FragmentShaderRead => (
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::AccessFlags::SHADER_READ,
-            ),
-            AccessType::VertexShaderRead => (
-                vk::PipelineStageFlags::VERTEX_SHADER,
-                vk::AccessFlags::SHADER_READ,
-            ),
-            AccessType::ComputeRead => (
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::AccessFlags::SHADER_READ,
-            ),
-            AccessType::ComputeWrite => (
-                vk::PipelineStageFlags::COMPUTE_SHADER,
-                vk::AccessFlags::SHADER_WRITE,
-            ),
-            AccessType::TransferRead => (
-                vk::PipelineStageFlags::TRANSFER,
-                vk::AccessFlags::TRANSFER_READ,
-            ),
-            AccessType::TransferWrite => (
-                vk::PipelineStageFlags::TRANSFER,
-                vk::AccessFlags::TRANSFER_WRITE,
-            ),
-            AccessType::RayTracingRead => (
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::AccessFlags::SHADER_READ,
-            ),
         }
     }
 
@@ -304,21 +271,32 @@ impl RendererCommandList for CommandList {
             // now be emitted explicitly here, for ALL accesses (attachments
             // included). When `previous_access_type` is None (first use of
             // the texture in this frame) we transition from UNDEFINED.
+            //
+            // All barriers are batched into a single `vkCmdPipelineBarrier2`
+            // call (synchronization2) so the driver can combine stages and
+            // accesses optimally.
+            // Reuse the persistent scratch buffer from `self`: `clear()`
+            // resets the length to 0 while keeping the already-allocated
+            // capacity, so no heap allocation happens per frame in steady
+            // state.
+            self.barriers_scratch.clear();
+
             for access in accesses {
                 let new_layout = Self::access_type_to_layout(access.access_type);
                 let (dst_stage, dst_access) =
-                    Self::access_type_to_stage_access(access.access_type);
+                    crate::vulkan_sync::access_type_to_stage_access_2(access.access_type);
 
                 let (old_layout, src_stage, src_access) = match access.previous_access_type {
                     Some(prev) => {
                         let layout = Self::access_type_to_layout(prev);
-                        let (stage, acc) = Self::access_type_to_stage_access(prev);
+                        let (stage, acc) =
+                            crate::vulkan_sync::access_type_to_stage_access_2(prev);
                         (layout, stage, acc)
                     }
                     None => (
                         vk::ImageLayout::UNDEFINED,
-                        vk::PipelineStageFlags::TOP_OF_PIPE,
-                        vk::AccessFlags::empty(),
+                        vk::PipelineStageFlags2::NONE,
+                        vk::AccessFlags2::NONE,
                     ),
                 };
 
@@ -339,32 +317,23 @@ impl RendererCommandList for CommandList {
                     vk::ImageAspectFlags::COLOR
                 };
 
-                let barrier = vk::ImageMemoryBarrier::default()
-                    .old_layout(old_layout)
-                    .new_layout(new_layout)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(vk_texture.image)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask,
-                        base_mip_level: 0,
-                        level_count: vk::REMAINING_MIP_LEVELS,
-                        base_array_layer: 0,
-                        layer_count: vk::REMAINING_ARRAY_LAYERS,
-                    })
-                    .src_access_mask(src_access)
-                    .dst_access_mask(dst_access);
-
-                self.device.cmd_pipeline_barrier(
-                    self.command_buffer,
+                self.barriers_scratch.push(crate::vulkan_sync::image_barrier2(
+                    vk_texture.image,
+                    aspect_mask,
+                    old_layout,
+                    new_layout,
                     src_stage,
+                    src_access,
                     dst_stage,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &[barrier],
-                );
+                    dst_access,
+                ));
             }
+
+            crate::vulkan_sync::emit_image_barriers2(
+                &self.device,
+                self.command_buffer,
+                &self.barriers_scratch,
+            );
             // Downcast to Vulkan types
             let vk_render_pass = render_pass.as_ref()
                 as *const dyn RendererRenderPass
@@ -384,7 +353,9 @@ impl RendererCommandList for CommandList {
             let has_depth = vk_render_pass.depth_stencil_attachment.is_some();
             let has_resolve = !vk_render_pass.color_resolve_attachments.is_empty();
 
-            let mut color_rendering_infos = Vec::with_capacity(color_count);
+            // Same zero-alloc pattern as `barriers_scratch` above.
+            self.color_infos_scratch.clear();
+            let _ = color_count; // kept for readability above, actual count = Vec len
             for (i, color_att) in vk_render_pass.color_attachments.iter().enumerate() {
                 let clear_value = match clear_values.get(i) {
                     Some(ClearValue::Color(rgba)) => vk::ClearValue {
@@ -407,7 +378,7 @@ impl RendererCommandList for CommandList {
                         .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
                 }
 
-                color_rendering_infos.push(info);
+                self.color_infos_scratch.push(info);
             }
 
             let depth_rendering_info = vk_render_pass.depth_stencil_attachment.as_ref().map(|d| {
@@ -442,7 +413,7 @@ impl RendererCommandList for CommandList {
             let mut rendering_info = vk::RenderingInfo::default()
                 .render_area(render_area)
                 .layer_count(1)
-                .color_attachments(&color_rendering_infos);
+                .color_attachments(&self.color_infos_scratch);
 
             if let Some(ref depth_info) = depth_rendering_info {
                 rendering_info = rendering_info.depth_attachment(depth_info);

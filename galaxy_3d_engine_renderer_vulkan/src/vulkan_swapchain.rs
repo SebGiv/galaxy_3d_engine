@@ -309,46 +309,31 @@ impl RendererSwapchain for Swapchain {
 
             // Transition src: COLOR_ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL
             // Transition dst: UNDEFINED → TRANSFER_DST_OPTIMAL
+            // Both batched into a single `vkCmdPipelineBarrier2` call.
             let barriers = [
-                vk::ImageMemoryBarrier::default()
-                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(src_image)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ),
-                vk::ImageMemoryBarrier::default()
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(dst_image)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .src_access_mask(vk::AccessFlags::empty())
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE),
+                crate::vulkan_sync::image_barrier2(
+                    src_image,
+                    vk::ImageAspectFlags::COLOR,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                    vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                    vk::PipelineStageFlags2::BLIT,
+                    vk::AccessFlags2::TRANSFER_READ,
+                ),
+                crate::vulkan_sync::image_barrier2(
+                    dst_image,
+                    vk::ImageAspectFlags::COLOR,
+                    vk::ImageLayout::UNDEFINED,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    vk::PipelineStageFlags2::NONE,
+                    vk::AccessFlags2::NONE,
+                    vk::PipelineStageFlags2::BLIT,
+                    vk::AccessFlags2::TRANSFER_WRITE,
+                ),
             ];
 
-            self.device.cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[], &[], &barriers,
-            );
+            crate::vulkan_sync::emit_image_barriers2(&self.device, cb, &barriers);
 
             // Blit source texture to swapchain image
             let region = vk::ImageBlit {
@@ -393,29 +378,18 @@ impl RendererSwapchain for Swapchain {
             );
 
             // Transition dst: TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR
-            let barrier_present = vk::ImageMemoryBarrier::default()
-                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                .image(dst_image)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .dst_access_mask(vk::AccessFlags::empty());
-
-            self.device.cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                vk::DependencyFlags::empty(),
-                &[], &[], &[barrier_present],
+            let barrier_present = crate::vulkan_sync::image_barrier2(
+                dst_image,
+                vk::ImageAspectFlags::COLOR,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::PRESENT_SRC_KHR,
+                vk::PipelineStageFlags2::BLIT,
+                vk::AccessFlags2::TRANSFER_WRITE,
+                vk::PipelineStageFlags2::NONE,
+                vk::AccessFlags2::NONE,
             );
+
+            crate::vulkan_sync::emit_image_barriers2(&self.device, cb, &[barrier_present]);
 
             Ok(())
         }

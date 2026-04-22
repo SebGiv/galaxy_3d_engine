@@ -18,6 +18,7 @@ mod vulkan_shader;
 mod vulkan_pipeline;
 #[cfg(feature = "vulkan-validation")]
 mod debug;
+mod vulkan_sync;
 mod vulkan_command_list;
 mod vulkan_render_target;
 mod vulkan_render_pass;

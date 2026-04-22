@@ -136,29 +136,29 @@ impl RendererTexture for Texture {
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to begin command buffer: {:?}", e))?;
 
             // Transition single layer/mip: SHADER_READ_ONLY → TRANSFER_DST
-            let barrier_to_transfer = vk::ImageMemoryBarrier::default()
+            let sub_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: mip_level,
+                level_count: 1,
+                base_array_layer: layer,
+                layer_count: 1,
+            };
+
+            let barrier_to_transfer = vk::ImageMemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                .src_access_mask(vk::AccessFlags2::SHADER_READ)
+                .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                 .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .image(self.image)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: mip_level,
-                    level_count: 1,
-                    base_array_layer: layer,
-                    layer_count: 1,
-                })
-                .src_access_mask(vk::AccessFlags::SHADER_READ)
-                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
+                .subresource_range(sub_range);
 
-            device.cmd_pipeline_barrier(
+            crate::vulkan_sync::emit_image_barriers2(
+                device,
                 command_buffer,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
                 &[barrier_to_transfer],
             );
 
@@ -189,29 +189,21 @@ impl RendererTexture for Texture {
             );
 
             // Transition single layer/mip: TRANSFER_DST → SHADER_READ_ONLY
-            let barrier_to_shader = vk::ImageMemoryBarrier::default()
+            let barrier_to_shader = vk::ImageMemoryBarrier2::default()
+                .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                 .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .image(self.image)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: mip_level,
-                    level_count: 1,
-                    base_array_layer: layer,
-                    layer_count: 1,
-                })
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .dst_access_mask(vk::AccessFlags::SHADER_READ);
+                .subresource_range(sub_range);
 
-            device.cmd_pipeline_barrier(
+            crate::vulkan_sync::emit_image_barriers2(
+                device,
                 command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
                 &[barrier_to_shader],
             );
 
@@ -219,12 +211,14 @@ impl RendererTexture for Texture {
             device.end_command_buffer(command_buffer)
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to end command buffer: {:?}", e))?;
 
-            let command_buffers_submit = [command_buffer];
-            let submit_info = vk::SubmitInfo::default()
-                .command_buffers(&command_buffers_submit);
-
-            device.queue_submit(self.ctx.graphics_queue, &[submit_info], vk::Fence::null())
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to submit commands: {:?}", e))?;
+            crate::vulkan_sync::submit_command_buffers(
+                device,
+                self.ctx.graphics_queue,
+                &[command_buffer],
+                &[],
+                &[],
+                vk::Fence::null(),
+            )?;
 
             device.queue_wait_idle(self.ctx.graphics_queue)
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "update: failed to wait for completion: {:?}", e))?;
