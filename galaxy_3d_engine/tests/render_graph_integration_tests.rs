@@ -40,17 +40,11 @@ fn test_integration_render_graph_manager_lifecycle() {
     // Use render graph manager: create render graphs
     {
         let mut rgm = rgm_arc.lock().unwrap();
-        rgm.create_render_graph("main").unwrap();
-        rgm.create_render_graph("shadow").unwrap();
+        let main_key = rgm.create_render_graph("main", 2).unwrap();
+        rgm.create_render_graph("shadow", 2).unwrap();
         assert_eq!(rgm.render_graph_count(), 2);
-
-        // Get a render graph
-        let main_graph = rgm.render_graph("main");
-        assert!(main_graph.is_some());
-
-        // Remove a render graph
-        rgm.remove_render_graph("shadow");
-        assert_eq!(rgm.render_graph_count(), 1);
+        assert!(rgm.render_graph(main_key).is_some());
+        assert!(rgm.render_graph_by_name("main").is_some());
     }
 
     // Cleanup (order: RGM → SM → RM → graphics_devices)

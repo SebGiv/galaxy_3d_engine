@@ -11,17 +11,15 @@ use winit::window::Window;
 #[cfg(test)]
 use crate::graphics_device::{
     GraphicsDevice, Buffer, Texture, Shader, Pipeline, CommandList,
-    RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
+    RenderPass, Swapchain, BindingGroup, Framebuffer,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
     BindingResource, BindingGroupLayoutDesc,
     RenderPassDesc, FramebufferDesc, Viewport, Rect2D,
-    ClearValue, IndexType, TextureInfo, TextureUsage, ImageAccess,
+    ClearValue, IndexType, TextureInfo, ImageAccess, BufferAccess,
     PipelineReflection, DynamicRenderState, ShaderStageFlags,
 };
 #[cfg(test)]
 use crate::error::Result;
-#[cfg(test)]
-use crate::engine_bail;
 
 // ============================================================================
 // Mock Buffer
@@ -185,7 +183,8 @@ impl CommandList for MockCommandList {
         _render_pass: &Arc<dyn RenderPass>,
         _framebuffer: &Arc<dyn Framebuffer>,
         _clear_values: &[ClearValue],
-        _accesses: &[ImageAccess],
+        _image_accesses: &[ImageAccess],
+        _buffer_accesses: &[BufferAccess],
     ) -> Result<()> {
         self.commands.push("begin_render_pass".to_string());
         Ok(())
@@ -275,39 +274,6 @@ impl MockRenderPass {
 
 #[cfg(test)]
 impl RenderPass for MockRenderPass {}
-
-// ============================================================================
-// Mock RenderTarget
-// ============================================================================
-
-#[cfg(test)]
-#[derive(Debug)]
-pub struct MockRenderTarget {
-    pub width: u32,
-    pub height: u32,
-}
-
-#[cfg(test)]
-impl MockRenderTarget {
-    pub fn new(width: u32, height: u32) -> Self {
-        Self { width, height }
-    }
-}
-
-#[cfg(test)]
-impl RenderTarget for MockRenderTarget {
-    fn width(&self) -> u32 {
-        self.width
-    }
-
-    fn height(&self) -> u32 {
-        self.height
-    }
-
-    fn format(&self) -> crate::graphics_device::TextureFormat {
-        crate::graphics_device::TextureFormat::R8G8B8A8_UNORM
-    }
-}
 
 // ============================================================================
 // Mock Framebuffer
@@ -502,38 +468,6 @@ impl GraphicsDevice for MockGraphicsDevice {
 
     fn create_command_list(&self) -> Result<Box<dyn CommandList>> {
         Ok(Box::new(MockCommandList::new()))
-    }
-
-    fn create_render_target_texture(
-        &self,
-        texture: &dyn Texture,
-        layer: u32,
-        mip_level: u32,
-    ) -> Result<Arc<dyn RenderTarget>> {
-        let info = texture.info();
-        match info.usage {
-            TextureUsage::RenderTarget
-            | TextureUsage::SampledAndRenderTarget
-            | TextureUsage::DepthStencil => {}
-            _ => {
-                engine_bail!("galaxy3d::mock",
-                    "create_render_target_texture: incompatible texture usage {:?}",
-                    info.usage);
-            }
-        }
-        if layer >= info.array_layers {
-            engine_bail!("galaxy3d::mock",
-                "create_render_target_texture: layer {} out of range (array_layers = {})",
-                layer, info.array_layers);
-        }
-        if mip_level >= info.mip_levels {
-            engine_bail!("galaxy3d::mock",
-                "create_render_target_texture: mip_level {} out of range (mip_levels = {})",
-                mip_level, info.mip_levels);
-        }
-        let w = (info.width >> mip_level).max(1);
-        let h = (info.height >> mip_level).max(1);
-        Ok(Arc::new(MockRenderTarget::new(w, h)))
     }
 
     fn create_framebuffer(&self, desc: &FramebufferDesc) -> Result<Arc<dyn Framebuffer>> {

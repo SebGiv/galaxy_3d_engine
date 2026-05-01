@@ -9,7 +9,7 @@ use crate::graphics_device::{
     Buffer, Texture, Shader, Pipeline, BindingGroup,
     BufferDesc, TextureDesc, ShaderDesc, PipelineDesc,
     BindingResource, BindingGroupLayoutDesc,
-    CommandList, RenderPass, RenderTarget, Swapchain,
+    CommandList, RenderPass, Swapchain,
     RenderPassDesc,
     Framebuffer, FramebufferDesc,
 };
@@ -252,30 +252,6 @@ pub trait GraphicsDevice: Send + Sync {
     ///
     /// A boxed command list
     fn create_command_list(&self) -> Result<Box<dyn CommandList>>;
-
-    /// Create a render target from an existing texture
-    ///
-    /// Creates an image view suitable for framebuffer attachment,
-    /// targeting a specific layer and mip level of the texture.
-    /// The texture must have been created with a compatible usage
-    /// (RenderTarget, SampledAndRenderTarget, or DepthStencil).
-    ///
-    /// # Arguments
-    ///
-    /// * `texture` - The texture to create a render target from
-    /// * `layer` - Array layer index (0 for simple textures)
-    /// * `mip_level` - Mip level (0 for full resolution)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the texture usage is incompatible,
-    /// or if layer/mip_level are out of bounds.
-    fn create_render_target_texture(
-        &self,
-        texture: &dyn Texture,
-        layer: u32,
-        mip_level: u32,
-    ) -> Result<Arc<dyn RenderTarget>>;
 
     /// Create a framebuffer grouping color and depth/stencil attachments
     ///

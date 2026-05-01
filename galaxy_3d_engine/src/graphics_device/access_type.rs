@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 use super::texture::Texture;
+use super::buffer::Buffer;
 
 /// How a pass accesses a resource.
 ///
@@ -77,5 +78,22 @@ pub struct ImageAccess {
     /// How this texture is accessed in the pass
     pub access_type: AccessType,
     /// How this texture was accessed previously (None = first use)
+    pub previous_access_type: Option<AccessType>,
+}
+
+/// Per-buffer access declaration for a render pass.
+///
+/// Counterpart to `ImageAccess` for SSBO/UBO/vertex/index buffers
+/// that need an execution + memory barrier between passes (e.g. a
+/// compute pass writing a buffer that a fragment pass reads).
+///
+/// Passed to `begin_render_pass()` alongside `ImageAccess`es —
+/// the backend merges them into a single `vkCmdPipelineBarrier2`.
+pub struct BufferAccess {
+    /// The GPU buffer being accessed
+    pub buffer: Arc<dyn Buffer>,
+    /// How this buffer is accessed in the pass
+    pub access_type: AccessType,
+    /// How this buffer was accessed previously (None = first use)
     pub previous_access_type: Option<AccessType>,
 }

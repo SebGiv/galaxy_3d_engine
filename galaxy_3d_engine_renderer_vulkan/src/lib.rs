@@ -20,7 +20,6 @@ mod vulkan_pipeline;
 mod debug;
 mod vulkan_sync;
 mod vulkan_command_list;
-mod vulkan_render_target;
 mod vulkan_render_pass;
 mod vulkan_swapchain;
 mod vulkan_binding_group;
@@ -39,7 +38,6 @@ pub mod galaxy3d {
         pub use crate::vulkan_shader::Shader;
         pub use crate::vulkan_pipeline::Pipeline;
         pub use crate::vulkan_command_list::CommandList;
-        pub use crate::vulkan_render_target::RenderTarget;
         pub use crate::vulkan_render_pass::RenderPass;
         pub use crate::vulkan_swapchain::Swapchain;
         pub use crate::vulkan_binding_group::BindingGroup;

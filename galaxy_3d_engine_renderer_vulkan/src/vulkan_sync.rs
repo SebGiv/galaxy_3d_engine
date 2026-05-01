@@ -102,6 +102,58 @@ pub(crate) fn image_barrier2(
         })
 }
 
+/// Build a single `VkBufferMemoryBarrier2` for the given buffer and transition.
+///
+/// `src_queue_family` / `dst_queue_family` are set to `QUEUE_FAMILY_IGNORED`
+/// (no ownership transfer); the whole buffer range is covered.
+pub(crate) fn buffer_barrier2(
+    buffer: vk::Buffer,
+    src_stage: vk::PipelineStageFlags2,
+    src_access: vk::AccessFlags2,
+    dst_stage: vk::PipelineStageFlags2,
+    dst_access: vk::AccessFlags2,
+) -> vk::BufferMemoryBarrier2<'static> {
+    vk::BufferMemoryBarrier2::default()
+        .src_stage_mask(src_stage)
+        .src_access_mask(src_access)
+        .dst_stage_mask(dst_stage)
+        .dst_access_mask(dst_access)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .buffer(buffer)
+        .offset(0)
+        .size(vk::WHOLE_SIZE)
+}
+
+/// Emit one or more image and/or buffer barriers as a single
+/// `vkCmdPipelineBarrier2` call.
+///
+/// Prefer this entry-point over `emit_image_barriers2` when the same
+/// barrier point covers both image layout transitions and buffer
+/// memory dependencies — a single `VkDependencyInfo` lets the driver
+/// merge stages and accesses optimally.
+///
+/// Both slices may be empty; if both are empty the call is a no-op.
+///
+/// # Safety
+///
+/// The caller must ensure `cmd` is a currently-recording command buffer
+/// and `device` owns `cmd`.
+pub(crate) unsafe fn emit_barriers2(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    image_barriers: &[vk::ImageMemoryBarrier2],
+    buffer_barriers: &[vk::BufferMemoryBarrier2],
+) {
+    if image_barriers.is_empty() && buffer_barriers.is_empty() {
+        return;
+    }
+    let dependency_info = vk::DependencyInfo::default()
+        .image_memory_barriers(image_barriers)
+        .buffer_memory_barriers(buffer_barriers);
+    device.cmd_pipeline_barrier2(cmd, &dependency_info);
+}
+
 /// Emit one or more `VkImageMemoryBarrier2` as a single
 /// `vkCmdPipelineBarrier2` call.
 ///

@@ -1,12 +1,39 @@
 # Render Graph — Design Document
 
 > **Projet** : Galaxy3D Engine
-> **Date** : 2026-02-11 (mis à jour 2026-02-13)
+> **Date** : 2026-02-11 (mis à jour 2026-05-01)
 > **Statut** : Implémenté — DAG structure, RenderTargetKind (Swapchain + Texture), API spécialisées
 > **Refactoring planifié** : AccessType — barrières automatiques (voir §11)
-> **Prérequis** : SceneManager (implémenté), render::RenderTarget (trait existant), render::Swapchain (trait existant)
+> **Prérequis** : SceneManager (implémenté), render::Texture (trait existant), render::Swapchain (trait existant)
 > **Voir aussi** : [scene_design.md](scene_design.md), [pipeline_data_binding.md](pipeline_data_binding.md)
 > **Note** : Le module a été renommé de `target` à `render_graph`. Le concept de "render graph" (DAG de passes de rendu) remplace la notion initiale de "target manager". Les render targets deviennent des arêtes du graphe.
+
+---
+
+## Mise à jour 2026-05-01 — Suppression du trait `RenderTarget` bas niveau
+
+Le trait bas niveau `render::RenderTarget` (côté `graphics_device`) **n'existe plus**.
+Il était devenu une simple enveloppe autour d'un `VkImageView`, ce qui constituait une indirection superflue dans la conception : un attachment de framebuffer = une texture + un mip + une plage de layers, sans valeur ajoutée à passer par un objet intermédiaire.
+
+**Ce qui a changé** :
+- Suppression du fichier `graphics_device/render_target.rs` et de son équivalent backend Vulkan `vulkan_render_target.rs`.
+- Suppression de `GraphicsDevice::create_render_target_texture(texture, layer, mip_level)`.
+- Le `Framebuffer` (côté `graphics_device`) est désormais construit directement à partir de `Texture`s via le nouveau type `FramebufferAttachment` :
+  ```rust
+  pub struct FramebufferAttachment {
+      pub texture: Arc<dyn Texture>,
+      pub base_mip_level: u32,
+      pub base_array_layer: u32,
+      pub layer_count: u32,   // > 1 pour layered rendering (cubemap one-pass, CSM, multiview…)
+  }
+  ```
+- Côté backend Vulkan, le `Framebuffer` possède désormais les `VkImageView` qu'il a créés (un par attachment) et les détruit dans son `Drop`.
+
+**Ce qui reste** :
+- La notion conceptuelle de "target" — où l'on rend — n'a pas disparu : elle est portée par `FramebufferAttachment` (côté graphics_device) et par les `GraphResource::Texture` du render graph (côté haut niveau).
+- Le reste du document décrit toujours correctement l'architecture du **render graph haut niveau** (DAG de passes, dépendances, RenderTargetKind dans le graph, etc.). Seules les références à `renderer::RenderTarget` / `render::RenderTarget` (le trait bas niveau) sont obsolètes — y substituer mentalement `FramebufferAttachment` + `Texture`.
+
+---
 
 ---
 

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::error::Result;
 use crate::graphics_device::{
     RenderPass, Framebuffer, Pipeline, Buffer,
-    BindingGroup, IndexType, ShaderStageFlags, ImageAccess,
+    BindingGroup, IndexType, ShaderStageFlags, ImageAccess, BufferAccess,
     DynamicRenderState,
 };
 
@@ -20,21 +20,25 @@ pub trait CommandList: Send + Sync {
 
     /// Begin a render pass
     ///
-    /// The backend uses `accesses` to emit layout transitions and memory
-    /// barriers internally before starting rendering (dynamic rendering).
+    /// The backend uses `image_accesses` and `buffer_accesses` to emit
+    /// layout transitions and memory barriers internally before starting
+    /// rendering (dynamic rendering). Both lists are merged into a single
+    /// `vkCmdPipelineBarrier2` call.
     ///
     /// # Arguments
     ///
     /// * `render_pass` - The render pass to begin
     /// * `framebuffer` - The framebuffer containing color and depth/stencil attachments
     /// * `clear_values` - Clear values for attachments
-    /// * `accesses` - Per-image access declarations for automatic barrier emission
+    /// * `image_accesses` - Per-image access declarations for automatic barrier emission
+    /// * `buffer_accesses` - Per-buffer access declarations for automatic barrier emission
     fn begin_render_pass(
         &mut self,
         render_pass: &Arc<dyn RenderPass>,
         framebuffer: &Arc<dyn Framebuffer>,
         clear_values: &[ClearValue],
-        accesses: &[ImageAccess],
+        image_accesses: &[ImageAccess],
+        buffer_accesses: &[BufferAccess],
     ) -> Result<()>;
 
     /// End the current render pass

@@ -918,14 +918,20 @@ fn test_render_graph_manager_retrieval_success() {
 fn test_render_graph_manager_returned_is_usable() {
     setup();
 
+    Engine::create_graphics_device("main", MockGraphicsDevice::new()).unwrap();
     Engine::create_render_graph_manager().unwrap();
 
     let rgm = Engine::render_graph_manager().unwrap();
 
-    // Lock and use the render graph manager
+    // Lock and use the render graph manager (the manager looks up the
+    // graphics_device "main" internally — no need to lock it manually).
     let mut guard = rgm.lock().unwrap();
-    let graph = guard.create_render_graph("main");
+    let graph = guard.create_render_graph("main", 2);
     assert!(graph.is_ok());
+
+    drop(guard);
+    Engine::destroy_render_graph_manager().unwrap();
+    Engine::destroy_graphics_device("main").unwrap();
 }
 
 #[test]
@@ -1009,7 +1015,7 @@ fn test_full_engine_lifecycle_with_render_graph_manager() {
     setup();
 
     // Create all subsystems
-    let _renderer = Engine::create_graphics_device("test_full_rgm", MockGraphicsDevice::new()).unwrap();
+    let _renderer = Engine::create_graphics_device("main", MockGraphicsDevice::new()).unwrap();
     Engine::create_resource_manager().unwrap();
     Engine::create_scene_manager().unwrap();
     Engine::create_render_graph_manager().unwrap();
@@ -1018,8 +1024,8 @@ fn test_full_engine_lifecycle_with_render_graph_manager() {
     {
         let rgm = Engine::render_graph_manager().unwrap();
         let mut guard = rgm.lock().unwrap();
-        guard.create_render_graph("main").unwrap();
-        guard.create_render_graph("shadow").unwrap();
+        guard.create_render_graph("main", 2).unwrap();
+        guard.create_render_graph("shadow", 2).unwrap();
         assert_eq!(guard.render_graph_count(), 2);
     }
 
@@ -1027,7 +1033,7 @@ fn test_full_engine_lifecycle_with_render_graph_manager() {
     Engine::destroy_render_graph_manager().unwrap();
     Engine::destroy_scene_manager().unwrap();
     Engine::destroy_resource_manager().unwrap();
-    Engine::destroy_graphics_device("test_full_rgm").unwrap();
+    Engine::destroy_graphics_device("main").unwrap();
 }
 
 #[test]

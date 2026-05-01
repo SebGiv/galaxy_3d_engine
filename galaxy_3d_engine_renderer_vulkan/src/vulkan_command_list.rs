@@ -10,7 +10,7 @@ use galaxy_3d_engine::galaxy3d::render::{
     BindingGroup as RendererBindingGroup,
     Texture as RendererTexture,
     Viewport, Rect2D, ClearValue, IndexType, ShaderStageFlags,
-    ImageAccess, AccessType, TextureFormat,
+    ImageAccess, BufferAccess, AccessType, TextureFormat,
     DynamicRenderState, LoadOp, StoreOp,
     CullMode, FrontFace, CompareOp, StencilOp, ColorWriteMask,
 };
@@ -64,6 +64,9 @@ pub struct CommandList {
     /// render pass seen so far, then stays allocated — no heap
     /// allocation in steady state.
     barriers_scratch: Vec<vk::ImageMemoryBarrier2<'static>>,
+    /// Scratch buffer reused every `begin_render_pass` to collect buffer
+    /// barriers. Same zero-alloc policy as `barriers_scratch`.
+    buffer_barriers_scratch: Vec<vk::BufferMemoryBarrier2<'static>>,
     /// Scratch buffer reused every `begin_render_pass` to collect the
     /// per-color-attachment `VkRenderingAttachmentInfo`. Same policy as
     /// `barriers_scratch`.
@@ -109,6 +112,7 @@ impl CommandList {
                 bound_pipeline_layout: None,
                 bindless_descriptor_set,
                 barriers_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
+                buffer_barriers_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
                 color_infos_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
             })
         }
@@ -255,7 +259,8 @@ impl RendererCommandList for CommandList {
         render_pass: &Arc<dyn RendererRenderPass>,
         framebuffer: &Arc<dyn RendererFramebuffer>,
         clear_values: &[ClearValue],
-        accesses: &[ImageAccess],
+        image_accesses: &[ImageAccess],
+        buffer_accesses: &[BufferAccess],
     ) -> Result<()> {
         if !self.is_recording {
             engine_bail!("galaxy3d::vulkan", "begin_render_pass: command list not recording");
@@ -274,14 +279,16 @@ impl RendererCommandList for CommandList {
             //
             // All barriers are batched into a single `vkCmdPipelineBarrier2`
             // call (synchronization2) so the driver can combine stages and
-            // accesses optimally.
-            // Reuse the persistent scratch buffer from `self`: `clear()`
+            // accesses optimally. Image and buffer barriers go into the
+            // same `VkDependencyInfo`.
+            // Reuse the persistent scratch buffers from `self`: `clear()`
             // resets the length to 0 while keeping the already-allocated
             // capacity, so no heap allocation happens per frame in steady
             // state.
             self.barriers_scratch.clear();
+            self.buffer_barriers_scratch.clear();
 
-            for access in accesses {
+            for access in image_accesses {
                 let new_layout = Self::access_type_to_layout(access.access_type);
                 let (dst_stage, dst_access) =
                     crate::vulkan_sync::access_type_to_stage_access_2(access.access_type);
@@ -329,10 +336,40 @@ impl RendererCommandList for CommandList {
                 ));
             }
 
-            crate::vulkan_sync::emit_image_barriers2(
+            for access in buffer_accesses {
+                let (dst_stage, dst_access) =
+                    crate::vulkan_sync::access_type_to_stage_access_2(access.access_type);
+                let (src_stage, src_access) = match access.previous_access_type {
+                    Some(prev) => crate::vulkan_sync::access_type_to_stage_access_2(prev),
+                    // First use this frame: nothing to wait on.
+                    None => (vk::PipelineStageFlags2::NONE, vk::AccessFlags2::NONE),
+                };
+
+                // Skip when there is nothing to synchronise on (first use
+                // and no previous access).
+                if access.previous_access_type.is_none() {
+                    continue;
+                }
+
+                let vk_buffer = access.buffer.as_ref()
+                    as *const dyn RendererBuffer
+                    as *const Buffer;
+                let vk_buffer = &*vk_buffer;
+
+                self.buffer_barriers_scratch.push(crate::vulkan_sync::buffer_barrier2(
+                    vk_buffer.buffer,
+                    src_stage,
+                    src_access,
+                    dst_stage,
+                    dst_access,
+                ));
+            }
+
+            crate::vulkan_sync::emit_barriers2(
                 &self.device,
                 self.command_buffer,
                 &self.barriers_scratch,
+                &self.buffer_barriers_scratch,
             );
             // Downcast to Vulkan types
             let vk_render_pass = render_pass.as_ref()

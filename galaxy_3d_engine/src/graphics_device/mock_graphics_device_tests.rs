@@ -6,7 +6,7 @@
 use crate::graphics_device::mock_graphics_device::*;
 use crate::graphics_device::{
     GraphicsDevice, Buffer, Texture, Pipeline, CommandList,
-    RenderPass, RenderTarget, Swapchain, BindingGroup, Framebuffer,
+    RenderPass, Swapchain, BindingGroup, Framebuffer, FramebufferAttachment,
     BufferDesc, BufferUsage, TextureDesc, TextureFormat,
     TextureUsage, MipmapMode, ShaderDesc, ShaderStage, PipelineDesc,
     RenderPassDesc, FramebufferDesc,
@@ -115,7 +115,7 @@ fn test_mock_command_list_render_pass() {
     let framebuffer: Arc<dyn Framebuffer> = Arc::new(MockFramebuffer::new(800, 600));
     let clear_values = vec![ClearValue::Color([0.0, 0.0, 0.0, 1.0])];
 
-    cmd_list.begin_render_pass(&render_pass, &framebuffer, &clear_values, &[]).unwrap();
+    cmd_list.begin_render_pass(&render_pass, &framebuffer, &clear_values, &[], &[]).unwrap();
     assert_eq!(cmd_list.commands.len(), 1);
     assert_eq!(cmd_list.commands[0], "begin_render_pass");
 
@@ -229,7 +229,7 @@ fn test_mock_command_list_complete_workflow() {
 
     // Complete render workflow
     cmd_list.begin().unwrap();
-    cmd_list.begin_render_pass(&render_pass, &framebuffer, &vec![], &[]).unwrap();
+    cmd_list.begin_render_pass(&render_pass, &framebuffer, &vec![], &[], &[]).unwrap();
     cmd_list.bind_pipeline(&pipeline).unwrap();
     cmd_list.bind_vertex_buffer(&buffer, 0).unwrap();
     cmd_list.draw(6, 0).unwrap();
@@ -249,25 +249,6 @@ fn test_mock_command_list_complete_workflow() {
 fn test_mock_render_pass_creation() {
     let _render_pass = MockRenderPass::new();
     // No methods to test, just verify it exists
-}
-
-// ============================================================================
-// MockRenderTarget Tests
-// ============================================================================
-
-#[test]
-fn test_mock_render_target_creation() {
-    let render_target = MockRenderTarget::new(1920, 1080);
-    assert_eq!(render_target.width(), 1920);
-    assert_eq!(render_target.height(), 1080);
-    assert_eq!(render_target.format(), TextureFormat::R8G8B8A8_UNORM);
-}
-
-#[test]
-fn test_mock_render_target_getters() {
-    let render_target = MockRenderTarget::new(640, 480);
-    assert_eq!(render_target.width, 640);
-    assert_eq!(render_target.height, 480);
 }
 
 // ============================================================================
@@ -500,11 +481,12 @@ fn test_mock_graphics_device_create_render_pass() {
 fn test_mock_framebuffer_color_only() {
     let graphics_device = MockGraphicsDevice::new();
     let render_pass: Arc<dyn RenderPass> = Arc::new(MockRenderPass::new());
-    let color_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(800, 600));
+    let color_tex: Arc<dyn Texture> = Arc::new(MockTexture::new(
+        800, 600, 1, TextureType::Tex2D, "color".to_string()));
 
     let framebuffer = graphics_device.create_framebuffer(&FramebufferDesc {
         render_pass: &render_pass,
-        color_attachments: vec![color_rt],
+        color_attachments: vec![FramebufferAttachment::whole(color_tex)],
         depth_stencil_attachment: None,
         color_resolve_attachments: vec![],
         width: 800,
@@ -519,13 +501,15 @@ fn test_mock_framebuffer_color_only() {
 fn test_mock_framebuffer_color_and_depth_stencil() {
     let graphics_device = MockGraphicsDevice::new();
     let render_pass: Arc<dyn RenderPass> = Arc::new(MockRenderPass::new());
-    let color_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1920, 1080));
-    let depth_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1920, 1080));
+    let color_tex: Arc<dyn Texture> = Arc::new(MockTexture::new(
+        1920, 1080, 1, TextureType::Tex2D, "color".to_string()));
+    let depth_tex: Arc<dyn Texture> = Arc::new(MockTexture::new(
+        1920, 1080, 1, TextureType::Tex2D, "depth".to_string()));
 
     let framebuffer = graphics_device.create_framebuffer(&FramebufferDesc {
         render_pass: &render_pass,
-        color_attachments: vec![color_rt],
-        depth_stencil_attachment: Some(depth_rt),
+        color_attachments: vec![FramebufferAttachment::whole(color_tex)],
+        depth_stencil_attachment: Some(FramebufferAttachment::whole(depth_tex)),
         color_resolve_attachments: vec![],
         width: 1920,
         height: 1080,
@@ -539,15 +523,23 @@ fn test_mock_framebuffer_color_and_depth_stencil() {
 fn test_mock_framebuffer_multiple_color_attachments() {
     let graphics_device = MockGraphicsDevice::new();
     let render_pass: Arc<dyn RenderPass> = Arc::new(MockRenderPass::new());
-    let color_rt0: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1024, 1024));
-    let color_rt1: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1024, 1024));
-    let color_rt2: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1024, 1024));
-    let depth_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(1024, 1024));
+    let color_tex0: Arc<dyn Texture> = Arc::new(MockTexture::new(
+        1024, 1024, 1, TextureType::Tex2D, "c0".to_string()));
+    let color_tex1: Arc<dyn Texture> = Arc::new(MockTexture::new(
+        1024, 1024, 1, TextureType::Tex2D, "c1".to_string()));
+    let color_tex2: Arc<dyn Texture> = Arc::new(MockTexture::new(
+        1024, 1024, 1, TextureType::Tex2D, "c2".to_string()));
+    let depth_tex: Arc<dyn Texture> = Arc::new(MockTexture::new(
+        1024, 1024, 1, TextureType::Tex2D, "d".to_string()));
 
     let framebuffer = graphics_device.create_framebuffer(&FramebufferDesc {
         render_pass: &render_pass,
-        color_attachments: vec![color_rt0, color_rt1, color_rt2],
-        depth_stencil_attachment: Some(depth_rt),
+        color_attachments: vec![
+            FramebufferAttachment::whole(color_tex0),
+            FramebufferAttachment::whole(color_tex1),
+            FramebufferAttachment::whole(color_tex2),
+        ],
+        depth_stencil_attachment: Some(FramebufferAttachment::whole(depth_tex)),
         color_resolve_attachments: vec![],
         width: 1024,
         height: 1024,
@@ -561,11 +553,12 @@ fn test_mock_framebuffer_multiple_color_attachments() {
 fn test_mock_begin_render_pass_with_framebuffer() {
     let graphics_device = MockGraphicsDevice::new();
     let render_pass: Arc<dyn RenderPass> = Arc::new(MockRenderPass::new());
-    let color_rt: Arc<dyn RenderTarget> = Arc::new(MockRenderTarget::new(800, 600));
+    let color_tex: Arc<dyn Texture> = Arc::new(MockTexture::new(
+        800, 600, 1, TextureType::Tex2D, "color".to_string()));
 
     let framebuffer = graphics_device.create_framebuffer(&FramebufferDesc {
         render_pass: &render_pass,
-        color_attachments: vec![color_rt],
+        color_attachments: vec![FramebufferAttachment::whole(color_tex)],
         depth_stencil_attachment: None,
         color_resolve_attachments: vec![],
         width: 800,
@@ -578,6 +571,7 @@ fn test_mock_begin_render_pass_with_framebuffer() {
         &render_pass,
         &framebuffer,
         &[ClearValue::Color([0.0, 0.0, 0.0, 1.0])],
+        &[],
         &[],
     ).unwrap();
     cmd_list.end_render_pass().unwrap();
