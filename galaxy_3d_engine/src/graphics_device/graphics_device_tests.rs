@@ -256,7 +256,6 @@ fn test_debug_severity_default_is_set() {
 // ============================================================================
 
 mod plugin_registry {
-    use super::*;
     use serial_test::serial;
     use crate::graphics_device::register_graphics_device_plugin;
 
