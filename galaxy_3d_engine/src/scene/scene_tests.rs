@@ -789,3 +789,298 @@ fn test_clear_cleans_removed_instances() {
 // ============================================================================
 // Global binding group tests removed — binding groups are now owned
 // by ScenePassAction, not by Scene.
+
+// ============================================================================
+// Tests: Lights
+// ============================================================================
+
+mod lights {
+    use super::super::*;
+    use crate::scene::{LightDesc, LightType};
+    use glam::Vec3;
+    use slotmap::Key;
+
+    fn point_desc() -> LightDesc {
+        LightDesc::Point {
+            position: Vec3::ZERO,
+            color: Vec3::ONE,
+            intensity: 1.0,
+            range: 10.0,
+            attenuation_constant: 0.0,
+            attenuation_linear: 0.0,
+            attenuation_quadratic: 1.0,
+        }
+    }
+
+    fn spot_desc() -> LightDesc {
+        LightDesc::Spot {
+            position: Vec3::new(0.0, 5.0, 0.0),
+            direction: Vec3::new(0.0, -1.0, 0.0),
+            color: Vec3::new(1.0, 0.5, 0.5),
+            intensity: 2.0,
+            range: 15.0,
+            attenuation_constant: 0.0,
+            attenuation_linear: 0.0,
+            attenuation_quadratic: 1.0,
+            spot_inner_angle: 0.5,
+            spot_outer_angle: 1.0,
+        }
+    }
+
+    #[test]
+    fn test_create_light_point() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        assert!(scene.light(key).is_some());
+        assert!(scene.has_new_light(key));
+        assert_eq!(scene.new_light_count(), 1);
+    }
+
+    #[test]
+    fn test_create_light_spot() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(spot_desc());
+        let light = scene.light(key).unwrap();
+        assert_eq!(light.light_type(), LightType::Spot);
+    }
+
+    #[test]
+    fn test_create_two_lights_different_slots() {
+        let mut scene = Scene::new();
+        let k1 = scene.create_light(point_desc());
+        let k2 = scene.create_light(point_desc());
+        let l1_slot = scene.light(k1).unwrap().light_slot();
+        let l2_slot = scene.light(k2).unwrap().light_slot();
+        assert_ne!(l1_slot, l2_slot);
+    }
+
+    #[test]
+    fn test_remove_light_valid_key() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        assert!(scene.remove_light(key));
+        // Light still in scene until removed_lights() is drained.
+        assert!(scene.light(key).is_some());
+    }
+
+    #[test]
+    fn test_remove_light_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.remove_light(LightKey::null()));
+    }
+
+    #[test]
+    fn test_removed_lights_drains_and_frees_slot() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let slot = scene.light(key).unwrap().light_slot();
+        scene.remove_light(key);
+        let removed = scene.removed_lights().clone();
+        assert_eq!(removed.len(), 1);
+        assert!(scene.light(key).is_none());
+        // Slot allocator should recycle: a new light gets the freed slot.
+        let new_key = scene.create_light(point_desc());
+        assert_eq!(scene.light(new_key).unwrap().light_slot(), slot);
+    }
+
+    #[test]
+    fn test_set_light_replaces_preserving_slot() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let slot = scene.light(key).unwrap().light_slot();
+        assert!(scene.set_light(key, spot_desc()));
+        let light = scene.light(key).unwrap();
+        assert_eq!(light.light_type(), LightType::Spot);
+        assert_eq!(light.light_slot(), slot);
+    }
+
+    #[test]
+    fn test_set_light_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light(LightKey::null(), point_desc()));
+    }
+
+    #[test]
+    fn test_set_light_position_marks_dirty_transform() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let _ = scene.new_lights(); // drain new
+        assert!(scene.set_light_position(key, Vec3::new(1.0, 2.0, 3.0)));
+        assert_eq!(scene.dirty_light_transforms().len(), 1);
+        assert_eq!(scene.light(key).unwrap().position(), Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn test_set_light_position_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_position(LightKey::null(), Vec3::ZERO));
+    }
+
+    #[test]
+    fn test_set_light_direction_marks_dirty_transform() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(spot_desc());
+        let _ = scene.new_lights();
+        assert!(scene.set_light_direction(key, Vec3::new(1.0, 0.0, 0.0)));
+        assert_eq!(scene.dirty_light_transforms().len(), 1);
+    }
+
+    #[test]
+    fn test_set_light_direction_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_direction(LightKey::null(), Vec3::X));
+    }
+
+    #[test]
+    fn test_set_light_range_marks_dirty_transform() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let _ = scene.new_lights();
+        assert!(scene.set_light_range(key, 50.0));
+        assert_eq!(scene.dirty_light_transforms().len(), 1);
+        assert_eq!(scene.light(key).unwrap().range(), 50.0);
+    }
+
+    #[test]
+    fn test_set_light_range_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_range(LightKey::null(), 1.0));
+    }
+
+    #[test]
+    fn test_set_light_type_marks_dirty_transform() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let _ = scene.new_lights();
+        assert!(scene.set_light_type(key, LightType::Spot));
+        assert_eq!(scene.dirty_light_transforms().len(), 1);
+        assert_eq!(scene.light(key).unwrap().light_type(), LightType::Spot);
+    }
+
+    #[test]
+    fn test_set_light_type_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_type(LightKey::null(), LightType::Spot));
+    }
+
+    #[test]
+    fn test_set_light_color_marks_dirty_data() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let _ = scene.new_lights();
+        assert!(scene.set_light_color(key, Vec3::new(0.5, 0.6, 0.7)));
+        assert_eq!(scene.dirty_light_data().len(), 1);
+        assert_eq!(scene.light(key).unwrap().color(), Vec3::new(0.5, 0.6, 0.7));
+    }
+
+    #[test]
+    fn test_set_light_color_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_color(LightKey::null(), Vec3::ONE));
+    }
+
+    #[test]
+    fn test_set_light_intensity_marks_dirty_data() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let _ = scene.new_lights();
+        assert!(scene.set_light_intensity(key, 5.0));
+        assert_eq!(scene.dirty_light_data().len(), 1);
+        assert_eq!(scene.light(key).unwrap().intensity(), 5.0);
+    }
+
+    #[test]
+    fn test_set_light_intensity_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_intensity(LightKey::null(), 1.0));
+    }
+
+    #[test]
+    fn test_set_light_attenuation_marks_dirty_data() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let _ = scene.new_lights();
+        assert!(scene.set_light_attenuation(key, 0.1, 0.2, 0.3));
+        assert_eq!(scene.dirty_light_data().len(), 1);
+    }
+
+    #[test]
+    fn test_set_light_attenuation_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_attenuation(LightKey::null(), 0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn test_set_light_spot_angles_marks_dirty_data() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(spot_desc());
+        let _ = scene.new_lights();
+        assert!(scene.set_light_spot_angles(key, 0.3, 0.7));
+        assert_eq!(scene.dirty_light_data().len(), 1);
+    }
+
+    #[test]
+    fn test_set_light_spot_angles_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_spot_angles(LightKey::null(), 0.0, 1.0));
+    }
+
+    #[test]
+    fn test_set_light_enabled_marks_dirty_data() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let _ = scene.new_lights();
+        assert!(scene.set_light_enabled(key, false));
+        assert_eq!(scene.dirty_light_data().len(), 1);
+        assert!(!scene.light(key).unwrap().enabled());
+    }
+
+    #[test]
+    fn test_set_light_enabled_invalid_key() {
+        let mut scene = Scene::new();
+        assert!(!scene.set_light_enabled(LightKey::null(), true));
+    }
+
+    #[test]
+    fn test_remove_light_dedupes_dirty_sets() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        let _ = scene.new_lights();
+        scene.set_light_position(key, Vec3::ONE);
+        scene.set_light_intensity(key, 2.0);
+        // remove_light should clear pending dirty entries.
+        assert!(scene.remove_light(key));
+        // Front buffer flip yields empty since remove cleared them.
+        assert_eq!(scene.dirty_light_transforms().len(), 0);
+        assert_eq!(scene.dirty_light_data().len(), 0);
+    }
+
+    #[test]
+    fn test_remove_light_clears_new_set() {
+        let mut scene = Scene::new();
+        let key = scene.create_light(point_desc());
+        scene.remove_light(key);
+        // After remove, the key is not in new_lights anymore.
+        assert!(!scene.has_new_light(key));
+    }
+
+    #[test]
+    fn test_lights_iterator_yields_all() {
+        let mut scene = Scene::new();
+        scene.create_light(point_desc());
+        scene.create_light(spot_desc());
+        scene.create_light(point_desc());
+        let count = scene.lights().count();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_clear_drops_lights() {
+        let mut scene = Scene::new();
+        scene.create_light(point_desc());
+        scene.create_light(spot_desc());
+        scene.clear();
+        assert_eq!(scene.lights().count(), 0);
+        assert_eq!(scene.new_light_count(), 0);
+    }
+}

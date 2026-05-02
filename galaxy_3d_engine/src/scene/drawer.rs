@@ -309,3 +309,7 @@ impl Drawer for ForwardDrawer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "drawer_tests.rs"]
+mod tests;

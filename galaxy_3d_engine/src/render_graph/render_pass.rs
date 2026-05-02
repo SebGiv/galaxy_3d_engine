@@ -116,3 +116,7 @@ impl RenderPass {
         self.clear_values = clear_values;
     }
 }
+
+#[cfg(test)]
+#[path = "render_pass_tests.rs"]
+mod tests;

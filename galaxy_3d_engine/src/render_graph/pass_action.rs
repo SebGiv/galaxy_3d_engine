@@ -158,3 +158,7 @@ impl PassAction for ScenePassAction {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "pass_action_tests.rs"]
+mod tests;

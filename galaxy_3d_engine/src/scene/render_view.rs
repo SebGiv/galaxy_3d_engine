@@ -110,3 +110,7 @@ impl RenderView {
         self.items.clear();
     }
 }
+
+#[cfg(test)]
+#[path = "render_view_tests.rs"]
+mod tests;

@@ -587,3 +587,289 @@ fn test_free_draw_slots() {
     assert_eq!(alloc.len(), 0);
     assert_eq!(alloc.high_water_mark(), 3);
 }
+
+// ============================================================================
+// AABB primitive tests
+// ============================================================================
+
+mod aabb_geometry {
+    use super::*;
+    use glam::{Vec3, Mat4};
+
+    fn unit_aabb() -> AABB {
+        AABB { min: Vec3::new(-1.0, -1.0, -1.0), max: Vec3::new(1.0, 1.0, 1.0) }
+    }
+
+    #[test]
+    fn test_aabb_center_at_origin() {
+        let a = unit_aabb();
+        assert_eq!(a.center(), Vec3::ZERO);
+    }
+
+    #[test]
+    fn test_aabb_center_offset() {
+        let a = AABB { min: Vec3::new(0.0, 0.0, 0.0), max: Vec3::new(2.0, 4.0, 6.0) };
+        assert_eq!(a.center(), Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn test_aabb_contains_self() {
+        let a = unit_aabb();
+        assert!(a.contains(&a));
+    }
+
+    #[test]
+    fn test_aabb_contains_inner() {
+        let outer = unit_aabb();
+        let inner = AABB { min: Vec3::new(-0.5, -0.5, -0.5), max: Vec3::new(0.5, 0.5, 0.5) };
+        assert!(outer.contains(&inner));
+    }
+
+    #[test]
+    fn test_aabb_does_not_contain_partial_overlap() {
+        let outer = unit_aabb();
+        let other = AABB { min: Vec3::new(0.5, 0.5, 0.5), max: Vec3::new(2.0, 2.0, 2.0) };
+        assert!(!outer.contains(&other));
+    }
+
+    #[test]
+    fn test_aabb_does_not_contain_disjoint() {
+        let a = unit_aabb();
+        let b = AABB { min: Vec3::new(10.0, 10.0, 10.0), max: Vec3::new(11.0, 11.0, 11.0) };
+        assert!(!a.contains(&b));
+    }
+
+    #[test]
+    fn test_aabb_intersects_overlapping() {
+        let a = unit_aabb();
+        let b = AABB { min: Vec3::new(0.5, 0.5, 0.5), max: Vec3::new(2.0, 2.0, 2.0) };
+        assert!(a.intersects(&b));
+    }
+
+    #[test]
+    fn test_aabb_intersects_touching() {
+        let a = unit_aabb();
+        let b = AABB { min: Vec3::new(1.0, 0.0, 0.0), max: Vec3::new(2.0, 0.5, 0.5) };
+        assert!(a.intersects(&b));
+    }
+
+    #[test]
+    fn test_aabb_does_not_intersect_disjoint() {
+        let a = unit_aabb();
+        let b = AABB { min: Vec3::new(5.0, 5.0, 5.0), max: Vec3::new(6.0, 6.0, 6.0) };
+        assert!(!a.intersects(&b));
+    }
+
+    #[test]
+    fn test_aabb_closest_point_inside_returns_point() {
+        let a = unit_aabb();
+        let p = Vec3::new(0.3, -0.4, 0.5);
+        assert_eq!(a.closest_point(p), p);
+    }
+
+    #[test]
+    fn test_aabb_closest_point_outside_clamps() {
+        let a = unit_aabb();
+        let p = Vec3::new(5.0, -5.0, 0.5);
+        assert_eq!(a.closest_point(p), Vec3::new(1.0, -1.0, 0.5));
+    }
+
+    #[test]
+    fn test_aabb_transformed_identity_unchanged() {
+        let a = unit_aabb();
+        let t = a.transformed(&Mat4::IDENTITY);
+        assert_eq!(t.min, a.min);
+        assert_eq!(t.max, a.max);
+    }
+
+    #[test]
+    fn test_aabb_transformed_translation() {
+        let a = unit_aabb();
+        let t = a.transformed(&Mat4::from_translation(Vec3::new(10.0, 0.0, 0.0)));
+        assert_eq!(t.min, Vec3::new(9.0, -1.0, -1.0));
+        assert_eq!(t.max, Vec3::new(11.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn test_aabb_transformed_scale_grows_extents() {
+        let a = unit_aabb();
+        let t = a.transformed(&Mat4::from_scale(Vec3::new(2.0, 3.0, 4.0)));
+        assert_eq!(t.min, Vec3::new(-2.0, -3.0, -4.0));
+        assert_eq!(t.max, Vec3::new(2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn test_aabb_clone_copy() {
+        let a = unit_aabb();
+        let b = a;
+        let c = a.clone();
+        assert_eq!(b.min, a.min);
+        assert_eq!(c.max, a.max);
+    }
+}
+
+// ============================================================================
+// Render instance flags / pass control / cached pipeline
+// ============================================================================
+
+mod flags_and_passes {
+    use super::*;
+
+    fn make_instance() -> RenderInstance {
+        let mut res = create_test_resources();
+        let mesh_key = create_simple_mesh_key(&mut res);
+        let mesh = res.rm.mesh(mesh_key).unwrap();
+        let mut alloc = SlotAllocator::new();
+        RenderInstance::from_mesh(
+            mesh, Mat4::IDENTITY, create_test_aabb(),
+            res.vertex_shader_key, &[], &mut alloc, &res.rm,
+        ).unwrap()
+    }
+
+    #[test]
+    fn test_set_flags_replaces_value() {
+        let mut inst = make_instance();
+        inst.set_flags(0xFF);
+        assert_eq!(inst.flags(), 0xFF);
+    }
+
+    #[test]
+    fn test_set_visible_true_then_false() {
+        let mut inst = make_instance();
+        inst.set_visible(false);
+        assert!(!inst.is_visible());
+        inst.set_visible(true);
+        assert!(inst.is_visible());
+    }
+
+    #[test]
+    fn test_set_world_matrix_round_trips() {
+        let mut inst = make_instance();
+        let m = Mat4::from_translation(Vec3::new(7.0, 8.0, 9.0));
+        inst.set_world_matrix(m);
+        assert_eq!(*inst.world_matrix(), m);
+    }
+
+    #[test]
+    fn test_geometry_and_mesh_id_accessors() {
+        let inst = make_instance();
+        let _ = inst.geometry();
+        let _ = inst.geometry_mesh_id();
+    }
+
+    #[test]
+    fn test_sub_mesh_count_matches_setup() {
+        let inst = make_instance();
+        assert!(inst.sub_mesh_count() >= 1);
+    }
+
+    #[test]
+    fn test_sub_mesh_out_of_bounds_returns_none() {
+        let inst = make_instance();
+        let count = inst.sub_mesh_count();
+        assert!(inst.sub_mesh(count).is_none());
+        assert!(inst.sub_mesh(count + 100).is_none());
+    }
+
+    #[test]
+    fn test_pass_mask_default_active_for_pass_zero() {
+        let inst = make_instance();
+        let sm = inst.sub_mesh(0).unwrap();
+        assert_ne!(sm.pass_mask(), 0);
+        assert!(sm.has_pass(0));
+        assert!(sm.is_pass_active(0));
+    }
+
+    #[test]
+    fn test_set_pass_mask_replaces() {
+        let mut inst = make_instance();
+        let sm = inst.sub_mesh_mut(0).unwrap();
+        sm.set_pass_mask(0xAB);
+        assert_eq!(sm.pass_mask(), 0xAB);
+    }
+
+    #[test]
+    fn test_enable_pass_sets_bit() {
+        let mut inst = make_instance();
+        let sm = inst.sub_mesh_mut(0).unwrap();
+        sm.set_pass_mask(0);
+        sm.enable_pass(3);
+        assert!(sm.is_pass_active(3));
+    }
+
+    #[test]
+    fn test_disable_pass_clears_bit() {
+        let mut inst = make_instance();
+        let sm = inst.sub_mesh_mut(0).unwrap();
+        sm.enable_pass(5);
+        sm.disable_pass(5);
+        assert!(!sm.is_pass_active(5));
+    }
+
+    #[test]
+    fn test_pass_by_index_zero_exists() {
+        let inst = make_instance();
+        let sm = inst.sub_mesh(0).unwrap();
+        assert!(sm.pass_by_index(0).is_some());
+    }
+
+    #[test]
+    fn test_pass_by_index_out_of_bounds() {
+        let inst = make_instance();
+        let sm = inst.sub_mesh(0).unwrap();
+        let count = sm.pass_count();
+        assert!(sm.pass_by_index(count).is_none());
+    }
+
+    #[test]
+    fn test_pass_for_type_zero_exists() {
+        let inst = make_instance();
+        let sm = inst.sub_mesh(0).unwrap();
+        assert!(sm.pass(0).is_some());
+    }
+
+    #[test]
+    fn test_pass_mut_for_type_zero_exists() {
+        let mut inst = make_instance();
+        let sm = inst.sub_mesh_mut(0).unwrap();
+        assert!(sm.pass_mut(0).is_some());
+    }
+
+    #[test]
+    fn test_pass_for_unknown_type_returns_none() {
+        let inst = make_instance();
+        let sm = inst.sub_mesh(0).unwrap();
+        // pass_type 5 is in range but not active on this material (only 0 active).
+        assert!(sm.pass(5).is_none());
+    }
+
+    #[test]
+    fn test_cached_pipeline_initially_none() {
+        let inst = make_instance();
+        let sm = inst.sub_mesh(0).unwrap();
+        let pass = sm.pass_by_index(0).unwrap();
+        assert!(pass.cached_pipeline_key().is_none());
+    }
+
+    #[test]
+    fn test_set_cached_pipeline_then_validate() {
+        use crate::resource::resource_manager::PipelineKey;
+        let mut inst = make_instance();
+        let sm = inst.sub_mesh_mut(0).unwrap();
+        let pass = sm.pass_by_index_mut(0).unwrap();
+        let pk = PipelineKey::default();
+        pass.set_cached_pipeline(pk, 5, 7);
+        assert_eq!(pass.cached_pipeline_key(), Some(pk));
+        assert!(pass.is_pipeline_valid(5, 7));
+        assert!(!pass.is_pipeline_valid(6, 7));
+        assert!(!pass.is_pipeline_valid(5, 8));
+    }
+
+    #[test]
+    fn test_current_lod_default_zero() {
+        let inst = make_instance();
+        let sm = inst.sub_mesh(0).unwrap();
+        let pass = sm.pass_by_index(0).unwrap();
+        assert_eq!(pass.current_lod(), 0);
+    }
+}

@@ -516,3 +516,7 @@ fn closest_point_on_segment(a: Vec3, b: Vec3, p: Vec3) -> (Vec3, f32) {
     let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
     (a + ab * t, t)
 }
+
+#[cfg(test)]
+#[path = "updater_tests.rs"]
+mod tests;

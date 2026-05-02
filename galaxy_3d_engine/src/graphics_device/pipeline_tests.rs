@@ -377,3 +377,244 @@ fn test_vertex_attribute_copy() {
     assert_eq!(attr1.location, attr2.location);
     assert_eq!(attr1.location, 0); // Can still use attr1
 }
+
+// ============================================================================
+// Default impls / value type tests
+// ============================================================================
+
+mod defaults_and_keys {
+    use crate::graphics_device::{
+        ColorWriteMask, RasterizationState, ColorBlendState, MultisampleState,
+        StencilOpState, DynamicRenderState, DynamicRenderStateKey,
+        PolygonMode, CullMode, FrontFace, CompareOp, StencilOp, BlendFactor, BlendOp,
+        SampleCount, PipelineReflection, PipelineSignatureKey,
+        ReflectedBinding, ReflectedPushConstant, BindingType, ShaderStageFlags,
+    };
+
+    #[test]
+    fn test_color_write_mask_all_constant() {
+        assert!(ColorWriteMask::ALL.r);
+        assert!(ColorWriteMask::ALL.g);
+        assert!(ColorWriteMask::ALL.b);
+        assert!(ColorWriteMask::ALL.a);
+    }
+
+    #[test]
+    fn test_color_write_mask_none_constant() {
+        assert!(!ColorWriteMask::NONE.r);
+        assert!(!ColorWriteMask::NONE.g);
+        assert!(!ColorWriteMask::NONE.b);
+        assert!(!ColorWriteMask::NONE.a);
+    }
+
+    #[test]
+    fn test_color_write_mask_default_is_all() {
+        assert_eq!(ColorWriteMask::default(), ColorWriteMask::ALL);
+    }
+
+    #[test]
+    fn test_rasterization_state_default() {
+        let r = RasterizationState::default();
+        assert_eq!(r.polygon_mode, PolygonMode::Fill);
+        assert!(!r.depth_clamp_enable);
+        assert!(r.depth_clip_enable);
+    }
+
+    #[test]
+    fn test_color_blend_state_default() {
+        let c = ColorBlendState::default();
+        assert!(!c.blend_enable);
+        assert_eq!(c.src_color_factor, BlendFactor::One);
+        assert_eq!(c.dst_color_factor, BlendFactor::Zero);
+        assert_eq!(c.color_blend_op, BlendOp::Add);
+        assert!(c.color_write_enable);
+    }
+
+    #[test]
+    fn test_multisample_state_default() {
+        let m = MultisampleState::default();
+        assert_eq!(m.sample_count, SampleCount::S1);
+        assert!(!m.alpha_to_coverage_enable);
+    }
+
+    #[test]
+    fn test_stencil_op_state_default() {
+        let s = StencilOpState::default();
+        assert_eq!(s.fail_op, StencilOp::Keep);
+        assert_eq!(s.pass_op, StencilOp::Keep);
+        assert_eq!(s.depth_fail_op, StencilOp::Keep);
+        assert_eq!(s.compare_op, CompareOp::Always);
+        assert_eq!(s.compare_mask, 0xFF);
+        assert_eq!(s.write_mask, 0xFF);
+        assert_eq!(s.reference, 0);
+    }
+
+    #[test]
+    fn test_dynamic_render_state_default() {
+        let d = DynamicRenderState::default();
+        assert_eq!(d.cull_mode, CullMode::Back);
+        assert_eq!(d.front_face, FrontFace::CounterClockwise);
+        assert!(d.depth_test_enable);
+        assert!(d.depth_write_enable);
+        assert_eq!(d.depth_compare_op, CompareOp::Less);
+        assert!(!d.depth_bias_enable);
+        assert!(!d.depth_bounds_test_enable);
+        assert_eq!(d.depth_bounds_min, 0.0);
+        assert_eq!(d.depth_bounds_max, 1.0);
+        assert!(!d.stencil_test_enable);
+        assert_eq!(d.blend_constants, [0.0; 4]);
+    }
+
+    #[test]
+    fn test_dynamic_render_state_key_from_default_state() {
+        let s = DynamicRenderState::default();
+        let k = DynamicRenderStateKey::from(&s);
+        let k2 = DynamicRenderStateKey::from(&s);
+        assert_eq!(k, k2);
+    }
+
+    #[test]
+    fn test_dynamic_render_state_key_diff_when_state_diff() {
+        let mut s1 = DynamicRenderState::default();
+        let mut s2 = DynamicRenderState::default();
+        s1.cull_mode = CullMode::Front;
+        s2.cull_mode = CullMode::Back;
+        let k1 = DynamicRenderStateKey::from(&s1);
+        let k2 = DynamicRenderStateKey::from(&s2);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn test_dynamic_render_state_key_handles_blend_constants_bits() {
+        let mut s = DynamicRenderState::default();
+        s.blend_constants = [0.5, 0.25, 0.125, 0.0625];
+        let k1 = DynamicRenderStateKey::from(&s);
+        s.blend_constants = [0.5, 0.25, 0.125, 0.0625];
+        let k2 = DynamicRenderStateKey::from(&s);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn test_pipeline_reflection_empty() {
+        let r = PipelineReflection::empty();
+        assert_eq!(r.binding_count(), 0);
+        assert_eq!(r.bindings().len(), 0);
+        assert_eq!(r.push_constants().len(), 0);
+        assert_eq!(r.push_constant_count(), 0);
+        assert!(r.binding(0).is_none());
+        assert!(r.binding_by_name("anything").is_none());
+        assert!(r.binding_index("anything").is_none());
+    }
+
+    #[test]
+    fn test_pipeline_reflection_new_with_bindings() {
+        let bindings = vec![
+            ReflectedBinding {
+                name: "Camera".to_string(),
+                set: 0, binding: 0,
+                binding_type: BindingType::UniformBuffer,
+                stage_flags: ShaderStageFlags::VERTEX,
+                members: vec![],
+            },
+            ReflectedBinding {
+                name: "AlbedoTex".to_string(),
+                set: 1, binding: 0,
+                binding_type: BindingType::CombinedImageSampler,
+                stage_flags: ShaderStageFlags::FRAGMENT,
+                members: vec![],
+            },
+        ];
+        let r = PipelineReflection::new(bindings, vec![]);
+        assert_eq!(r.binding_count(), 2);
+        assert!(r.binding(0).is_some());
+        assert!(r.binding(1).is_some());
+        assert!(r.binding(2).is_none());
+        assert_eq!(r.binding_by_name("Camera").unwrap().set, 0);
+        assert_eq!(r.binding_by_name("AlbedoTex").unwrap().set, 1);
+        assert!(r.binding_by_name("Missing").is_none());
+        assert_eq!(r.binding_index("Camera"), Some(0));
+        assert_eq!(r.binding_index("AlbedoTex"), Some(1));
+        assert_eq!(r.binding_index("Missing"), None);
+    }
+
+    #[test]
+    fn test_pipeline_reflection_new_with_push_constants() {
+        let pc = ReflectedPushConstant {
+            name: "PushBlock".to_string(),
+            stage_flags: ShaderStageFlags::VERTEX_FRAGMENT,
+            size: Some(64),
+            members: vec![],
+        };
+        let r = PipelineReflection::new(vec![], vec![pc]);
+        assert_eq!(r.push_constant_count(), 1);
+        assert_eq!(r.push_constants().len(), 1);
+        assert_eq!(r.push_constants()[0].name, "PushBlock");
+        assert_eq!(r.push_constants()[0].size, Some(64));
+    }
+
+    #[test]
+    fn test_pipeline_signature_key_from_empty_reflection() {
+        let r = PipelineReflection::empty();
+        let k = PipelineSignatureKey::from_reflection(&r);
+        assert_eq!(k.descriptor_sets.len(), 0);
+        assert_eq!(k.push_constant_ranges.len(), 0);
+    }
+
+    #[test]
+    fn test_pipeline_signature_key_groups_bindings_by_set() {
+        let bindings = vec![
+            ReflectedBinding {
+                name: "A".to_string(), set: 0, binding: 1,
+                binding_type: BindingType::UniformBuffer,
+                stage_flags: ShaderStageFlags::VERTEX, members: vec![],
+            },
+            ReflectedBinding {
+                name: "B".to_string(), set: 0, binding: 0,
+                binding_type: BindingType::UniformBuffer,
+                stage_flags: ShaderStageFlags::FRAGMENT, members: vec![],
+            },
+            ReflectedBinding {
+                name: "C".to_string(), set: 2, binding: 0,
+                binding_type: BindingType::CombinedImageSampler,
+                stage_flags: ShaderStageFlags::FRAGMENT, members: vec![],
+            },
+        ];
+        let r = PipelineReflection::new(bindings, vec![]);
+        let k = PipelineSignatureKey::from_reflection(&r);
+        assert_eq!(k.descriptor_sets.len(), 2);
+        assert_eq!(k.descriptor_sets[0].set, 0);
+        assert_eq!(k.descriptor_sets[1].set, 2);
+        assert_eq!(k.descriptor_sets[0].bindings[0].binding, 0);
+        assert_eq!(k.descriptor_sets[0].bindings[1].binding, 1);
+    }
+
+    #[test]
+    fn test_pipeline_signature_key_includes_push_constants() {
+        let r = PipelineReflection::new(vec![], vec![
+            ReflectedPushConstant {
+                name: "PC".to_string(),
+                stage_flags: ShaderStageFlags::VERTEX,
+                size: Some(32),
+                members: vec![],
+            },
+        ]);
+        let k = PipelineSignatureKey::from_reflection(&r);
+        assert_eq!(k.push_constant_ranges.len(), 1);
+        assert_eq!(k.push_constant_ranges[0].size, 32);
+    }
+
+    #[test]
+    fn test_pipeline_signature_key_equal_for_identical_reflections() {
+        let make_r = || PipelineReflection::new(
+            vec![ReflectedBinding {
+                name: "A".to_string(), set: 0, binding: 0,
+                binding_type: BindingType::UniformBuffer,
+                stage_flags: ShaderStageFlags::VERTEX, members: vec![],
+            }],
+            vec![],
+        );
+        let k1 = PipelineSignatureKey::from_reflection(&make_r());
+        let k2 = PipelineSignatureKey::from_reflection(&make_r());
+        assert_eq!(k1, k2);
+    }
+}

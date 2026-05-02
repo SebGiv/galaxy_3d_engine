@@ -448,3 +448,7 @@ where
         .unwrap()
         .register_plugin(name, factory);
 }
+
+#[cfg(test)]
+#[path = "graphics_device_tests.rs"]
+mod tests;

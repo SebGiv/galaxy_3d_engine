@@ -81,3 +81,7 @@ pub struct FramebufferDesc<'a> {
     /// Height in pixels
     pub height: u32,
 }
+
+#[cfg(test)]
+#[path = "frame_buffer_tests.rs"]
+mod tests;

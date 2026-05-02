@@ -108,3 +108,7 @@ pub trait BindingGroup: Send + Sync {
     /// Returns the set index this BindingGroup was created for
     fn set_index(&self) -> u32;
 }
+
+#[cfg(test)]
+#[path = "binding_group_tests.rs"]
+mod tests;

@@ -97,3 +97,7 @@ pub struct BufferAccess {
     /// How this buffer was accessed previously (None = first use)
     pub previous_access_type: Option<AccessType>,
 }
+
+#[cfg(test)]
+#[path = "access_type_tests.rs"]
+mod tests;

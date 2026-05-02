@@ -309,3 +309,7 @@ impl RenderGraph {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "render_graph_tests.rs"]
+mod tests;

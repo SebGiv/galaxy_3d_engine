@@ -74,3 +74,7 @@ pub(crate) struct FramebufferLookupKey {
     pub color_attachments: Vec<ColorAttachmentSlot>,
     pub depth_stencil_attachment: Option<GraphResourceKey>,
 }
+
+#[cfg(test)]
+#[path = "frame_buffer_tests.rs"]
+mod tests;

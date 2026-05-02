@@ -1977,3 +1977,163 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
 
     assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
 }
+
+// ============================================================================
+// Buffer accessor + remove paths
+// ============================================================================
+
+mod buffer_api {
+    use super::*;
+
+    fn make_simple_buffer_desc(
+        gd: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
+    ) -> BufferDesc {
+        BufferDesc {
+            graphics_device: gd,
+            kind: BufferKind::Uniform,
+            fields: vec![
+                FieldDesc { name: "value".to_string(), field_type: FieldType::Float },
+            ],
+            count: 1,
+        }
+    }
+
+    #[test]
+    fn test_create_buffer_returns_key() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        let key = rm.create_buffer("buf_a".to_string(), make_simple_buffer_desc(gd)).unwrap();
+        assert!(rm.buffer(key).is_some());
+        assert_eq!(rm.buffer_count(), 1);
+    }
+
+    #[test]
+    fn test_buffer_by_name_lookup() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        rm.create_buffer("buf_b".to_string(), make_simple_buffer_desc(gd)).unwrap();
+        assert!(rm.buffer_by_name("buf_b").is_some());
+        assert!(rm.buffer_by_name("missing").is_none());
+    }
+
+    #[test]
+    fn test_buffer_key_lookup() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        let key = rm.create_buffer("buf_c".to_string(), make_simple_buffer_desc(gd)).unwrap();
+        assert_eq!(rm.buffer_key("buf_c"), Some(key));
+        assert!(rm.buffer_key("missing").is_none());
+    }
+
+    #[test]
+    fn test_buffer_count_grows() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        assert_eq!(rm.buffer_count(), 0);
+        rm.create_buffer("a".to_string(), make_simple_buffer_desc(gd.clone())).unwrap();
+        rm.create_buffer("b".to_string(), make_simple_buffer_desc(gd.clone())).unwrap();
+        rm.create_buffer("c".to_string(), make_simple_buffer_desc(gd)).unwrap();
+        assert_eq!(rm.buffer_count(), 3);
+    }
+
+    #[test]
+    fn test_remove_buffer_by_name_existing() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        rm.create_buffer("b1".to_string(), make_simple_buffer_desc(gd)).unwrap();
+        assert!(rm.remove_buffer("b1"));
+        assert_eq!(rm.buffer_count(), 0);
+        assert!(rm.buffer_by_name("b1").is_none());
+    }
+
+    #[test]
+    fn test_remove_buffer_by_name_unknown_returns_false() {
+        let mut rm = ResourceManager::new();
+        assert!(!rm.remove_buffer("nope"));
+    }
+
+    #[test]
+    fn test_create_default_material_buffer() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        let key = rm.create_default_material_buffer("mat_buf".to_string(), gd, 16).unwrap();
+        assert!(rm.buffer(key).is_some());
+    }
+
+    #[test]
+    fn test_create_default_light_buffer() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        let key = rm.create_default_light_buffer("light_buf".to_string(), gd, 32).unwrap();
+        assert!(rm.buffer(key).is_some());
+    }
+
+    #[test]
+    fn test_create_default_frame_uniform_buffer() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        let key = rm.create_default_frame_uniform_buffer("frame".to_string(), gd).unwrap();
+        assert!(rm.buffer(key).is_some());
+    }
+
+    #[test]
+    fn test_create_default_instance_buffer() {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        let mut rm = ResourceManager::new();
+        let key = rm.create_default_instance_buffer("inst".to_string(), gd, 8).unwrap();
+        assert!(rm.buffer(key).is_some());
+    }
+}
+
+// ============================================================================
+// Texture accessor coverage
+// ============================================================================
+
+mod texture_accessors {
+    use super::*;
+    use crate::resource::texture::{TextureDesc as ResTextureDesc, LayerDesc};
+
+    fn create_a_texture(rm: &mut ResourceManager, name: &str) -> crate::resource::resource_manager::TextureKey {
+        let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+        rm.create_texture(name.to_string(), ResTextureDesc {
+            graphics_device: gd,
+            texture: graphics_device::TextureDesc {
+                width: 32, height: 32,
+                format: graphics_device::TextureFormat::R8G8B8A8_UNORM,
+                usage: graphics_device::TextureUsage::Sampled,
+                texture_type: graphics_device::TextureType::Tex2D,
+                sample_count: graphics_device::SampleCount::S1,
+                array_layers: 1,
+                data: None,
+                mipmap: graphics_device::MipmapMode::None,
+            },
+            layers: vec![LayerDesc { name: "default".to_string(), layer_index: 0, data: None, regions: vec![] }],
+        }).unwrap()
+    }
+
+    #[test]
+    fn test_texture_by_name_existing() {
+        let mut rm = ResourceManager::new();
+        create_a_texture(&mut rm, "tex_x");
+        assert!(rm.texture_by_name("tex_x").is_some());
+        assert!(rm.texture_by_name("missing").is_none());
+    }
+
+    #[test]
+    fn test_texture_key_lookup() {
+        let mut rm = ResourceManager::new();
+        let key = create_a_texture(&mut rm, "tex_y");
+        assert_eq!(rm.texture_key("tex_y"), Some(key));
+        assert!(rm.texture_key("missing").is_none());
+    }
+
+    #[test]
+    fn test_remove_texture_by_key() {
+        let mut rm = ResourceManager::new();
+        let key = create_a_texture(&mut rm, "tex_remove");
+        assert!(rm.remove_texture(key));
+        assert!(rm.texture(key).is_none());
+        // Remove again returns false (key already gone).
+        assert!(!rm.remove_texture(key));
+    }
+}

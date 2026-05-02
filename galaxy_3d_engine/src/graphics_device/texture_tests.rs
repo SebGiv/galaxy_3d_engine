@@ -388,3 +388,102 @@ fn test_texture_info_mip_byte_size_depth_format() {
     // Level 2: 128x128x2 = 32,768 bytes
     assert_eq!(info.mip_byte_size(2), Some(32_768));
 }
+
+// ============================================================================
+// SamplerType / TextureType / TextureUsage / TextureInfo extras
+// ============================================================================
+
+#[test]
+fn test_sampler_type_equality_for_each_variant() {
+    use crate::graphics_device::SamplerType;
+    assert_eq!(SamplerType::LinearRepeat, SamplerType::LinearRepeat);
+    assert_ne!(SamplerType::LinearRepeat, SamplerType::LinearClamp);
+    assert_ne!(SamplerType::LinearClamp, SamplerType::NearestRepeat);
+    assert_ne!(SamplerType::NearestRepeat, SamplerType::NearestClamp);
+    assert_ne!(SamplerType::Shadow, SamplerType::Anisotropic);
+}
+
+#[test]
+fn test_sampler_type_clone_copy_hash() {
+    use std::collections::HashSet;
+    use crate::graphics_device::SamplerType;
+    let s = SamplerType::LinearRepeat;
+    let t = s;
+    let _u = s.clone();
+    let mut set = HashSet::new();
+    set.insert(s);
+    set.insert(t);
+    set.insert(SamplerType::Shadow);
+    assert_eq!(set.len(), 2);
+}
+
+#[test]
+fn test_texture_type_clone_copy_eq() {
+    use crate::graphics_device::TextureType;
+    let a = TextureType::Tex2D;
+    let b = a;
+    assert_eq!(a, b);
+    assert_ne!(TextureType::Tex2D, TextureType::Array2D);
+}
+
+#[test]
+fn test_texture_usage_clone_copy_eq() {
+    use crate::graphics_device::TextureUsage;
+    assert_eq!(TextureUsage::Sampled, TextureUsage::Sampled);
+    assert_ne!(TextureUsage::Sampled, TextureUsage::RenderTarget);
+    assert_ne!(TextureUsage::RenderTarget, TextureUsage::DepthStencil);
+    assert_ne!(TextureUsage::SampledAndRenderTarget, TextureUsage::DepthStencil);
+}
+
+#[test]
+fn test_texture_info_new_constructor() {
+    let info = TextureInfo::new(
+        128, 64,
+        TextureFormat::R8G8B8A8_UNORM,
+        TextureUsage::SampledAndRenderTarget,
+        2, 3,
+        TextureType::Array2D,
+        SampleCount::S4,
+    );
+    assert_eq!(info.width, 128);
+    assert_eq!(info.height, 64);
+    assert_eq!(info.format, TextureFormat::R8G8B8A8_UNORM);
+    assert_eq!(info.usage, TextureUsage::SampledAndRenderTarget);
+    assert_eq!(info.array_layers, 2);
+    assert_eq!(info.mip_levels, 3);
+    assert_eq!(info.texture_type, TextureType::Array2D);
+    assert_eq!(info.sample_count, SampleCount::S4);
+}
+
+#[test]
+fn test_texture_info_clone() {
+    let info = TextureInfo::new(
+        16, 16, TextureFormat::R8G8B8A8_UNORM,
+        TextureUsage::Sampled, 1, 1, TextureType::Tex2D, SampleCount::S1,
+    );
+    let cloned = info.clone();
+    assert_eq!(cloned.width, info.width);
+    assert_eq!(cloned.format, info.format);
+}
+
+#[test]
+fn test_manual_mipmap_data_layers_with_max_chain_length() {
+    use crate::graphics_device::{ManualMipmapData, LayerMipmapData, MipmapMode};
+    // Layers with different mip chain lengths — max is taken.
+    let mode = MipmapMode::Manual(ManualMipmapData::Layers(vec![
+        LayerMipmapData { layer: 0, mips: vec![vec![0u8; 4], vec![0u8; 4]] }, // 2 mips
+        LayerMipmapData { layer: 1, mips: vec![vec![0u8; 4]] }, // 1 mip
+        LayerMipmapData { layer: 2, mips: vec![vec![0u8; 4], vec![0u8; 4], vec![0u8; 4]] }, // 3 mips
+    ]));
+    // Total = level 0 + max(2, 1, 3) = 1 + 3 = 4
+    assert_eq!(mode.mip_levels(64, 64), 4);
+}
+
+#[test]
+fn test_manual_mipmap_data_layers_empty() {
+    use crate::graphics_device::{ManualMipmapData, LayerMipmapData, MipmapMode};
+    let mode = MipmapMode::Manual(ManualMipmapData::Layers(vec![
+        LayerMipmapData { layer: 0, mips: vec![] },
+    ]));
+    assert_eq!(mode.mip_levels(64, 64), 1);
+}

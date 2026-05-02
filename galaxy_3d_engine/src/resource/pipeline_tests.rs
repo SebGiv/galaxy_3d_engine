@@ -106,3 +106,66 @@ fn test_pipeline_graphics_device_pipeline_accessor() {
     // Should be a valid Arc
     assert!(Arc::strong_count(gd_pipeline) >= 1);
 }
+
+#[test]
+fn test_pipeline_signature_id_accessor() {
+    let pipeline = create_test_pipeline();
+    // create_test_pipeline assigns signature_id = 0
+    assert_eq!(pipeline.signature_id(), 0);
+}
+
+#[test]
+fn test_pipeline_sort_id_accessor() {
+    let pipeline = create_test_pipeline();
+    // create_test_pipeline assigns sort_id = 0
+    assert_eq!(pipeline.sort_id(), 0);
+}
+
+#[test]
+fn test_pipeline_vertex_shader_key() {
+    let pipeline = create_test_pipeline();
+    let _key = pipeline.vertex_shader();
+    // ShaderKey is opaque (slotmap key); we just verify the call returns Copy.
+}
+
+#[test]
+fn test_pipeline_fragment_shader_key() {
+    let pipeline = create_test_pipeline();
+    let _key = pipeline.fragment_shader();
+}
+
+#[test]
+fn test_pipeline_from_gpu_pipeline_with_explicit_ids() {
+    use crate::resource::resource_manager::ShaderKey;
+    let graphics_device = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
+    let mut gd_lock = graphics_device.lock().unwrap();
+    let vs = gd_lock.create_shader(graphics_device::ShaderDesc {
+        stage: graphics_device::ShaderStage::Vertex,
+        entry_point: "main".to_string(),
+        code: &[],
+    }).unwrap();
+    let fs = gd_lock.create_shader(graphics_device::ShaderDesc {
+        stage: graphics_device::ShaderStage::Fragment,
+        entry_point: "main".to_string(),
+        code: &[],
+    }).unwrap();
+    let desc = graphics_device::PipelineDesc {
+        vertex_layout: create_simple_vertex_layout(),
+        topology: graphics_device::PrimitiveTopology::TriangleList,
+        rasterization: Default::default(),
+        color_blend: Default::default(),
+        multisample: Default::default(),
+        color_formats: vec![],
+        depth_format: None,
+    };
+    let gd_pipeline = gd_lock.create_pipeline(desc, &vs, &fs).unwrap();
+    let pipeline = crate::resource::Pipeline::from_gpu_pipeline(
+        gd_pipeline,
+        ShaderKey::default(),
+        ShaderKey::default(),
+        42,
+        99,
+    );
+    assert_eq!(pipeline.signature_id(), 42);
+    assert_eq!(pipeline.sort_id(), 99);
+}

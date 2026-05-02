@@ -123,3 +123,7 @@ impl CameraCuller for FrustumCuller {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "culler_tests.rs"]
+mod tests;

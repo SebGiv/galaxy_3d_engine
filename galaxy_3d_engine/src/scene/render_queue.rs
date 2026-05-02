@@ -151,3 +151,7 @@ impl RenderQueue {
             .map(move |e| &self.draw_calls[e.draw_call_index as usize])
     }
 }
+
+#[cfg(test)]
+#[path = "render_queue_tests.rs"]
+mod tests;

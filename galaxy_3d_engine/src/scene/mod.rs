@@ -17,6 +17,9 @@ mod render_view;
 mod view_dispatcher;
 mod render_queue;
 
+#[cfg(test)]
+mod scene_test_helpers;
+
 pub use render_instance::{
     RenderInstance, RenderInstanceKey, RenderSubMesh, RenderSubMeshPass,
     VertexShaderOverride,

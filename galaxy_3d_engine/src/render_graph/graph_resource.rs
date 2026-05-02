@@ -48,3 +48,7 @@ impl GraphResource {
         matches!(self, GraphResource::Buffer(_))
     }
 }
+
+#[cfg(test)]
+#[path = "graph_resource_tests.rs"]
+mod tests;

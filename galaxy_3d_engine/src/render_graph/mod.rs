@@ -18,6 +18,9 @@ mod render_graph;
 mod render_graph_manager;
 mod render_pass;
 
+#[cfg(test)]
+mod test_helpers;
+
 pub use access_type::{AccessType, ResourceAccess, TargetOps};
 pub use frame_buffer::{ColorAttachmentSlot, Framebuffer, FramebufferKey};
 pub use graph_resource::{GraphResource, GraphResourceKey};

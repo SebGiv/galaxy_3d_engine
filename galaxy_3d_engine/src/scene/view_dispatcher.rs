@@ -121,3 +121,7 @@ impl ViewDispatcher {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "view_dispatcher_tests.rs"]
+mod tests;
