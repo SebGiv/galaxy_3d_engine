@@ -529,6 +529,7 @@ impl RendererCommandList for CommandList {
             // Rasterization
             self.device.cmd_set_cull_mode(cb, cull_mode_to_vk(state.cull_mode));
             self.device.cmd_set_front_face(cb, front_face_to_vk(state.front_face));
+            self.device.cmd_set_line_width(cb, state.line_width);
 
             // Depth
             self.device.cmd_set_depth_test_enable(cb, state.depth_test_enable);

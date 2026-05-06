@@ -700,7 +700,11 @@ impl VulkanGraphicsDevice {
 
             let device_features = vk::PhysicalDeviceFeatures::default()
                 .sampler_anisotropy(true)
-                .depth_clamp(dynamic_state_caps.depth_clamp_enable);
+                .depth_clamp(dynamic_state_caps.depth_clamp_enable)
+                // Required for PolygonMode::Line (wireframe debug rendering).
+                .fill_mode_non_solid(true)
+                // Required for line widths != 1.0 in dynamic state.
+                .wide_lines(true);
 
             let mut vulkan_11_features = vk::PhysicalDeviceVulkan11Features::default()
                 .shader_draw_parameters(true);
@@ -1186,6 +1190,16 @@ impl VulkanGraphicsDevice {
                 existing.stage_flags = ShaderStageFlags::from_bits(
                     existing.stage_flags.bits() | fs_pc.stage_flags.bits()
                 );
+                // A push-constant block shared between stages may declare
+                // different members in each stage (e.g. VS reads only the
+                // first u32, FS reads a vec4 16 bytes further). The merged
+                // range must cover both, so take the max size.
+                existing.size = match (existing.size, fs_pc.size) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                };
             } else {
                 push_constants.push(fs_pc.clone());
             }
@@ -2749,6 +2763,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 // Vulkan 1.0 core
                 vk::DynamicState::VIEWPORT,
                 vk::DynamicState::SCISSOR,
+                vk::DynamicState::LINE_WIDTH,
                 vk::DynamicState::DEPTH_BIAS,
                 vk::DynamicState::DEPTH_BOUNDS,
                 vk::DynamicState::BLEND_CONSTANTS,
@@ -2778,16 +2793,24 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             // Build VkDescriptorSetLayouts from merged reflected bindings (sets 1+)
             let reflected_set_layouts = self.build_descriptor_set_layouts(&merged_bindings)?;
 
-            // Inject bindless layout at set 0 only if the shader actually declares bindings there.
-            // Set 0 is reserved for the bindless descriptor set; pipelines that don't use textures
-            // don't need it in their pipeline layout.
+            // Inject the bindless layout at set 0 whenever the pipeline has at
+            // least one descriptor set so the SPIR-V `set N` decorations always
+            // line up with the pipeline-layout indices. Vulkan requires
+            // descriptor set indices to be contiguous from 0; when a shader
+            // declares only `set 1` and we omit set 0, the reflected set 1
+            // collapses to layout index 0 and `vkCmdBindDescriptorSets` with
+            // `firstSet=1` is rejected. The bindless layout exists
+            // unconditionally and is harmless to declare even when unused —
+            // Vulkan accepts pipeline layouts that expose sets the shader
+            // never references.
             let uses_bindless = merged_bindings.iter().any(|b| b.set == 0);
-            let descriptor_set_layouts: Vec<vk::DescriptorSetLayout> = if uses_bindless {
+            let needs_set_zero = uses_bindless || !reflected_set_layouts.is_empty();
+            let descriptor_set_layouts: Vec<vk::DescriptorSetLayout> = if needs_set_zero {
                 std::iter::once(self.bindless_state.layout)
                     .chain(reflected_set_layouts.iter().copied())
                     .collect()
             } else {
-                reflected_set_layouts.clone()
+                Vec::new()
             };
 
             // Build VkPushConstantRanges from merged reflected push constants

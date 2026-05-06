@@ -438,6 +438,11 @@ pub struct DynamicRenderState {
     // Color output
     /// Blend constants (used with ConstantColor/ConstantAlpha blend factors)
     pub blend_constants: [f32; 4],
+    // Line rasterization
+    /// Width of rasterized line primitives in pixels (only meaningful when
+    /// the bound pipeline uses `PolygonMode::Line` or a line topology).
+    /// Values other than 1.0 require the Vulkan `wideLines` feature.
+    pub line_width: f32,
 }
 
 impl Default for DynamicRenderState {
@@ -457,6 +462,7 @@ impl Default for DynamicRenderState {
             stencil_front: StencilOpState::default(),
             stencil_back: StencilOpState::default(),
             blend_constants: [0.0; 4],
+            line_width: 1.0,
         }
     }
 }
@@ -486,6 +492,7 @@ pub struct DynamicRenderStateKey {
     stencil_front: StencilOpState,
     stencil_back: StencilOpState,
     blend_constants_bits: [u32; 4],
+    line_width_bits: u32,
 }
 
 impl From<&DynamicRenderState> for DynamicRenderStateKey {
@@ -512,6 +519,7 @@ impl From<&DynamicRenderState> for DynamicRenderStateKey {
                 s.blend_constants[2].to_bits(),
                 s.blend_constants[3].to_bits(),
             ],
+            line_width_bits: s.line_width.to_bits(),
         }
     }
 }

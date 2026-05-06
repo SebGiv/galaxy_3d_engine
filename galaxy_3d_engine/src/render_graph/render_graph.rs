@@ -237,7 +237,19 @@ impl RenderGraph {
         result
     }
 
-    /// Kahn's algorithm: writer-before-reader on shared `GraphResourceKey`s.
+    /// Kahn's algorithm with both Read-After-Write (RAW) and Write-After-Write
+    /// (WAW) dependencies on shared `GraphResourceKey`s.
+    ///
+    /// Two-pass strategy with distinct semantics:
+    ///   - Pass 1 fills `self.writers` with the *global last writer* of each
+    ///     resource (irrespective of user order) — used for RAW deps so a
+    ///     read on a resource that some other pass writes anywhere in the
+    ///     batch is still correctly ordered (and mutual reads form the
+    ///     classic cycle).
+    ///   - Pass 2 streams `passes` in user order, maintaining a separate
+    ///     `streaming_writers` map. Writes create WAW deps against the most
+    ///     recent writer encountered so far; reads use the global table
+    ///     from Pass 1.
     ///
     /// Result lands in `self.sorted_passes`. All scratch maps are cleared
     /// at entry, populated, then the queue is drained.
@@ -257,7 +269,7 @@ impl RenderGraph {
             self.successors.insert(k, Vec::new());
         }
 
-        // Map each shared resource to its (last) writer in this batch.
+        // Pass 1: global "last writer" per resource (for RAW deps).
         for &k in passes {
             let pass = passes_map.get(k).unwrap();
             for access in pass.accesses() {
@@ -267,11 +279,25 @@ impl RenderGraph {
             }
         }
 
-        // Reader → depends on writer (if any, and not itself).
+        // Pass 2: stream user order. Reads pull RAW deps from the global
+        // table built above; writes pull WAW deps from a streaming local
+        // table, then update it. The locality is what ensures multiple
+        // writers of the same resource stay in user-supplied order without
+        // injecting fake reverse-direction deps.
+        let mut streaming_writers: FxHashMap<GraphResourceKey, RenderPassKey> =
+            FxHashMap::default();
         for &k in passes {
             let pass = passes_map.get(k).unwrap();
             for access in pass.accesses() {
-                if !access.access_type.is_write() {
+                if access.access_type.is_write() {
+                    if let Some(&prev) = streaming_writers.get(&access.graph_resource_key) {
+                        if prev != k {
+                            *self.in_degree.get_mut(&k).unwrap() += 1;
+                            self.successors.get_mut(&prev).unwrap().push(k);
+                        }
+                    }
+                    streaming_writers.insert(access.graph_resource_key, k);
+                } else {
                     if let Some(&writer) = self.writers.get(&access.graph_resource_key) {
                         if writer != k {
                             *self.in_degree.get_mut(&k).unwrap() += 1;

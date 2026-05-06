@@ -198,6 +198,12 @@ pub struct RenderInstance {
     flags: u64,
     /// Axis-Aligned Bounding Box in local space
     bounding_box: AABB,
+    /// Default vertex shader applied at construction to all (submesh,
+    /// pass) pairs that did not match a `VertexShaderOverride`. Kept for
+    /// introspection only — each RenderSubMeshPass already stores its
+    /// resolved vertex shader, so changing this field does not affect
+    /// existing passes.
+    default_vertex_shader: ShaderKey,
 }
 
 // ===== RENDER INSTANCE IMPLEMENTATION =====
@@ -295,6 +301,7 @@ impl RenderInstance {
             world_matrix,
             flags: FLAG_VISIBLE,
             bounding_box,
+            default_vertex_shader: vertex_shader,
         })
     }
 
@@ -365,6 +372,17 @@ impl RenderInstance {
     /// Get the bounding box (local space)
     pub fn bounding_box(&self) -> &AABB {
         &self.bounding_box
+    }
+
+    /// Get the default vertex shader of this RenderInstance.
+    ///
+    /// This is the shader that was applied at construction time to all
+    /// (submesh, pass) pairs that were not covered by a
+    /// `VertexShaderOverride`. The per-pass resolved shader lives on each
+    /// `RenderSubMeshPass`; this accessor only reflects the default value
+    /// captured during `from_mesh`.
+    pub fn default_vertex_shader(&self) -> ShaderKey {
+        self.default_vertex_shader
     }
 
     /// Release all draw slots back to the allocator.
