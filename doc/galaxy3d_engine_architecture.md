@@ -2052,9 +2052,10 @@ Constructor helpers exposed alongside:
 - `GraphResource::buffer_range(key, offset, size)` — explicit byte subrange.
 
 The `mip_count` / `(offset, size)` fields are propagated through `ImageAccess` /
-`BufferAccess` to the backend but are currently ignored by `image_barrier2` /
-`buffer_barrier2` (barriers always cover the whole resource — see `.claude/notes/`
-for the migration plan).
+`BufferAccess` to the backend, where `image_barrier2` / `buffer_barrier2` apply
+them directly to `vk::ImageSubresourceRange` / `VkBufferMemoryBarrier2.offset/size`.
+A barrier therefore only affects the declared sub-range — rendering into mip 1
+of a texture won't discard content from mip 0 etc. (see §14.2 for the wiring).
 
 #### Validation rules
 
@@ -2235,9 +2236,16 @@ pub struct RenderGraph {
 
     // Per-execute scratch (cleared every call, zero alloc steady state)
     sorted_passes: Vec<RenderPassKey>,
-    prev_access: FxHashMap<GraphResourceKey, AccessType>,
     image_accesses: Vec<graphics_device::ImageAccess>,
     buffer_accesses: Vec<graphics_device::BufferAccess>,
+
+    // Per-frame access history, indexed by GPU TextureKey / BufferKey.
+    // Persisted across frames; each frame clears the inner Vecs (capacity
+    // preserved). Two distinct GraphResources targeting the same texture
+    // share their history → a 2nd-pass barrier sees the correct
+    // `previous_access_type` (correction B).
+    prev_image_accesses: FxHashMap<TextureKey, Vec<(ImageSubRange, AccessType)>>,
+    prev_buffer_accesses: FxHashMap<BufferKey, Vec<(BufferSubRange, AccessType)>>,
 
     // Topo-sort scratch
     in_degree: FxHashMap<RenderPassKey, u32>,
@@ -2246,6 +2254,15 @@ pub struct RenderGraph {
     topo_queue: VecDeque<RenderPassKey>,
 }
 ```
+
+The two `prev_*_accesses` maps are pre-sized at construction
+(`with_capacity(64)` / `(32)`) and **not** cleared between frames as a
+whole — only their inner `Vec`s are `clear()`-ed individually. This
+guarantees zero heap allocation in steady state: the HashMap keeps its
+bucket array, and each Vec keeps its growth capacity. New textures or
+new sub-ranges are absorbed by the pre-sized capacities; the only
+allocations occur during the warm-up phase before the working set
+stabilises.
 
 `RenderGraph::new(name, gd, frames_in_flight)` allocates `frames_in_flight` command
 lists once. `frames_in_flight == 0` is rejected. Subsequent `execute` calls advance
@@ -2273,8 +2290,8 @@ graph TB
     subgraph LoopInner["per pass"]
         L1[clear scratch image+buffer access lists]
         L2[lock RM]
-        L3[for each access: clone Arc into image/buffer_accesses,<br/>compute previous_access_type from prev_access]
-        L4[track resolve_target writes in prev_access]
+        L3[for each access: clone Arc into image/buffer_accesses,<br/>compute previous_access_type via overlap query<br/>on prev_image/buffer_accesses]
+        L4[track resolve_target writes in prev_image_accesses]
         L5[drop RM lock]
         L6{has framebuffer?}
         L6 -- no --> L7[continue (compute-only path)]
@@ -2294,15 +2311,21 @@ graph TB
 
 Critical points:
 
-- **`prev_access` map across passes within the frame.** The graph tracks the most
-  recent `AccessType` per resource and feeds it to the backend as `previous_access_
-  type`. The backend uses this to compute correct `(srcStageMask, srcAccessMask, old
-  Layout)` for the `vkCmdPipelineBarrier2` call.
+- **Per-TextureKey / per-BufferKey access history (correction B).** The graph
+  tracks the most recent `AccessType` *per sub-range* on every GPU resource,
+  indexed by the underlying `TextureKey` / `BufferKey` (not by
+  `GraphResourceKey`). When a pass's access is materialised, the graph queries
+  the history for any entry whose sub-range overlaps the requested one and uses
+  its `AccessType` as `previous_access_type`. Two passes referencing the same
+  texture via *different* `GraphResource`s therefore share their tracking — the
+  2nd pass no longer falsely sees `UNDEFINED` and stops discarding the 1st
+  pass's work.
 - **MSAA resolve targets are tracked too.** When a `ResourceAccess` carries
-  `TargetOps::Color { resolve_target: Some(rt), .. }`, the graph also writes
-  `prev_access[rt] = ColorAttachmentWrite` because the GPU will write the resolve
-  target at end-of-pass. The next reader of the resolved texture sees a correct source
-  layout.
+  `TargetOps::Color { resolve_target: Some(rt), .. }`, the graph resolves `rt`
+  back to its underlying `(TextureKey, ImageSubRange)` and records a
+  `ColorAttachmentWrite` entry on it, because the GPU will write the resolve
+  target at end-of-pass. The next reader of the resolved texture sees a correct
+  source layout.
 - **The RM lock is held *only* during access materialization,** then dropped before
   the user's `PassAction::execute` runs. This is what allows drawers and post-pass
   closures to re-acquire the RM lock without deadlock.
@@ -3023,11 +3046,32 @@ Key helpers in `vulkan_sync.rs`:
   `TRANSFER_SRC_OPTIMAL`, etc.).
 - **`access_type_to_stage_access_2(AccessType) -> (vk::PipelineStageFlags2,
   vk::AccessFlags2)`** — sync2 64-bit stage and access masks.
-- **`image_barrier2(image, aspect, old_layout, new_layout, src_stage, src_access,
-  dst_stage, dst_access) -> vk::ImageMemoryBarrier2`** — boilerplate factory.
+- **`image_barrier2(image, subresource_range, old_layout, new_layout, src_stage,
+  src_access, dst_stage, dst_access) -> vk::ImageMemoryBarrier2`** — boilerplate
+  factory. The caller-supplied `vk::ImageSubresourceRange` carries the aspect
+  mask and the precise mip / layer subset the barrier should affect.
+- **`buffer_barrier2(buffer, offset, size, src_stage, src_access, dst_stage,
+  dst_access) -> vk::BufferMemoryBarrier2`** — buffer counterpart. `offset` is
+  in bytes; pass `vk::WHOLE_SIZE` as `size` for the rest of the buffer.
+- **`whole_image_subresource_range(aspect) -> vk::ImageSubresourceRange`** —
+  shorthand for `(base 0, REMAINING_MIP_LEVELS, base 0, REMAINING_ARRAY_LAYERS)`,
+  used by the swapchain transitions and any caller targeting an image as a
+  whole.
 - **`emit_barriers2(device, cb, image_barriers, buffer_barriers)`** — single
   `vkCmdPipelineBarrier2` call with both barrier vectors batched into one
   `VkDependencyInfo`. The driver merges stages/accesses optimally.
+
+**Sub-range propagation.** For each render-graph access, `begin_render_pass`
+builds the barrier's `vk::ImageSubresourceRange` from the corresponding
+`ImageAccess` fields (`base_mip_level`, `mip_count`, `base_array_layer`,
+`layer_count`), and the buffer barrier's `(offset, size)` from the
+`BufferAccess` fields. The engine's `REMAINING_MIP_LEVELS` /
+`REMAINING_ARRAY_LAYERS` / `WHOLE_SIZE` sentinels are bit-equal to their
+Vulkan counterparts, so passes expressing "the whole resource" pass through
+unchanged. This closes the **bug-couverture** identified in
+`.claude/notes/barrier_subrange_concurrency.md` (correction A): a barrier no
+longer discards content of mip / layer / byte regions outside the access's
+declared sub-range.
 
 The scratch vectors (`barriers_scratch`, `buffer_barriers_scratch`,
 `color_infos_scratch`) are `Vec`s preallocated at command-list creation. Every
@@ -3210,7 +3254,8 @@ The codebase enforces zero heap allocation in the steady state at multiple layer
 | `VisibleInstances` | `Vec<VisibleInstance>` cleared and refilled per cull |
 | `RenderView` | `Vec<VisibleSubMesh>` cleared and refilled per dispatch |
 | `RenderQueue::draw_calls`, `sort_entries` | preallocated to capacity, `clear()` per frame |
-| `RenderGraph` scratch (`sorted_passes`, `prev_access`, `image_accesses`, `buffer_accesses`, `in_degree`, `successors`, `writers`, `topo_queue`) | preallocated, cleared per execute |
+| `RenderGraph` scratch (`sorted_passes`, `image_accesses`, `buffer_accesses`, `in_degree`, `successors`, `writers`, `topo_queue`) | preallocated, cleared per execute |
+| `RenderGraph::prev_image_accesses` / `prev_buffer_accesses` | preallocated `with_capacity(64)` / `(32)`; **inner Vecs cleared per frame, outer HashMap kept** to preserve all capacities (zero alloc steady state) |
 | `VulkanCommandList` scratch (`barriers_scratch`, `buffer_barriers_scratch`, `color_infos_scratch`) | preallocated, cleared per `begin_render_pass` |
 | `vulkan_sync::submit_command_buffers` | stack-allocated fixed-capacity arrays for `VkSubmitInfo2` payload |
 | `DefaultUpdater::enabled_light_keys`, `candidates` | persistent across frames *and* across instances within a frame |

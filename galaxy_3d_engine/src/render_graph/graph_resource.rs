@@ -28,6 +28,86 @@ pub const REMAINING_ARRAY_LAYERS: u32 = u32::MAX;
 /// buffer". Maps to `vk::WHOLE_SIZE` in the Vulkan backend.
 pub const WHOLE_SIZE: u64 = u64::MAX;
 
+/// View into a texture's mip / layer subresources, without the
+/// `TextureKey`. Used internally by the render graph to track per-frame
+/// access history at a finer grain than the `GraphResource` itself.
+///
+/// `mip_count == REMAINING_MIP_LEVELS` and
+/// `layer_count == REMAINING_ARRAY_LAYERS` are accepted as sentinels
+/// meaning "all remaining mips / layers from the base index".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ImageSubRange {
+    pub base_mip_level: u32,
+    pub mip_count: u32,
+    pub base_array_layer: u32,
+    pub layer_count: u32,
+}
+
+impl ImageSubRange {
+    /// Test whether two ranges overlap on both mip AND layer axes.
+    /// Sentinel `REMAINING_*` values (= u32::MAX) extend the upper
+    /// bound to infinity (saturating arithmetic prevents wraparound).
+    pub fn overlaps(&self, other: &ImageSubRange) -> bool {
+        let a_mip_end = if self.mip_count == REMAINING_MIP_LEVELS {
+            u32::MAX
+        } else {
+            self.base_mip_level.saturating_add(self.mip_count)
+        };
+        let b_mip_end = if other.mip_count == REMAINING_MIP_LEVELS {
+            u32::MAX
+        } else {
+            other.base_mip_level.saturating_add(other.mip_count)
+        };
+        let mips_overlap =
+            self.base_mip_level < b_mip_end && other.base_mip_level < a_mip_end;
+
+        let a_layer_end = if self.layer_count == REMAINING_ARRAY_LAYERS {
+            u32::MAX
+        } else {
+            self.base_array_layer.saturating_add(self.layer_count)
+        };
+        let b_layer_end = if other.layer_count == REMAINING_ARRAY_LAYERS {
+            u32::MAX
+        } else {
+            other.base_array_layer.saturating_add(other.layer_count)
+        };
+        let layers_overlap =
+            self.base_array_layer < b_layer_end && other.base_array_layer < a_layer_end;
+
+        mips_overlap && layers_overlap
+    }
+}
+
+/// View into a buffer's byte subrange. Used internally by the render
+/// graph to track per-frame access history.
+///
+/// `size == WHOLE_SIZE` is accepted as a sentinel meaning "from offset
+/// to end of buffer".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferSubRange {
+    pub offset: u64,
+    pub size: u64,
+}
+
+impl BufferSubRange {
+    /// Test whether two byte ranges overlap. Sentinel `WHOLE_SIZE`
+    /// (= u64::MAX) extends the upper bound to infinity (saturating
+    /// arithmetic prevents wraparound).
+    pub fn overlaps(&self, other: &BufferSubRange) -> bool {
+        let a_end = if self.size == WHOLE_SIZE {
+            u64::MAX
+        } else {
+            self.offset.saturating_add(self.size)
+        };
+        let b_end = if other.size == WHOLE_SIZE {
+            u64::MAX
+        } else {
+            other.offset.saturating_add(other.size)
+        };
+        self.offset < b_end && other.offset < a_end
+    }
+}
+
 /// Typed reference to a resource used by the render graph.
 ///
 /// `Hash`/`Eq` are derived so a `GraphResource` can sit inside a

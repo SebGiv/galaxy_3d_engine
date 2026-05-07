@@ -194,3 +194,128 @@ fn test_buffer_range_helper() {
         _ => panic!("expected Buffer variant"),
     }
 }
+
+// ============================================================================
+// ImageSubRange / BufferSubRange overlap helpers
+// ============================================================================
+
+fn img_range(base_mip: u32, mip_count: u32, base_layer: u32, layer_count: u32)
+    -> ImageSubRange
+{
+    ImageSubRange {
+        base_mip_level: base_mip,
+        mip_count,
+        base_array_layer: base_layer,
+        layer_count,
+    }
+}
+
+#[test]
+fn image_subranges_overlap_identical() {
+    let a = img_range(0, 1, 0, 1);
+    assert!(a.overlaps(&a));
+    let b = img_range(2, 3, 4, 6);
+    assert!(b.overlaps(&b));
+}
+
+#[test]
+fn image_subranges_overlap_disjoint_mips() {
+    let a = img_range(0, 1, 0, 1);
+    let b = img_range(1, 1, 0, 1);
+    assert!(!a.overlaps(&b));
+    assert!(!b.overlaps(&a));
+}
+
+#[test]
+fn image_subranges_overlap_disjoint_layers() {
+    let a = img_range(0, 1, 0, 2);
+    let b = img_range(0, 1, 2, 2);
+    assert!(!a.overlaps(&b));
+    assert!(!b.overlaps(&a));
+}
+
+#[test]
+fn image_subranges_overlap_partial_mips() {
+    // mips 0..3 vs mips 2..5 → overlap on mip 2
+    let a = img_range(0, 3, 0, 1);
+    let b = img_range(2, 3, 0, 1);
+    assert!(a.overlaps(&b));
+    assert!(b.overlaps(&a));
+}
+
+#[test]
+fn image_subranges_overlap_disjoint_one_axis_kills_overlap() {
+    // mips identical, layers disjoint → no overlap
+    let a = img_range(0, 1, 0, 1);
+    let b = img_range(0, 1, 1, 1);
+    assert!(!a.overlaps(&b));
+}
+
+#[test]
+fn image_subranges_overlap_with_remaining_mip_levels() {
+    // a covers all mips from level 0 → overlaps anything mip-wise.
+    let a = img_range(0, REMAINING_MIP_LEVELS, 0, 1);
+    let b = img_range(5, 1, 0, 1);
+    assert!(a.overlaps(&b));
+    assert!(b.overlaps(&a));
+}
+
+#[test]
+fn image_subranges_overlap_with_remaining_array_layers() {
+    let a = img_range(0, 1, 0, REMAINING_ARRAY_LAYERS);
+    let b = img_range(0, 1, 7, 1);
+    assert!(a.overlaps(&b));
+    assert!(b.overlaps(&a));
+}
+
+#[test]
+fn image_subranges_overlap_disjoint_with_remaining_mips_starting_higher() {
+    // a covers all mips from level 3 → does NOT cover mips 0..2.
+    let a = img_range(3, REMAINING_MIP_LEVELS, 0, 1);
+    let b = img_range(0, 2, 0, 1);
+    assert!(!a.overlaps(&b));
+    assert!(!b.overlaps(&a));
+}
+
+fn buf_range(offset: u64, size: u64) -> BufferSubRange {
+    BufferSubRange { offset, size }
+}
+
+#[test]
+fn buffer_subranges_overlap_identical() {
+    let a = buf_range(0, 64);
+    assert!(a.overlaps(&a));
+}
+
+#[test]
+fn buffer_subranges_overlap_disjoint() {
+    let a = buf_range(0, 64);
+    let b = buf_range(64, 64);
+    assert!(!a.overlaps(&b));
+    assert!(!b.overlaps(&a));
+}
+
+#[test]
+fn buffer_subranges_overlap_partial() {
+    let a = buf_range(0, 64);
+    let b = buf_range(32, 64);
+    assert!(a.overlaps(&b));
+    assert!(b.overlaps(&a));
+}
+
+#[test]
+fn buffer_subranges_overlap_with_whole_size() {
+    let a = buf_range(0, WHOLE_SIZE);
+    let b = buf_range(1024, 256);
+    assert!(a.overlaps(&b));
+    assert!(b.overlaps(&a));
+}
+
+#[test]
+fn buffer_subranges_overlap_disjoint_with_whole_size_starting_higher() {
+    // a covers from offset 1024 onward; b is below 1024.
+    let a = buf_range(1024, WHOLE_SIZE);
+    let b = buf_range(0, 1024);
+    assert!(!a.overlaps(&b));
+    assert!(!b.overlaps(&a));
+}

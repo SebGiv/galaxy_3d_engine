@@ -310,10 +310,15 @@ impl RendererSwapchain for Swapchain {
             // Transition src: COLOR_ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL
             // Transition dst: UNDEFINED → TRANSFER_DST_OPTIMAL
             // Both batched into a single `vkCmdPipelineBarrier2` call.
+            // Whole-image range: blit covers every mip / layer the
+            // images expose (all swapchain images are 1-mip / 1-layer).
+            let color_full = crate::vulkan_sync::whole_image_subresource_range(
+                vk::ImageAspectFlags::COLOR,
+            );
             let barriers = [
                 crate::vulkan_sync::image_barrier2(
                     src_image,
-                    vk::ImageAspectFlags::COLOR,
+                    color_full,
                     vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                     vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                     vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
@@ -323,7 +328,7 @@ impl RendererSwapchain for Swapchain {
                 ),
                 crate::vulkan_sync::image_barrier2(
                     dst_image,
-                    vk::ImageAspectFlags::COLOR,
+                    color_full,
                     vk::ImageLayout::UNDEFINED,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     vk::PipelineStageFlags2::NONE,
@@ -380,7 +385,7 @@ impl RendererSwapchain for Swapchain {
             // Transition dst: TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR
             let barrier_present = crate::vulkan_sync::image_barrier2(
                 dst_image,
-                vk::ImageAspectFlags::COLOR,
+                color_full,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 vk::ImageLayout::PRESENT_SRC_KHR,
                 vk::PipelineStageFlags2::BLIT,

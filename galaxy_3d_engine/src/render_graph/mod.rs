@@ -31,7 +31,7 @@ pub use debug_pass_action::{DebugDisplayMode, DebugDrawEntry, DebugPassAction};
 pub use frame_buffer::{ColorAttachmentSlot, Framebuffer, FramebufferKey};
 pub use fullscreen_pass_action::FullscreenPassAction;
 pub use graph_resource::{
-    GraphResource, GraphResourceKey,
+    BufferSubRange, GraphResource, GraphResourceKey, ImageSubRange,
     REMAINING_ARRAY_LAYERS, REMAINING_MIP_LEVELS, WHOLE_SIZE,
 };
 pub use pass_action::{PassAction, SceneBinding};

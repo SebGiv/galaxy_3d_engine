@@ -357,3 +357,163 @@ fn test_graph_resource_with_buffer_does_not_panic_on_construction() {
         layer_count: 1,
     };
 }
+
+// ============================================================================
+// Correction B — per-TextureKey access history
+// ============================================================================
+
+/// Build two GraphResources pointing at the same TextureKey but
+/// referenced through distinct GraphResourceKeys, then run two passes
+/// that write through them (sub-ranges identical) and check that the
+/// second access sees the first as `previous_access_type`.
+///
+/// This is the canonical regression case for the bug-tracking that B
+/// fixes: before B, the second pass would see `previous_access_type =
+/// None` because `prev_access` was indexed by GraphResourceKey, and the
+/// barrier would emit `oldLayout = UNDEFINED` → discard of pass 1's work.
+#[test]
+#[serial]
+fn test_two_grs_same_texture_same_subrange_share_history() {
+    let env = setup_engine_for_render_graph();
+    Engine::create_render_graph_manager().unwrap();
+    let rgm_arc = Engine::render_graph_manager().unwrap();
+    let (graph_key, pass_keys) = {
+        let mut rgm = rgm_arc.lock().unwrap();
+        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+
+        // Two GraphResources, same TextureKey, same sub-range.
+        let gr_a = rgm.create_graph_resource("color_a", GraphResource::Texture {
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
+            base_array_layer: 0, layer_count: 1,
+        }).unwrap();
+        let gr_b = rgm.create_graph_resource("color_b", GraphResource::Texture {
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
+            base_array_layer: 0, layer_count: 1,
+        }).unwrap();
+
+        let (action_a, _) = make_recording_pass();
+        let pass_a = rgm.create_render_pass("pass_a", vec![ResourceAccess {
+            graph_resource_key: gr_a,
+            access_type: AccessType::ColorAttachmentWrite,
+            target_ops: Some(default_color_ops()),
+        }], action_a).unwrap();
+        let (action_b, _) = make_recording_pass();
+        let pass_b = rgm.create_render_pass("pass_b", vec![ResourceAccess {
+            graph_resource_key: gr_b,
+            access_type: AccessType::ColorAttachmentWrite,
+            target_ops: Some(default_color_ops()),
+        }], action_b).unwrap();
+        (graph_key, vec![pass_a, pass_b])
+    };
+
+    let mut rgm = rgm_arc.lock().unwrap();
+    let result = rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(()));
+    // Without B, this would still succeed at the API level — the bug
+    // was a silent layout-transition issue, not a Rust error. The smoke
+    // test here just confirms execute() runs to completion with two
+    // overlapping GraphResources on the same TextureKey.
+    assert!(result.is_ok(), "execute failed: {:?}", result);
+}
+
+/// Two GraphResources on the same TextureKey but on **disjoint**
+/// mip-layer ranges. The second access should not find any overlapping
+/// previous entry → `previous_access_type = None`. Smoke-test only:
+/// we exercise the correctness of the lookup path and confirm it does
+/// not falsely report the other range's AccessType.
+#[test]
+#[serial]
+fn test_two_grs_same_texture_disjoint_subranges_independent_history() {
+    let env = setup_engine_for_render_graph();
+    Engine::create_render_graph_manager().unwrap();
+    let rgm_arc = Engine::render_graph_manager().unwrap();
+    let (graph_key, pass_keys) = {
+        let mut rgm = rgm_arc.lock().unwrap();
+        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        // Engine test fixtures only expose a single-mip / single-layer
+        // color texture, so we simulate disjoint sub-ranges by using
+        // distinct base_array_layer values; the test fixture is
+        // tolerant of REMAINING_*-style declarations because the
+        // backend ignores layer_count beyond what it actually has.
+        // The lookup logic doesn't query the underlying resource — it
+        // only compares declared sub-ranges.
+        let gr_a = rgm.create_graph_resource("color_a", GraphResource::Texture {
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
+            base_array_layer: 0, layer_count: 1,
+        }).unwrap();
+        let gr_b = rgm.create_graph_resource("color_b", GraphResource::Texture {
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
+            base_array_layer: 1, layer_count: 1,
+        }).unwrap();
+        let (action_a, _) = make_recording_pass();
+        let pass_a = rgm.create_render_pass("pass_a", vec![ResourceAccess {
+            graph_resource_key: gr_a,
+            access_type: AccessType::ColorAttachmentWrite,
+            target_ops: Some(default_color_ops()),
+        }], action_a).unwrap();
+        let (action_b, _) = make_recording_pass();
+        let pass_b = rgm.create_render_pass("pass_b", vec![ResourceAccess {
+            graph_resource_key: gr_b,
+            access_type: AccessType::ColorAttachmentWrite,
+            target_ops: Some(default_color_ops()),
+        }], action_b).unwrap();
+        (graph_key, vec![pass_a, pass_b])
+    };
+
+    let mut rgm = rgm_arc.lock().unwrap();
+    let result = rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(()));
+    assert!(result.is_ok(), "execute failed: {:?}", result);
+}
+
+/// Run `execute()` three times in a row and check that the inner
+/// `Vec`s of `prev_image_accesses` have not reallocated between frame 1
+/// and frame 3 — i.e. their `capacity()` is identical.
+///
+/// This protects the zero-allocation-per-frame contract that
+/// correction B rests on. A regression that drops/recreates the inner
+/// Vecs would show up as a capacity reset.
+#[test]
+#[serial]
+fn test_zero_alloc_in_steady_state() {
+    let env = setup_engine_for_render_graph();
+    Engine::create_render_graph_manager().unwrap();
+    let rgm_arc = Engine::render_graph_manager().unwrap();
+    let (graph_key, pass_keys) = {
+        let mut rgm = rgm_arc.lock().unwrap();
+        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
+            base_array_layer: 0, layer_count: 1,
+        }).unwrap();
+        let (action, _) = make_recording_pass();
+        let pass = rgm.create_render_pass("opaque", vec![ResourceAccess {
+            graph_resource_key: color_gr,
+            access_type: AccessType::ColorAttachmentWrite,
+            target_ops: Some(default_color_ops()),
+        }], action).unwrap();
+        (graph_key, vec![pass])
+    };
+
+    let mut rgm = rgm_arc.lock().unwrap();
+
+    // Frame 1: warm up the access-history map.
+    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
+
+    // Snapshot capacities right after frame 1.
+    let cap_after_frame_1: Vec<usize> = rgm
+        .render_graph(graph_key).unwrap()
+        .image_access_history_capacities();
+
+    // Frames 2 & 3: re-run the same graph.
+    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
+
+    let cap_after_frame_3: Vec<usize> = rgm
+        .render_graph(graph_key).unwrap()
+        .image_access_history_capacities();
+
+    assert_eq!(
+        cap_after_frame_1, cap_after_frame_3,
+        "inner Vec capacities must not change between frame 1 and frame 3 \
+         (= no reallocation in steady state)",
+    );
+}

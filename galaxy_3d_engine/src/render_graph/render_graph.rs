@@ -13,9 +13,12 @@ use crate::error::Result;
 use crate::engine_bail;
 use crate::engine::Engine;
 use crate::graphics_device;
+use crate::resource::resource_manager::{BufferKey, TextureKey};
 use super::access_type::{AccessType, TargetOps};
 use super::frame_buffer::{Framebuffer, FramebufferKey};
-use super::graph_resource::{GraphResource, GraphResourceKey};
+use super::graph_resource::{
+    BufferSubRange, GraphResource, GraphResourceKey, ImageSubRange,
+};
 use super::render_pass::{RenderPass, RenderPassKey};
 
 slotmap::new_key_type! {
@@ -30,9 +33,20 @@ pub struct RenderGraph {
 
     // ===== Per-execute scratch (all reused via clear(), zero alloc steady-state) =====
     sorted_passes: Vec<RenderPassKey>,
-    prev_access: FxHashMap<GraphResourceKey, AccessType>,
     image_accesses: Vec<graphics_device::ImageAccess>,
     buffer_accesses: Vec<graphics_device::BufferAccess>,
+
+    // Per-frame access history, indexed by the underlying GPU
+    // TextureKey / BufferKey (NOT by GraphResourceKey). Two distinct
+    // GraphResources pointing at the same texture share their history,
+    // so the second-pass barrier sees the right `previous_access_type`
+    // and avoids the bug-tracking discard.
+    //
+    // Persisted across frames: `clear_access_history` clears the inner
+    // Vecs (preserving their capacity) without dropping the outer
+    // HashMap. Zero allocation in steady state.
+    prev_image_accesses: FxHashMap<TextureKey, Vec<(ImageSubRange, AccessType)>>,
+    prev_buffer_accesses: FxHashMap<BufferKey, Vec<(BufferSubRange, AccessType)>>,
 
     // Topological sort scratch
     in_degree: FxHashMap<RenderPassKey, u32>,
@@ -61,9 +75,17 @@ impl RenderGraph {
             command_lists,
             current_frame: frames_in_flight - 1,
             sorted_passes: Vec::new(),
-            prev_access: FxHashMap::default(),
             image_accesses: Vec::new(),
             buffer_accesses: Vec::new(),
+            // Pre-size the access-history maps to a comfortable capacity
+            // so the steady-state regime is reached quickly with no
+            // rehash. 64 textures / 32 buffers covers our typical graphs.
+            prev_image_accesses: FxHashMap::with_capacity_and_hasher(
+                64, Default::default(),
+            ),
+            prev_buffer_accesses: FxHashMap::with_capacity_and_hasher(
+                32, Default::default(),
+            ),
             in_degree: FxHashMap::default(),
             successors: FxHashMap::default(),
             writers: FxHashMap::default(),
@@ -141,15 +163,21 @@ impl RenderGraph {
         // Wrap pass execution in a closure so we can always end() the
         // command list, even on error — otherwise the next frame's
         // begin() would fail on a still-recording list.
-        self.prev_access.clear();
+        //
+        // Per-frame access history is reset *without* freeing the inner
+        // Vec buffers — they keep their capacity, so the steady-state
+        // run does no heap allocation here.
+        self.clear_access_history();
         let result = (|| -> Result<()> {
             for i in 0..self.sorted_passes.len() {
                 let pass_key = self.sorted_passes[i];
 
                 // Build the per-pass image/buffer access lists with
                 // resolved `previous_access_type` into the scratch buffers.
-                // The `prev_access` map is updated as we go so subsequent
-                // passes in the same frame see the right source state.
+                // The access history is updated as we go so subsequent
+                // passes in the same frame see the right source state —
+                // including when they reference the same TextureKey via
+                // a different GraphResourceKey (correction B).
                 self.image_accesses.clear();
                 self.buffer_accesses.clear();
                 // Materialise image/buffer accesses (Arc clones) under
@@ -159,14 +187,19 @@ impl RenderGraph {
                     let resource_manager = rm_arc.lock().unwrap();
                     let pass = passes_map.get(pass_key).unwrap();
                     for access in pass.accesses() {
-                        let prev = self.prev_access
-                            .get(&access.graph_resource_key)
-                            .copied();
                         match graph_resources.get(access.graph_resource_key).copied() {
                             Some(GraphResource::Texture {
                                 texture_key, base_mip_level, mip_count,
                                 base_array_layer, layer_count,
                             }) => {
+                                let sub_range = ImageSubRange {
+                                    base_mip_level, mip_count,
+                                    base_array_layer, layer_count,
+                                };
+                                let prev = self.find_previous_image_access(
+                                    texture_key, &sub_range,
+                                );
+
                                 if let Some(tex) = resource_manager.texture(texture_key) {
                                     self.image_accesses.push(graphics_device::ImageAccess {
                                         texture: tex.graphics_device_texture().clone(),
@@ -178,8 +211,17 @@ impl RenderGraph {
                                         layer_count,
                                     });
                                 }
+
+                                self.record_image_access(
+                                    texture_key, sub_range, access.access_type,
+                                );
                             }
                             Some(GraphResource::Buffer { buffer_key, offset, size }) => {
+                                let sub_range = BufferSubRange { offset, size };
+                                let prev = self.find_previous_buffer_access(
+                                    buffer_key, &sub_range,
+                                );
+
                                 if let Some(buf) = resource_manager.buffer(buffer_key) {
                                     self.buffer_accesses.push(graphics_device::BufferAccess {
                                         buffer: buf.graphics_device_buffer().clone(),
@@ -189,20 +231,39 @@ impl RenderGraph {
                                         size,
                                     });
                                 }
+
+                                self.record_buffer_access(
+                                    buffer_key, sub_range, access.access_type,
+                                );
                             }
                             None => {}
                         }
-                        self.prev_access.insert(access.graph_resource_key, access.access_type);
 
                         // An MSAA color attachment with a `resolve_target`
                         // also writes to the resolve texture at end-of-pass.
-                        // Track it in `prev_access` so the next reader of
-                        // the resolved texture sees `ColorAttachmentWrite`
-                        // as the source state.
+                        // Track it in the image access history so the next
+                        // reader of the resolved texture sees
+                        // `ColorAttachmentWrite` as the source state.
+                        // The resolve target points (by construction) at a
+                        // GraphResource::Texture, so we resolve it the same
+                        // way we resolved the primary attachment.
                         if let Some(TargetOps::Color { resolve_target: Some(rt), .. })
                             = access.target_ops
                         {
-                            self.prev_access.insert(rt, AccessType::ColorAttachmentWrite);
+                            if let Some(GraphResource::Texture {
+                                texture_key, base_mip_level, mip_count,
+                                base_array_layer, layer_count,
+                            }) = graph_resources.get(rt).copied() {
+                                let resolve_sub_range = ImageSubRange {
+                                    base_mip_level, mip_count,
+                                    base_array_layer, layer_count,
+                                };
+                                self.record_image_access(
+                                    texture_key,
+                                    resolve_sub_range,
+                                    AccessType::ColorAttachmentWrite,
+                                );
+                            }
                         }
                     }
                 }
@@ -342,6 +403,132 @@ impl RenderGraph {
         }
 
         Ok(())
+    }
+
+    // ============================================================
+    // Per-frame access history (correction B)
+    // ============================================================
+    //
+    // The history is indexed by the GPU TextureKey / BufferKey, NOT by
+    // GraphResourceKey. Two distinct GraphResources targeting the same
+    // texture share their access history — the second-pass barrier
+    // therefore sees the right `previous_access_type`, even when its
+    // sub-range overlaps the first pass's.
+
+    /// Clear the per-frame access history without freeing any internal
+    /// `Vec` buffer. Each inner Vec keeps its capacity for the next
+    /// frame; zero allocation in steady state.
+    fn clear_access_history(&mut self) {
+        for entries in self.prev_image_accesses.values_mut() {
+            entries.clear();
+        }
+        for entries in self.prev_buffer_accesses.values_mut() {
+            entries.clear();
+        }
+    }
+
+    /// Find the most recent `AccessType` that wrote/read a sub-range
+    /// overlapping `query` on the given texture.
+    ///
+    /// Returns `None` if no overlapping entry exists, or if multiple
+    /// overlapping entries disagree on `AccessType` (conservative
+    /// fallback — the caller will use `oldLayout = UNDEFINED`, which is
+    /// safe; see §2 of `.claude/notes/barrier_subrange_concurrency.md`).
+    fn find_previous_image_access(
+        &self,
+        texture_key: TextureKey,
+        query: &ImageSubRange,
+    ) -> Option<AccessType> {
+        let entries = self.prev_image_accesses.get(&texture_key)?;
+        let mut found: Option<AccessType> = None;
+        for (range, ty) in entries {
+            if range.overlaps(query) {
+                match found {
+                    None => found = Some(*ty),
+                    Some(prev) if prev == *ty => {}
+                    Some(_) => {
+                        crate::engine_warn!("galaxy3d::RenderGraph",
+                            "RenderGraph '{}': multiple overlapping previous \
+                             image accesses on same TextureKey with conflicting \
+                             AccessTypes; falling back to None",
+                            self.name);
+                        return None;
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// Append an entry to the texture's access history. The first time
+    /// a `TextureKey` is recorded, we allocate its inner Vec with
+    /// `with_capacity(8)` — enough for typical mip-chain / cubemap
+    /// usages without growth. Subsequent frames reuse the same Vec
+    /// (cleared, capacity preserved).
+    fn record_image_access(
+        &mut self,
+        texture_key: TextureKey,
+        sub_range: ImageSubRange,
+        access_type: AccessType,
+    ) {
+        self.prev_image_accesses
+            .entry(texture_key)
+            .or_insert_with(|| Vec::with_capacity(8))
+            .push((sub_range, access_type));
+    }
+
+    /// Buffer counterpart of `find_previous_image_access`.
+    fn find_previous_buffer_access(
+        &self,
+        buffer_key: BufferKey,
+        query: &BufferSubRange,
+    ) -> Option<AccessType> {
+        let entries = self.prev_buffer_accesses.get(&buffer_key)?;
+        let mut found: Option<AccessType> = None;
+        for (range, ty) in entries {
+            if range.overlaps(query) {
+                match found {
+                    None => found = Some(*ty),
+                    Some(prev) if prev == *ty => {}
+                    Some(_) => {
+                        crate::engine_warn!("galaxy3d::RenderGraph",
+                            "RenderGraph '{}': multiple overlapping previous \
+                             buffer accesses on same BufferKey with conflicting \
+                             AccessTypes; falling back to None",
+                            self.name);
+                        return None;
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// Buffer counterpart of `record_image_access`.
+    fn record_buffer_access(
+        &mut self,
+        buffer_key: BufferKey,
+        sub_range: BufferSubRange,
+        access_type: AccessType,
+    ) {
+        self.prev_buffer_accesses
+            .entry(buffer_key)
+            .or_insert_with(|| Vec::with_capacity(8))
+            .push((sub_range, access_type));
+    }
+
+    /// Test helper — snapshot the capacity of every inner Vec in the
+    /// per-texture access-history map. Used to assert the
+    /// zero-allocation-in-steady-state contract.
+    #[cfg(test)]
+    pub(crate) fn image_access_history_capacities(&self) -> Vec<usize> {
+        let mut caps: Vec<usize> = self
+            .prev_image_accesses
+            .values()
+            .map(|v| v.capacity())
+            .collect();
+        caps.sort_unstable();
+        caps
     }
 }
 

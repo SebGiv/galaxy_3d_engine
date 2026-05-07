@@ -72,10 +72,13 @@ pub(crate) fn access_type_to_stage_access_2(
 /// Build a single `VkImageMemoryBarrier2` for the given image and transition.
 ///
 /// `src_queue_family` / `dst_queue_family` are set to `QUEUE_FAMILY_IGNORED`
-/// (no ownership transfer); all mip levels and array layers are covered.
+/// (no ownership transfer). The caller-supplied `subresource_range` carries
+/// the aspect mask along with the precise mip / layer subset the barrier
+/// should affect — pass `whole_image_subresource_range(aspect)` to cover
+/// the whole image.
 pub(crate) fn image_barrier2(
     image: vk::Image,
-    aspect: vk::ImageAspectFlags,
+    subresource_range: vk::ImageSubresourceRange,
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
     src_stage: vk::PipelineStageFlags2,
@@ -93,21 +96,34 @@ pub(crate) fn image_barrier2(
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .image(image)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: aspect,
-            base_mip_level: 0,
-            level_count: vk::REMAINING_MIP_LEVELS,
-            base_array_layer: 0,
-            layer_count: vk::REMAINING_ARRAY_LAYERS,
-        })
+        .subresource_range(subresource_range)
+}
+
+/// Convenience: a `VkImageSubresourceRange` covering all mips and all
+/// layers of an image with the given aspect. Shorthand for the swapchain
+/// transitions and for any caller that targets the whole image at once.
+pub(crate) fn whole_image_subresource_range(
+    aspect: vk::ImageAspectFlags,
+) -> vk::ImageSubresourceRange {
+    vk::ImageSubresourceRange {
+        aspect_mask: aspect,
+        base_mip_level: 0,
+        level_count: vk::REMAINING_MIP_LEVELS,
+        base_array_layer: 0,
+        layer_count: vk::REMAINING_ARRAY_LAYERS,
+    }
 }
 
 /// Build a single `VkBufferMemoryBarrier2` for the given buffer and transition.
 ///
 /// `src_queue_family` / `dst_queue_family` are set to `QUEUE_FAMILY_IGNORED`
-/// (no ownership transfer); the whole buffer range is covered.
+/// (no ownership transfer). `offset` is in bytes from the start of the
+/// buffer; pass `vk::WHOLE_SIZE` as `size` to cover the rest of the
+/// buffer.
 pub(crate) fn buffer_barrier2(
     buffer: vk::Buffer,
+    offset: vk::DeviceSize,
+    size: vk::DeviceSize,
     src_stage: vk::PipelineStageFlags2,
     src_access: vk::AccessFlags2,
     dst_stage: vk::PipelineStageFlags2,
@@ -121,8 +137,8 @@ pub(crate) fn buffer_barrier2(
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
         .buffer(buffer)
-        .offset(0)
-        .size(vk::WHOLE_SIZE)
+        .offset(offset)
+        .size(size)
 }
 
 /// Emit one or more image and/or buffer barriers as a single
@@ -253,3 +269,7 @@ pub(crate) unsafe fn submit_command_buffers(
         .queue_submit2(queue, &[submit_info], fence)
         .map_err(|e| engine_err!("galaxy3d::vulkan", "queue_submit2 failed: {:?}", e))
 }
+
+#[cfg(test)]
+#[path = "vulkan_sync_tests.rs"]
+mod tests;

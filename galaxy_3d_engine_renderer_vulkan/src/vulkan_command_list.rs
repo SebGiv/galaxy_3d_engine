@@ -324,9 +324,22 @@ impl RendererCommandList for CommandList {
                     vk::ImageAspectFlags::COLOR
                 };
 
+                // Sub-range comes straight from the originating
+                // `GraphResource::Texture`. Our sentinels (`u32::MAX`)
+                // are bit-equal to `vk::REMAINING_MIP_LEVELS` and
+                // `vk::REMAINING_ARRAY_LAYERS`, so callers expressing
+                // "the whole texture" pass through unchanged.
+                let subresource_range = vk::ImageSubresourceRange {
+                    aspect_mask,
+                    base_mip_level: access.base_mip_level,
+                    level_count: access.mip_count,
+                    base_array_layer: access.base_array_layer,
+                    layer_count: access.layer_count,
+                };
+
                 self.barriers_scratch.push(crate::vulkan_sync::image_barrier2(
                     vk_texture.image,
-                    aspect_mask,
+                    subresource_range,
                     old_layout,
                     new_layout,
                     src_stage,
@@ -356,8 +369,13 @@ impl RendererCommandList for CommandList {
                     as *const Buffer;
                 let vk_buffer = &*vk_buffer;
 
+                // `u64::MAX` is bit-equal to `vk::WHOLE_SIZE`, so a
+                // BufferAccess that covers the whole buffer passes
+                // through unchanged.
                 self.buffer_barriers_scratch.push(crate::vulkan_sync::buffer_barrier2(
                     vk_buffer.buffer,
+                    access.offset,
+                    access.size,
                     src_stage,
                     src_access,
                     dst_stage,
