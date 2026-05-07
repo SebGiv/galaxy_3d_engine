@@ -72,6 +72,12 @@ impl AccessType {
 /// `previous_access_type` is precalculated by the render graph during
 /// `compile()` — the backend uses it to determine the source layout
 /// and pipeline stage for barrier emission.
+///
+/// The `(base_mip_level, mip_count, base_array_layer, layer_count)`
+/// fields describe the subresource view targeted by this access. They
+/// are populated from the originating `GraphResource::Texture` and are
+/// reserved for future barrier-granularity work; the current backend
+/// emits barriers covering the whole image.
 pub struct ImageAccess {
     /// The GPU texture being accessed
     pub texture: Arc<dyn Texture>,
@@ -79,6 +85,14 @@ pub struct ImageAccess {
     pub access_type: AccessType,
     /// How this texture was accessed previously (None = first use)
     pub previous_access_type: Option<AccessType>,
+    /// Base mip level of the subresource view.
+    pub base_mip_level: u32,
+    /// Number of mip levels covered (`u32::MAX` = `REMAINING_MIP_LEVELS`).
+    pub mip_count: u32,
+    /// Base array layer of the subresource view.
+    pub base_array_layer: u32,
+    /// Number of array layers covered (`u32::MAX` = `REMAINING_ARRAY_LAYERS`).
+    pub layer_count: u32,
 }
 
 /// Per-buffer access declaration for a render pass.
@@ -89,6 +103,12 @@ pub struct ImageAccess {
 ///
 /// Passed to `begin_render_pass()` alongside `ImageAccess`es —
 /// the backend merges them into a single `vkCmdPipelineBarrier2`.
+///
+/// The `(offset, size)` fields describe the byte subrange targeted by
+/// this access. They are populated from the originating
+/// `GraphResource::Buffer` and are reserved for future
+/// barrier-granularity work; the current backend emits barriers
+/// covering the whole buffer.
 pub struct BufferAccess {
     /// The GPU buffer being accessed
     pub buffer: Arc<dyn Buffer>,
@@ -96,6 +116,10 @@ pub struct BufferAccess {
     pub access_type: AccessType,
     /// How this buffer was accessed previously (None = first use)
     pub previous_access_type: Option<AccessType>,
+    /// Byte offset of the subrange.
+    pub offset: u64,
+    /// Number of bytes covered (`u64::MAX` = `WHOLE_SIZE`).
+    pub size: u64,
 }
 
 #[cfg(test)]

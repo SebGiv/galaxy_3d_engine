@@ -58,7 +58,7 @@ fn test_render_graph_execute_via_manager_runs_post_passes() {
         let mut rgm = rgm_arc.lock().unwrap();
         let graph_key = rgm.create_render_graph("main", 1).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
         let (action, _) = make_recording_pass();
         let pass_key = rgm.create_render_pass("opaque", vec![ResourceAccess {
@@ -113,7 +113,7 @@ fn test_render_graph_topological_sort_with_writer_reader() {
         let mut rgm = rgm_arc.lock().unwrap();
         let graph_key = rgm.create_render_graph("main", 1).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
         // Writer: writes color
         let (writer_action, _) = make_recording_pass();
@@ -148,7 +148,7 @@ fn test_render_graph_command_list_ok_after_execute() {
         let mut rgm = rgm_arc.lock().unwrap();
         let graph_key = rgm.create_render_graph("main", 2).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
         let (action, _) = make_recording_pass();
         let _pass_key = rgm.create_render_pass("opaque", vec![ResourceAccess {
@@ -182,10 +182,10 @@ fn test_render_graph_execute_detects_cycle() {
         let graph_key = rgm.create_render_graph("main", 1).unwrap();
 
         let color_a = rgm.create_graph_resource("color_a", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
         let color_b = rgm.create_graph_resource("color_b", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
 
         // Pass A: writes color_a, reads color_b → depends on B.
@@ -236,7 +236,7 @@ fn test_render_graph_execute_advances_through_frames() {
         let mut rgm = rgm_arc.lock().unwrap();
         let graph_key = rgm.create_render_graph("main", 3).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
         let (action, _) = make_recording_pass();
         let _pk = rgm.create_render_pass("opaque", vec![ResourceAccess {
@@ -279,9 +279,9 @@ fn test_render_graph_execute_with_buffer_resource_access() {
         let mut rgm = rgm_arc.lock().unwrap();
         let graph_key = rgm.create_render_graph("main", 1).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
-        let buf_gr = rgm.create_graph_resource("buf", GraphResource::Buffer(buf_key)).unwrap();
+        let buf_gr = rgm.create_graph_resource("buf", GraphResource::Buffer { buffer_key: buf_key, offset: 0, size: u64::MAX }).unwrap();
         let (action, _) = make_recording_pass();
         let pass_key = rgm.create_render_pass("opaque_with_buf", vec![
             ResourceAccess {
@@ -317,7 +317,7 @@ fn test_render_graph_execute_writer_equals_reader_self_loop() {
         let mut rgm = rgm_arc.lock().unwrap();
         let graph_key = rgm.create_render_graph("main", 1).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
         let (action, _) = make_recording_pass();
         // One pass writes color (ColorAttachmentWrite) AND reads it
@@ -348,10 +348,11 @@ fn test_graph_resource_with_buffer_does_not_panic_on_construction() {
     // un-registered BufferKey — only used as a render-pass attachment
     // would surface a failure.
     use crate::resource::resource_manager::BufferKey;
-    let _ = GraphResource::Buffer(BufferKey::default());
+    let _ = GraphResource::Buffer { buffer_key: BufferKey::default(), offset: 0, size: u64::MAX };
     let _ = GraphResource::Texture {
         texture_key: TextureKey::default(),
         base_mip_level: 0,
+        mip_count: 1,
         base_array_layer: 0,
         layer_count: 1,
     };

@@ -37,6 +37,7 @@ fn test_create_graph_resource() {
         GraphResource::Texture {
             texture_key: TextureKey::default(),
             base_mip_level: 0,
+            mip_count: 1,
             base_array_layer: 0,
             layer_count: 1,
         },
@@ -54,14 +55,14 @@ fn test_create_graph_resource_duplicate_name_fails() {
         "color",
         GraphResource::Texture {
             texture_key: TextureKey::default(),
-            base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         },
     ).unwrap();
     let result = rgm.create_graph_resource(
         "color",
         GraphResource::Texture {
             texture_key: TextureKey::default(),
-            base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         },
     );
     assert!(result.is_err());
@@ -79,7 +80,7 @@ fn test_graph_resource_not_found() {
 fn test_remove_graph_resource_by_key() {
     let mut rgm = RenderGraphManager::new();
     let key = rgm.create_graph_resource("r",
-        GraphResource::Buffer(crate::resource::resource_manager::BufferKey::default())
+        GraphResource::Buffer { buffer_key: crate::resource::resource_manager::BufferKey::default(), offset: 0, size: u64::MAX }
     ).unwrap();
     assert!(rgm.remove_graph_resource(key));
     assert_eq!(rgm.graph_resource_count(), 0);
@@ -92,7 +93,7 @@ fn test_remove_graph_resource_by_key() {
 fn test_remove_graph_resource_by_name() {
     let mut rgm = RenderGraphManager::new();
     rgm.create_graph_resource("r",
-        GraphResource::Buffer(crate::resource::resource_manager::BufferKey::default())
+        GraphResource::Buffer { buffer_key: crate::resource::resource_manager::BufferKey::default(), offset: 0, size: u64::MAX }
     ).unwrap();
     assert!(rgm.remove_graph_resource_by_name("r"));
     assert_eq!(rgm.graph_resource_count(), 0);
@@ -104,11 +105,65 @@ fn test_clear_drops_graph_resources() {
     let mut rgm = RenderGraphManager::new();
     rgm.create_graph_resource("color", GraphResource::Texture {
         texture_key: TextureKey::default(),
-        base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     rgm.clear();
     assert_eq!(rgm.graph_resource_count(), 0);
     assert!(rgm.graph_resource_by_name("color").is_none());
+}
+
+#[test]
+fn test_create_graph_resource_with_mip_count_zero_rejected() {
+    let mut rgm = RenderGraphManager::new();
+    let result = rgm.create_graph_resource("bad", GraphResource::Texture {
+        texture_key: TextureKey::default(),
+        base_mip_level: 0, mip_count: 0, base_array_layer: 0, layer_count: 1,
+    });
+    assert!(result.is_err(), "expected mip_count=0 to be rejected");
+    assert_eq!(rgm.graph_resource_count(), 0);
+}
+
+#[test]
+fn test_create_graph_resource_with_layer_count_zero_rejected() {
+    let mut rgm = RenderGraphManager::new();
+    let result = rgm.create_graph_resource("bad", GraphResource::Texture {
+        texture_key: TextureKey::default(),
+        base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 0,
+    });
+    assert!(result.is_err(), "expected layer_count=0 to be rejected");
+    assert_eq!(rgm.graph_resource_count(), 0);
+}
+
+#[test]
+fn test_create_graph_resource_with_size_zero_rejected() {
+    let mut rgm = RenderGraphManager::new();
+    let result = rgm.create_graph_resource("bad", GraphResource::Buffer {
+        buffer_key: crate::resource::resource_manager::BufferKey::default(),
+        offset: 0,
+        size: 0,
+    });
+    assert!(result.is_err(), "expected size=0 to be rejected");
+    assert_eq!(rgm.graph_resource_count(), 0);
+}
+
+#[test]
+fn test_create_graph_resource_with_remaining_sentinels_accepted() {
+    // Sentinels (REMAINING_*, WHOLE_SIZE) must be accepted as-is — they
+    // are u32::MAX / u64::MAX, not 0.
+    let mut rgm = RenderGraphManager::new();
+    rgm.create_graph_resource("full_tex", GraphResource::Texture {
+        texture_key: TextureKey::default(),
+        base_mip_level: 0,
+        mip_count: crate::render_graph::REMAINING_MIP_LEVELS,
+        base_array_layer: 0,
+        layer_count: crate::render_graph::REMAINING_ARRAY_LAYERS,
+    }).expect("REMAINING_* sentinels should be accepted for textures");
+    rgm.create_graph_resource("full_buf", GraphResource::Buffer {
+        buffer_key: crate::resource::resource_manager::BufferKey::default(),
+        offset: 0,
+        size: crate::render_graph::WHOLE_SIZE,
+    }).expect("WHOLE_SIZE sentinel should be accepted for buffers");
+    assert_eq!(rgm.graph_resource_count(), 2);
 }
 
 #[test]
@@ -158,7 +213,7 @@ fn test_create_render_pass_color_only() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let pass_key = rgm.create_render_pass("opaque", vec![
@@ -182,10 +237,10 @@ fn test_create_render_pass_color_and_depth() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let depth_gr = rgm.create_graph_resource("depth", GraphResource::Texture {
-        texture_key: env.depth_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.depth_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let pass_key = rgm.create_render_pass("opaque_z", vec![
@@ -210,7 +265,7 @@ fn test_create_render_pass_compute_only_has_no_framebuffer() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     // Only a sampled read — no attachment.
@@ -229,11 +284,109 @@ fn test_create_render_pass_compute_only_has_no_framebuffer() {
 
 #[test]
 #[serial]
+fn test_attachment_with_mip_count_gt_1_rejected() {
+    let env = setup_engine_for_render_graph();
+    let mut rgm = RenderGraphManager::new();
+    let bad_gr = rgm.create_graph_resource("bad", GraphResource::Texture {
+        texture_key: env.color_texture,
+        base_mip_level: 0,
+        mip_count: 2, // illegal for an attachment
+        base_array_layer: 0,
+        layer_count: 1,
+    }).unwrap();
+    let (action, _) = make_recording_pass();
+    let result = rgm.create_render_pass("p", vec![
+        ResourceAccess {
+            graph_resource_key: bad_gr,
+            access_type: AccessType::ColorAttachmentWrite,
+            target_ops: Some(default_color_ops()),
+        },
+    ], action);
+    assert!(result.is_err(), "attachment with mip_count=2 must be rejected");
+}
+
+#[test]
+#[serial]
+fn test_attachment_with_remaining_mips_rejected() {
+    let env = setup_engine_for_render_graph();
+    let mut rgm = RenderGraphManager::new();
+    let bad_gr = rgm.create_graph_resource("bad", GraphResource::Texture {
+        texture_key: env.color_texture,
+        base_mip_level: 0,
+        mip_count: crate::render_graph::REMAINING_MIP_LEVELS,
+        base_array_layer: 0,
+        layer_count: 1,
+    }).unwrap();
+    let (action, _) = make_recording_pass();
+    let result = rgm.create_render_pass("p", vec![
+        ResourceAccess {
+            graph_resource_key: bad_gr,
+            access_type: AccessType::ColorAttachmentWrite,
+            target_ops: Some(default_color_ops()),
+        },
+    ], action);
+    assert!(result.is_err(), "attachment with REMAINING_MIP_LEVELS must be rejected");
+}
+
+#[test]
+#[serial]
+fn test_non_attachment_with_mip_count_gt_1_accepted() {
+    // FragmentShaderRead may legitimately span multiple mips (sampler
+    // selects mip via LOD). The build_pass_cache rule only constrains
+    // attachment accesses.
+    let env = setup_engine_for_render_graph();
+    let mut rgm = RenderGraphManager::new();
+    let gr = rgm.create_graph_resource("sampled", GraphResource::Texture {
+        texture_key: env.color_texture,
+        base_mip_level: 0,
+        mip_count: crate::render_graph::REMAINING_MIP_LEVELS,
+        base_array_layer: 0,
+        layer_count: 1,
+    }).unwrap();
+    let (action, _) = make_recording_pass();
+    let pass_key = rgm.create_render_pass("compute", vec![
+        ResourceAccess {
+            graph_resource_key: gr,
+            access_type: AccessType::FragmentShaderRead,
+            target_ops: None,
+        },
+    ], action).expect("non-attachment access should accept any mip_count");
+    assert!(rgm.render_pass(pass_key).is_some());
+}
+
+#[test]
+#[serial]
+fn test_layered_attachment_accepted() {
+    // mip_count == 1, layer_count > 1 is the canonical layered-rendering
+    // shape (cubemap one-pass, cascaded shadow maps, multi-view) and must
+    // be accepted on attachments.
+    let env = setup_engine_for_render_graph();
+    let mut rgm = RenderGraphManager::new();
+    let gr = rgm.create_graph_resource("layered", GraphResource::Texture {
+        texture_key: env.color_texture,
+        base_mip_level: 0,
+        mip_count: 1,
+        base_array_layer: 0,
+        layer_count: 1, // env.color_texture has 1 layer; check is structural here
+    }).unwrap();
+    let (action, _) = make_recording_pass();
+    let pass_key = rgm.create_render_pass("layered", vec![
+        ResourceAccess {
+            graph_resource_key: gr,
+            access_type: AccessType::ColorAttachmentWrite,
+            target_ops: Some(default_color_ops()),
+        },
+    ], action).expect("mip_count=1 attachment should be accepted regardless of layer_count");
+    assert!(rgm.render_pass(pass_key).is_some());
+}
+
+#[test]
+#[serial]
 fn test_create_render_pass_duplicate_name_fails() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action1, _) = make_recording_pass();
     rgm.create_render_pass("p", vec![ResourceAccess {
@@ -252,7 +405,7 @@ fn test_create_render_pass_color_attachment_missing_target_ops_fails() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let result = rgm.create_render_pass("p", vec![ResourceAccess {
@@ -285,10 +438,10 @@ fn test_create_render_pass_two_depth_writes_fails() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let depth_gr = rgm.create_graph_resource("d1", GraphResource::Texture {
-        texture_key: env.depth_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.depth_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let depth_gr2 = rgm.create_graph_resource("d2", GraphResource::Texture {
-        texture_key: env.depth_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.depth_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let result = rgm.create_render_pass("p", vec![
@@ -312,7 +465,7 @@ fn test_create_render_pass_buffer_as_color_attachment_fails() {
     setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let buf_gr = rgm.create_graph_resource("buf",
-        GraphResource::Buffer(crate::resource::resource_manager::BufferKey::default())
+        GraphResource::Buffer { buffer_key: crate::resource::resource_manager::BufferKey::default(), offset: 0, size: u64::MAX }
     ).unwrap();
     let (action, _) = make_recording_pass();
     let result = rgm.create_render_pass("p", vec![ResourceAccess {
@@ -329,7 +482,7 @@ fn test_get_or_create_framebuffer_idempotent() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let slots = vec![ColorAttachmentSlot { color: color_gr, resolve: None }];
     // First call creates a new framebuffer.
@@ -346,10 +499,10 @@ fn test_get_or_create_framebuffer_different_for_different_attachments() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let depth_gr = rgm.create_graph_resource("d", GraphResource::Texture {
-        texture_key: env.depth_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.depth_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let slots = vec![ColorAttachmentSlot { color: color_gr, resolve: None }];
     let fb1 = rgm.get_or_create_framebuffer(&slots, None).unwrap();
@@ -364,7 +517,7 @@ fn test_remove_framebuffer_invalidates_cache() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let slots = vec![ColorAttachmentSlot { color: color_gr, resolve: None }];
     let fb1 = rgm.get_or_create_framebuffer(&slots, None).unwrap();
@@ -383,10 +536,10 @@ fn test_set_pass_access_resource() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let color_b = rgm.create_graph_resource("b", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let pass_key = rgm.create_render_pass("p", vec![ResourceAccess {
@@ -405,7 +558,7 @@ fn test_set_pass_access_resource_invalid_pass_fails() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     use slotmap::Key;
     let result = rgm.set_pass_access_resource(RenderPassKey::null(), 0, color_a);
@@ -418,7 +571,7 @@ fn test_set_pass_access_resource_out_of_bounds_fails() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let pass_key = rgm.create_render_pass("p", vec![ResourceAccess {
@@ -436,7 +589,7 @@ fn test_set_pass_access_target_ops() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let pass_key = rgm.create_render_pass("p", vec![ResourceAccess {
@@ -469,7 +622,7 @@ fn test_set_pass_access_target_ops_out_of_bounds_fails() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let pass_key = rgm.create_render_pass("p", vec![ResourceAccess {
@@ -487,10 +640,10 @@ fn test_replace_pass_accesses() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let depth_a = rgm.create_graph_resource("d", GraphResource::Texture {
-        texture_key: env.depth_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.depth_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     let pass_key = rgm.create_render_pass("p", vec![ResourceAccess {
@@ -536,7 +689,7 @@ fn test_execute_render_graph_runs_each_pass_once() {
         let mut rgm = rgm_arc.lock().unwrap();
         let graph_key = rgm.create_render_graph("main", 1).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
-            texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+            texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
         let (action, counter) = make_recording_pass();
         let pass_key = rgm.create_render_pass("opaque", vec![ResourceAccess {
@@ -585,7 +738,7 @@ fn test_clear_drops_engine_backed_passes() {
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
-        texture_key: env.color_texture, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
+        texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let (action, _) = make_recording_pass();
     rgm.create_render_pass("p", vec![ResourceAccess {

@@ -2012,11 +2012,21 @@ pub enum GraphResource {
     Texture {
         texture_key: TextureKey,
         base_mip_level: u32,
+        mip_count: u32,                // 1 for attachments, REMAINING for full chain
         base_array_layer: u32,
         layer_count: u32,
     },
-    Buffer(BufferKey),
+    Buffer {
+        buffer_key: BufferKey,
+        offset: u64,                   // bytes from buffer start
+        size: u64,                     // bytes covered, or WHOLE_SIZE
+    },
 }
+
+// Sentinels matching VK_REMAINING_* / VK_WHOLE_SIZE
+pub const REMAINING_MIP_LEVELS: u32 = u32::MAX;
+pub const REMAINING_ARRAY_LAYERS: u32 = u32::MAX;
+pub const WHOLE_SIZE: u64 = u64::MAX;
 ```
 
 Why hold a key, not an `Arc<dyn Texture>`?
@@ -2027,10 +2037,36 @@ Why hold a key, not an `Arc<dyn Texture>`?
   passes — by changing only the key. No graph reconstruction.
 
 `Hash + Eq + PartialEq` are derived: equality includes both the key *and* the view
-subset (mip level, array layer, layer count). This lets `GraphResource` participate in
+subset (mip range, layer range, byte range). This lets `GraphResource` participate in
 hashable cache keys (notably `FramebufferLookupKey`).
 
 `is_texture()` / `is_buffer()` are simple discriminator helpers.
+
+Constructor helpers exposed alongside:
+
+- `GraphResource::texture_attachment(key, mip, base_layer, layer_count)` — sets
+  `mip_count = 1` (the only value Vulkan allows for attachments).
+- `GraphResource::texture_full(key)` — full mip-chain, full layer range; useful
+  for sampled / storage usages.
+- `GraphResource::buffer_full(key)` — `(0, WHOLE_SIZE)`.
+- `GraphResource::buffer_range(key, offset, size)` — explicit byte subrange.
+
+The `mip_count` / `(offset, size)` fields are propagated through `ImageAccess` /
+`BufferAccess` to the backend but are currently ignored by `image_barrier2` /
+`buffer_barrier2` (barriers always cover the whole resource — see `.claude/notes/`
+for the migration plan).
+
+#### Validation rules
+
+- **At creation time** (`RenderGraphManager::create_graph_resource`) — the engine
+  rejects `mip_count == 0`, `layer_count == 0`, and `size == 0`. The sentinel
+  values `REMAINING_MIP_LEVELS`/`REMAINING_ARRAY_LAYERS`/`WHOLE_SIZE` are
+  `u32::MAX`/`u64::MAX`, not zero, so they pass through.
+- **At pass-cache build time** (`build_pass_cache`) — every attachment access
+  (`is_attachment()`) must reference a `GraphResource::Texture` whose
+  `mip_count == 1`. Vulkan does not allow rendering into multiple mip levels of
+  an attachment simultaneously, so the engine fails fast with a clear message
+  rather than letting SyncVal report a hazard at draw time.
 
 ### 11.3 TargetOps and ResourceAccess
 

@@ -317,6 +317,30 @@ impl RenderGraphManager {
             engine_bail!("galaxy3d::RenderGraphManager",
                 "GraphResource '{}' already exists", name);
         }
+        // Sanity-check the subresource ranges. The sentinel values
+        // `REMAINING_MIP_LEVELS`, `REMAINING_ARRAY_LAYERS` and `WHOLE_SIZE`
+        // are `u32::MAX` / `u64::MAX` so the `!= 0` check accepts them.
+        match resource {
+            GraphResource::Texture { mip_count, layer_count, .. } => {
+                if mip_count == 0 {
+                    engine_bail!("galaxy3d::RenderGraphManager",
+                        "GraphResource '{}': mip_count must be >= 1 or REMAINING_MIP_LEVELS, got 0",
+                        name);
+                }
+                if layer_count == 0 {
+                    engine_bail!("galaxy3d::RenderGraphManager",
+                        "GraphResource '{}': layer_count must be >= 1 or REMAINING_ARRAY_LAYERS, got 0",
+                        name);
+                }
+            }
+            GraphResource::Buffer { size, .. } => {
+                if size == 0 {
+                    engine_bail!("galaxy3d::RenderGraphManager",
+                        "GraphResource '{}': size must be >= 1 or WHOLE_SIZE, got 0",
+                        name);
+                }
+            }
+        }
         let key = self.graph_resources.insert(resource);
         self.graph_resource_names.insert(name.to_string(), key);
         Ok(key)
@@ -485,6 +509,26 @@ impl RenderGraphManager {
         // Walk accesses once, splitting attachment inputs across color /
         // resolve / depth-write buckets.
         for access in accesses {
+            // Vulkan does not allow rendering into multiple mip levels of
+            // an attachment simultaneously: every attachment access must
+            // therefore reference a `GraphResource::Texture` with
+            // `mip_count == 1`. Catch the misconfiguration here so the
+            // user gets a clear engine-side error instead of a SyncVal /
+            // VVL hazard at draw time.
+            if access.access_type.is_attachment() {
+                if let Some(GraphResource::Texture { mip_count, .. })
+                    = graph_resources.get(access.graph_resource_key).copied()
+                {
+                    if mip_count != 1 {
+                        engine_bail!("galaxy3d::RenderGraphManager",
+                            "Pass '{}': attachment access requires mip_count == 1, \
+                             got {} (Vulkan does not allow rendering into multiple \
+                             mip levels of an attachment simultaneously)",
+                            pass_name, mip_count);
+                    }
+                }
+            }
+
             match access.access_type {
                 AccessType::ColorAttachmentWrite | AccessType::ColorAttachmentRead => {
                     let (color_format, color_samples) = Self::resolve_texture_info(
@@ -691,10 +735,9 @@ impl RenderGraphManager {
         pass_name: &str,
         role: &str,
     ) -> Result<(graphics_device::TextureFormat, graphics_device::SampleCount)> {
-        let (texture_key, _, _, _) = match graph_resources.get(key).copied() {
-            Some(GraphResource::Texture { texture_key, base_mip_level, base_array_layer, layer_count }) =>
-                (texture_key, base_mip_level, base_array_layer, layer_count),
-            Some(GraphResource::Buffer(_)) => {
+        let texture_key = match graph_resources.get(key).copied() {
+            Some(GraphResource::Texture { texture_key, .. }) => texture_key,
+            Some(GraphResource::Buffer { .. }) => {
                 engine_bail!("galaxy3d::RenderGraphManager",
                     "Pass '{}': {} expected a Texture GraphResource, got Buffer",
                     pass_name, role);
@@ -875,9 +918,10 @@ impl RenderGraphManager {
     ) -> Result<graphics_device::FramebufferAttachment> {
         let (texture_key, base_mip_level, base_array_layer, layer_count)
             = match graph_resources.get(key).copied() {
-                Some(GraphResource::Texture { texture_key, base_mip_level, base_array_layer, layer_count }) =>
-                    (texture_key, base_mip_level, base_array_layer, layer_count),
-                Some(GraphResource::Buffer(_)) => {
+                Some(GraphResource::Texture {
+                    texture_key, base_mip_level, base_array_layer, layer_count, ..
+                }) => (texture_key, base_mip_level, base_array_layer, layer_count),
+                Some(GraphResource::Buffer { .. }) => {
                     engine_bail!("galaxy3d::RenderGraphManager",
                         "framebuffer attachment expected a Texture, got Buffer");
                 }

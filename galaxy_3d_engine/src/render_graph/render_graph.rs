@@ -163,21 +163,30 @@ impl RenderGraph {
                             .get(&access.graph_resource_key)
                             .copied();
                         match graph_resources.get(access.graph_resource_key).copied() {
-                            Some(GraphResource::Texture { texture_key, .. }) => {
+                            Some(GraphResource::Texture {
+                                texture_key, base_mip_level, mip_count,
+                                base_array_layer, layer_count,
+                            }) => {
                                 if let Some(tex) = resource_manager.texture(texture_key) {
                                     self.image_accesses.push(graphics_device::ImageAccess {
                                         texture: tex.graphics_device_texture().clone(),
                                         access_type: access.access_type,
                                         previous_access_type: prev,
+                                        base_mip_level,
+                                        mip_count,
+                                        base_array_layer,
+                                        layer_count,
                                     });
                                 }
                             }
-                            Some(GraphResource::Buffer(buf_key)) => {
-                                if let Some(buf) = resource_manager.buffer(buf_key) {
+                            Some(GraphResource::Buffer { buffer_key, offset, size }) => {
+                                if let Some(buf) = resource_manager.buffer(buffer_key) {
                                     self.buffer_accesses.push(graphics_device::BufferAccess {
                                         buffer: buf.graphics_device_buffer().clone(),
                                         access_type: access.access_type,
                                         previous_access_type: prev,
+                                        offset,
+                                        size,
                                     });
                                 }
                             }
