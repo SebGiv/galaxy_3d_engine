@@ -2250,7 +2250,16 @@ pub struct RenderGraph {
     // Topo-sort scratch
     in_degree: FxHashMap<RenderPassKey, u32>,
     successors: FxHashMap<RenderPassKey, Vec<RenderPassKey>>,
-    writers: FxHashMap<GraphResourceKey, RenderPassKey>,
+
+    // Topo-sort writer history, indexed by GPU key. Persisted across
+    // calls; inner Vecs cleared per topological_sort run (capacity
+    // preserved). The pair of "global vs streaming" tables mirrors the
+    // RAW/WAW two-pass strategy described in §11.9 (correction C).
+    image_writers:           FxHashMap<TextureKey, Vec<(ImageSubRange, RenderPassKey)>>,
+    buffer_writers:          FxHashMap<BufferKey,  Vec<(BufferSubRange, RenderPassKey)>>,
+    streaming_image_writers: FxHashMap<TextureKey, Vec<(ImageSubRange, RenderPassKey)>>,
+    streaming_buffer_writers:FxHashMap<BufferKey,  Vec<(BufferSubRange, RenderPassKey)>>,
+
     topo_queue: VecDeque<RenderPassKey>,
 }
 ```
@@ -2338,36 +2347,61 @@ Critical points:
 `topological_sort` is Kahn's algorithm with **two distinct dependency kinds**:
 *Read-After-Write* (a reader depends on whoever wrote the resource last) and
 *Write-After-Write* (a second writer depends on the previous writer to preserve
-user-supplied order). The implementation uses a two-pass strategy with separate
-writer tables for each kind:
+user-supplied order). Since correction C, dependencies are detected at the
+**GPU-resource granularity, not the `GraphResourceKey` granularity** — two
+passes touching the same `TextureKey` / `BufferKey` on overlapping
+sub-ranges get an edge even when they reference the resource through
+different `GraphResource`s.
+
+The implementation uses a two-pass strategy with separate writer history
+maps for each kind:
+
+```rust
+image_writers:           FxHashMap<TextureKey, Vec<(ImageSubRange, RenderPassKey)>>,
+buffer_writers:          FxHashMap<BufferKey,  Vec<(BufferSubRange, RenderPassKey)>>,
+streaming_image_writers: FxHashMap<TextureKey, Vec<(ImageSubRange, RenderPassKey)>>,
+streaming_buffer_writers:FxHashMap<BufferKey,  Vec<(BufferSubRange, RenderPassKey)>>,
+```
 
 1. Initialize `in_degree[k] = 0` for every pass `k`.
-2. **Pass 1 — global last-writer table** (drives RAW deps). Walk every pass, for every
-   write access set `self.writers[resource_key] = pass_key`. After this pass,
-   `self.writers` contains the *last* writer of each resource irrespective of user
-   order. This is what lets a reader correctly order itself behind a writer that
-   appears later in the batch (and what makes mutual reads form the classic cycle
-   detected at step 5).
-3. **Pass 2 — stream user order**. Maintain a separate `streaming_writers` map and
-   walk passes in user-supplied order:
-   - **Write access** → if `streaming_writers[resource_key]` exists and is not
-     `self`, add a WAW edge `prev → self`, then update
-     `streaming_writers[resource_key] = self`. WAW deps use the *streaming* table
-     (not the global one) so multiple writers of the same resource stay in user
-     order without injecting fake reverse-direction edges.
-   - **Read access** → if `self.writers[resource_key]` exists and is not `self`,
-     add a RAW edge `writer → self`. The `writer != self` skip handles read-modify-
-     write self-loops (a pass that both writes and reads the same resource).
+2. **Pass 1 — global writers table** (drives RAW deps). Walk every pass; for every
+   write access, resolve the `GraphResourceKey` to its underlying GPU key + sub-range
+   (`(TextureKey, ImageSubRange)` or `(BufferKey, BufferSubRange)`) and append the
+   pair to the right `*_writers` map. After this pass, the maps contain *every*
+   writer in the frame, classified by GPU key, with their sub-range.
+3. **Pass 2 — stream user order**. Walk passes in user-supplied order; for every
+   access, resolve to the GPU key + sub-range:
+   - **Write access** → look up the matching `streaming_*_writers` map. For every
+     entry whose sub-range overlaps the current one (and isn't `self`), add a WAW
+     edge `prev → self`. Then push `(sub_range, self)` into the map. WAW deps use
+     the *streaming* tables so multiple writers of the same resource stay in user
+     order without injecting reverse-direction edges.
+   - **Read access** → look up the matching global `*_writers` map. For every
+     entry whose sub-range overlaps the current one (and isn't `self`), add a RAW
+     edge `writer → self`. The `writer != self` skip handles read-modify-write
+     self-loops (a pass that both writes and reads the same resource).
 4. Push every pass with `in_degree == 0` onto `topo_queue`.
 5. Drain: pop, append to `sorted_passes`, decrement `in_degree` of successors, push
    newly-zeroed nodes.
 6. **Cycle detection**: if `sorted_passes.len() != passes.len()`, bail with
    `RenderGraph '{}': cycle detected ({} of {} passes ordered)`.
 
+Edge-case fan-in: if multiple writers in the global table overlap a single
+read, the reader collects one RAW edge per overlapping writer. The `in_degree`
+arithmetic balances correctly even when an edge is recorded more than once
+(rare in practice; deduplication can be added if hot graphs warrant it).
+
 The WAW path is what enables the `DebugPassAction` overlay: a debug pass that *reads
 and writes* the same LDR target as the upstream tonemap pass would, with RAW alone,
 appear unordered against tonemap (both write the same resource, no read-from-tonemap-
 writer). With WAW the debug overlay is correctly placed after tonemap.
+
+**Per-frame allocation contract.** All four writer history maps are
+pre-sized at `RenderGraph::new` (`with_capacity(64)` for textures,
+`(32)` for buffers) and persisted across calls. `topological_sort`
+clears each inner `Vec` individually at entry (capacity preserved) —
+zero allocation in steady state, identical pattern to
+`prev_image_accesses` / `prev_buffer_accesses` (correction B).
 
 ### 11.10 RenderGraphManager — central authority
 
@@ -3254,8 +3288,9 @@ The codebase enforces zero heap allocation in the steady state at multiple layer
 | `VisibleInstances` | `Vec<VisibleInstance>` cleared and refilled per cull |
 | `RenderView` | `Vec<VisibleSubMesh>` cleared and refilled per dispatch |
 | `RenderQueue::draw_calls`, `sort_entries` | preallocated to capacity, `clear()` per frame |
-| `RenderGraph` scratch (`sorted_passes`, `image_accesses`, `buffer_accesses`, `in_degree`, `successors`, `writers`, `topo_queue`) | preallocated, cleared per execute |
+| `RenderGraph` scratch (`sorted_passes`, `image_accesses`, `buffer_accesses`, `in_degree`, `successors`, `topo_queue`) | preallocated, cleared per execute |
 | `RenderGraph::prev_image_accesses` / `prev_buffer_accesses` | preallocated `with_capacity(64)` / `(32)`; **inner Vecs cleared per frame, outer HashMap kept** to preserve all capacities (zero alloc steady state) |
+| `RenderGraph::image_writers` / `buffer_writers` / `streaming_image_writers` / `streaming_buffer_writers` (correction C topo-sort scratch) | preallocated `with_capacity(64)` / `(32)`; **inner Vecs cleared per topological_sort call, outer HashMap kept**; same zero-alloc pattern as the access-history maps |
 | `VulkanCommandList` scratch (`barriers_scratch`, `buffer_barriers_scratch`, `color_infos_scratch`) | preallocated, cleared per `begin_render_pass` |
 | `vulkan_sync::submit_command_buffers` | stack-allocated fixed-capacity arrays for `VkSubmitInfo2` payload |
 | `DefaultUpdater::enabled_light_keys`, `candidates` | persistent across frames *and* across instances within a frame |

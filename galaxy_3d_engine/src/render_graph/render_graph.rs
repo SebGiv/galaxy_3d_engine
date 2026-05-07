@@ -51,7 +51,26 @@ pub struct RenderGraph {
     // Topological sort scratch
     in_degree: FxHashMap<RenderPassKey, u32>,
     successors: FxHashMap<RenderPassKey, Vec<RenderPassKey>>,
-    writers: FxHashMap<GraphResourceKey, RenderPassKey>,
+
+    // Per-GPU-key writer history for the topological sort. Indexed by
+    // the underlying TextureKey / BufferKey; each Vec lists every
+    // (sub_range, writer) pair so that overlap-based dependency
+    // detection (correction C) handles distinct GraphResources that
+    // alias the same GPU resource. Persisted across calls; inner Vecs
+    // cleared per topological_sort run (capacity preserved).
+    //
+    // Two distinct buckets per resource type to mirror the two-pass
+    // strategy:
+    //   - `image_writers` / `buffer_writers`     : Pass 1, global
+    //     last-writer table, source of RAW dep edges.
+    //   - `streaming_image_writers` / `streaming_buffer_writers`
+    //     : Pass 2, streaming view in user-declared order, source of
+    //     WAW dep edges. Walking and updating happens in lockstep.
+    image_writers: FxHashMap<TextureKey, Vec<(ImageSubRange, RenderPassKey)>>,
+    buffer_writers: FxHashMap<BufferKey, Vec<(BufferSubRange, RenderPassKey)>>,
+    streaming_image_writers: FxHashMap<TextureKey, Vec<(ImageSubRange, RenderPassKey)>>,
+    streaming_buffer_writers: FxHashMap<BufferKey, Vec<(BufferSubRange, RenderPassKey)>>,
+
     topo_queue: VecDeque<RenderPassKey>,
 }
 
@@ -88,7 +107,21 @@ impl RenderGraph {
             ),
             in_degree: FxHashMap::default(),
             successors: FxHashMap::default(),
-            writers: FxHashMap::default(),
+            // Pre-size the writer-history maps. 64 textures / 32 buffers
+            // covers our typical graphs without rehash; subsequent
+            // topological_sort calls reuse this capacity.
+            image_writers: FxHashMap::with_capacity_and_hasher(
+                64, Default::default(),
+            ),
+            buffer_writers: FxHashMap::with_capacity_and_hasher(
+                32, Default::default(),
+            ),
+            streaming_image_writers: FxHashMap::with_capacity_and_hasher(
+                64, Default::default(),
+            ),
+            streaming_buffer_writers: FxHashMap::with_capacity_and_hasher(
+                32, Default::default(),
+            ),
             topo_queue: VecDeque::new(),
         })
     }
@@ -153,7 +186,7 @@ impl RenderGraph {
         // 2. (Pass caches are eager — no recompile here.)
 
         // 3. Topological sort.
-        self.topological_sort(passes_map, passes)?;
+        self.topological_sort(passes_map, graph_resources, passes)?;
 
         // 4. Advance ring command list.
         let frame = (self.current_frame + 1) % self.command_lists.len();
@@ -307,77 +340,151 @@ impl RenderGraph {
         result
     }
 
-    /// Kahn's algorithm with both Read-After-Write (RAW) and Write-After-Write
-    /// (WAW) dependencies on shared `GraphResourceKey`s.
+    /// Kahn's algorithm with overlap-based Read-After-Write (RAW) and
+    /// Write-After-Write (WAW) dependencies on shared GPU resources
+    /// (correction C).
+    ///
+    /// Each access is resolved to its underlying `(TextureKey,
+    /// ImageSubRange)` or `(BufferKey, BufferSubRange)`. Two passes
+    /// touching the same GPU resource on overlapping sub-ranges therefore
+    /// get a dependency edge even when they reference the resource through
+    /// distinct `GraphResource`s.
     ///
     /// Two-pass strategy with distinct semantics:
-    ///   - Pass 1 fills `self.writers` with the *global last writer* of each
-    ///     resource (irrespective of user order) — used for RAW deps so a
-    ///     read on a resource that some other pass writes anywhere in the
-    ///     batch is still correctly ordered (and mutual reads form the
-    ///     classic cycle).
-    ///   - Pass 2 streams `passes` in user order, maintaining a separate
-    ///     `streaming_writers` map. Writes create WAW deps against the most
-    ///     recent writer encountered so far; reads use the global table
-    ///     from Pass 1.
+    ///   - **Pass 1** fills `image_writers` / `buffer_writers` with the
+    ///     full list of writers per GPU key, irrespective of user order.
+    ///     A reader pulls RAW deps from this table — every overlapping
+    ///     writer in the frame becomes a predecessor.
+    ///   - **Pass 2** streams `passes` in user order, walking and
+    ///     updating `streaming_image_writers` / `streaming_buffer_writers`
+    ///     in lockstep. A writer pulls WAW deps from this table — only
+    ///     the writers already seen in user order are predecessors.
+    ///     Multiple writes on the same sub-range therefore stay in
+    ///     user-supplied order without injecting reverse-direction edges.
     ///
-    /// Result lands in `self.sorted_passes`. All scratch maps are cleared
-    /// at entry, populated, then the queue is drained.
+    /// Result lands in `self.sorted_passes`. All four writer maps are
+    /// kept across calls; only their inner Vecs are cleared at entry
+    /// (capacity preserved).
     fn topological_sort(
         &mut self,
         passes_map: &SlotMap<RenderPassKey, RenderPass>,
+        graph_resources: &SlotMap<GraphResourceKey, GraphResource>,
         passes: &[RenderPassKey],
     ) -> Result<()> {
-        self.in_degree.clear();
-        self.successors.clear();
-        self.writers.clear();
-        self.topo_queue.clear();
-        self.sorted_passes.clear();
+        self.clear_topo_state();
 
         for &k in passes {
             self.in_degree.insert(k, 0);
             self.successors.insert(k, Vec::new());
         }
 
-        // Pass 1: global "last writer" per resource (for RAW deps).
+        // ===== Pass 1: collect ALL writers per GPU key. =====
+        // Unlike the legacy "single last writer" table, we accumulate
+        // every write — distinct sub-ranges on the same texture all
+        // coexist in the same Vec, and the lookup later filters by
+        // overlap.
         for &k in passes {
             let pass = passes_map.get(k).unwrap();
             for access in pass.accesses() {
-                if access.access_type.is_write() {
-                    self.writers.insert(access.graph_resource_key, k);
+                if !access.access_type.is_write() { continue; }
+                match graph_resources.get(access.graph_resource_key).copied() {
+                    Some(GraphResource::Texture {
+                        texture_key, base_mip_level, mip_count,
+                        base_array_layer, layer_count,
+                    }) => {
+                        let r = ImageSubRange {
+                            base_mip_level, mip_count,
+                            base_array_layer, layer_count,
+                        };
+                        self.image_writers
+                            .entry(texture_key)
+                            .or_insert_with(|| Vec::with_capacity(8))
+                            .push((r, k));
+                    }
+                    Some(GraphResource::Buffer { buffer_key, offset, size }) => {
+                        let r = BufferSubRange { offset, size };
+                        self.buffer_writers
+                            .entry(buffer_key)
+                            .or_insert_with(|| Vec::with_capacity(8))
+                            .push((r, k));
+                    }
+                    None => {}
                 }
             }
         }
 
-        // Pass 2: stream user order. Reads pull RAW deps from the global
-        // table built above; writes pull WAW deps from a streaming local
-        // table, then update it. The locality is what ensures multiple
-        // writers of the same resource stay in user-supplied order without
-        // injecting fake reverse-direction deps.
-        let mut streaming_writers: FxHashMap<GraphResourceKey, RenderPassKey> =
-            FxHashMap::default();
+        // ===== Pass 2: stream passes in user order, build edges. =====
         for &k in passes {
             let pass = passes_map.get(k).unwrap();
             for access in pass.accesses() {
-                if access.access_type.is_write() {
-                    if let Some(&prev) = streaming_writers.get(&access.graph_resource_key) {
-                        if prev != k {
-                            *self.in_degree.get_mut(&k).unwrap() += 1;
-                            self.successors.get_mut(&prev).unwrap().push(k);
+                match graph_resources.get(access.graph_resource_key).copied() {
+                    Some(GraphResource::Texture {
+                        texture_key, base_mip_level, mip_count,
+                        base_array_layer, layer_count,
+                    }) => {
+                        let r = ImageSubRange {
+                            base_mip_level, mip_count,
+                            base_array_layer, layer_count,
+                        };
+                        if access.access_type.is_write() {
+                            // WAW: every prior streaming writer that overlaps.
+                            if let Some(entries) = self.streaming_image_writers.get(&texture_key) {
+                                for (prev_r, prev_k) in entries {
+                                    if *prev_k != k && prev_r.overlaps(&r) {
+                                        *self.in_degree.get_mut(&k).unwrap() += 1;
+                                        self.successors.get_mut(prev_k).unwrap().push(k);
+                                    }
+                                }
+                            }
+                            // Push self into streaming writers.
+                            self.streaming_image_writers
+                                .entry(texture_key)
+                                .or_insert_with(|| Vec::with_capacity(8))
+                                .push((r, k));
+                        } else {
+                            // RAW: every global writer that overlaps.
+                            if let Some(entries) = self.image_writers.get(&texture_key) {
+                                for (writer_r, writer_k) in entries {
+                                    if *writer_k != k && writer_r.overlaps(&r) {
+                                        *self.in_degree.get_mut(&k).unwrap() += 1;
+                                        self.successors.get_mut(writer_k).unwrap().push(k);
+                                    }
+                                }
+                            }
                         }
                     }
-                    streaming_writers.insert(access.graph_resource_key, k);
-                } else {
-                    if let Some(&writer) = self.writers.get(&access.graph_resource_key) {
-                        if writer != k {
-                            *self.in_degree.get_mut(&k).unwrap() += 1;
-                            self.successors.get_mut(&writer).unwrap().push(k);
+                    Some(GraphResource::Buffer { buffer_key, offset, size }) => {
+                        let r = BufferSubRange { offset, size };
+                        if access.access_type.is_write() {
+                            if let Some(entries) = self.streaming_buffer_writers.get(&buffer_key) {
+                                for (prev_r, prev_k) in entries {
+                                    if *prev_k != k && prev_r.overlaps(&r) {
+                                        *self.in_degree.get_mut(&k).unwrap() += 1;
+                                        self.successors.get_mut(prev_k).unwrap().push(k);
+                                    }
+                                }
+                            }
+                            self.streaming_buffer_writers
+                                .entry(buffer_key)
+                                .or_insert_with(|| Vec::with_capacity(8))
+                                .push((r, k));
+                        } else {
+                            if let Some(entries) = self.buffer_writers.get(&buffer_key) {
+                                for (writer_r, writer_k) in entries {
+                                    if *writer_k != k && writer_r.overlaps(&r) {
+                                        *self.in_degree.get_mut(&k).unwrap() += 1;
+                                        self.successors.get_mut(writer_k).unwrap().push(k);
+                                    }
+                                }
+                            }
                         }
                     }
+                    None => {}
                 }
             }
         }
 
+        // ===== Kahn's drain (unchanged). =====
         for &k in passes {
             if self.in_degree[&k] == 0 {
                 self.topo_queue.push_back(k);
@@ -403,6 +510,20 @@ impl RenderGraph {
         }
 
         Ok(())
+    }
+
+    /// Reset the per-call topological-sort state without freeing any
+    /// internal Vec buffer. Each writer-history Vec keeps its capacity
+    /// for the next call; zero allocation in steady state.
+    fn clear_topo_state(&mut self) {
+        self.in_degree.clear();
+        self.successors.clear();
+        self.topo_queue.clear();
+        self.sorted_passes.clear();
+        for entries in self.image_writers.values_mut() { entries.clear(); }
+        for entries in self.buffer_writers.values_mut() { entries.clear(); }
+        for entries in self.streaming_image_writers.values_mut() { entries.clear(); }
+        for entries in self.streaming_buffer_writers.values_mut() { entries.clear(); }
     }
 
     // ============================================================
@@ -527,6 +648,45 @@ impl RenderGraph {
             .values()
             .map(|v| v.capacity())
             .collect();
+        caps.sort_unstable();
+        caps
+    }
+
+    /// Test helper — return every direct predecessor of `target` in the
+    /// last topological sort, by inverting the `successors` adjacency.
+    /// Sorted by `RenderPassKey` for stable comparisons. Useful for
+    /// asserting that correction C did or did not insert an edge.
+    #[cfg(test)]
+    pub(crate) fn predecessors_of(&self, target: RenderPassKey) -> Vec<RenderPassKey> {
+        let mut preds: Vec<RenderPassKey> = self
+            .successors
+            .iter()
+            .filter_map(|(&pred, succs)| {
+                if succs.contains(&target) { Some(pred) } else { None }
+            })
+            .collect();
+        preds.sort_unstable_by_key(|k| format!("{:?}", k));
+        preds
+    }
+
+    /// Test helper — return the position of `pass` in the last
+    /// topological sort result. Used to assert relative ordering between
+    /// two passes.
+    #[cfg(test)]
+    pub(crate) fn sorted_position_of(&self, pass: RenderPassKey) -> Option<usize> {
+        self.sorted_passes.iter().position(|&k| k == pass)
+    }
+
+    /// Test helper — snapshot the capacities of every inner Vec across
+    /// all four topological-sort writer history maps. Like
+    /// `image_access_history_capacities` but for the topo-sort scratch.
+    #[cfg(test)]
+    pub(crate) fn topo_writer_history_capacities(&self) -> Vec<usize> {
+        let mut caps: Vec<usize> = Vec::new();
+        caps.extend(self.image_writers.values().map(|v| v.capacity()));
+        caps.extend(self.buffer_writers.values().map(|v| v.capacity()));
+        caps.extend(self.streaming_image_writers.values().map(|v| v.capacity()));
+        caps.extend(self.streaming_buffer_writers.values().map(|v| v.capacity()));
         caps.sort_unstable();
         caps
     }
