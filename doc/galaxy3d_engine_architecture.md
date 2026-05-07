@@ -79,7 +79,7 @@ graph TB
         RGM[render_graph::RenderGraphManager]
         RG[render_graph::RenderGraph<br/>command-list ring + scratch]
         RP[render_graph::RenderPass<br/>eager pass cache]
-        Action[render_graph::PassAction<br/>Fullscreen / Custom / Scene]
+        Action[render_graph::PassAction<br/>Fullscreen / Custom / Scene / Debug]
     end
 
     subgraph Resource["Resource layer (CPU-side, key-addressed)"]
@@ -674,6 +674,7 @@ pub struct DynamicRenderState {
     pub stencil_front: StencilOpState,
     pub stencil_back: StencilOpState,
     pub blend_constants: [f32; 4],
+    pub line_width: f32,                           // 1.0 default; > 1.0 needs `wideLines`
 }
 ```
 
@@ -682,8 +683,14 @@ factors, blend op, color_write_mask, color_write_enable }` is part of `PipelineD
 reasoning is documented inline: tile-based GPUs (ARM Mali, Qualcomm Adreno) emit shader
 recompiles when blend mode changes, so making it dynamic would be a footgun.
 
+`line_width` is only meaningful when the bound pipeline uses `PolygonMode::Line` or a
+line topology. Values other than `1.0` require the Vulkan `wideLines` device feature,
+which the backend enables unconditionally so wireframe and bounding-box debug overlays
+work out of the box. The backend forwards it through `cmd_set_line_width(state.line_width)`
+once per `set_dynamic_state` call (see §14.4).
+
 `DynamicRenderStateKey` is the hashable counterpart, storing every `f32` field as
-`f32::to_bits() -> u32`. This is used by `ResourceManager` to deduplicate identical
+`f32::to_bits() -> u32` (including `line_width`). This is used by `ResourceManager` to deduplicate identical
 material render states and assign each one a stable `render_state_signature_id: u16`,
 which the drawer uses as part of the sort key to skip redundant `set_dynamic_state`
 calls.
@@ -1438,12 +1445,18 @@ pub struct RenderInstance {
     world_matrix: Mat4,
     flags: u64,                                      // FLAG_VISIBLE | FLAG_CAST_SHADOW | FLAG_RECEIVE_SHADOW
     bounding_box: AABB,                              // local space
+    default_vertex_shader: ShaderKey,                // captured at from_mesh
 }
 ```
 
 `RenderInstance::from_mesh` resolves the `Mesh` and builds one `RenderSubMesh` per
 `MeshSubMesh`, allocating one draw slot per submesh from the `Scene::draw_slot_
-allocator`.
+allocator`. The `default_vertex_shader` field stores the shader passed to `from_mesh`
+that was applied to all `(submesh, pass)` pairs not covered by a `VertexShaderOverride`;
+the per-pass resolved shader still lives on each `RenderSubMeshPass`. The accessor
+`default_vertex_shader() -> ShaderKey` exposes it for introspection — `DebugPassAction`
+uses it to build the wireframe pipeline that mirrors each instance's main vertex shader
+(see §11.6).
 
 Predefined flags:
 
@@ -2121,12 +2134,17 @@ pub trait PassAction: Send + Sync {
 }
 ```
 
-Three implementations:
+The trait and the shared `SceneBinding` enum live in
+`render_graph::pass_action`; each concrete implementation lives in its own file
+(`fullscreen_pass_action.rs`, `custom_pass_action.rs`, `scene_pass_action.rs`,
+`debug_pass_action.rs`).
 
-1. **`FullscreenAction`** — data-driven fullscreen triangle. Holds an `Arc<dyn
+Four implementations:
+
+1. **`FullscreenPassAction`** — data-driven fullscreen triangle. Holds an `Arc<dyn
    Pipeline>` and an `Arc<dyn BindingGroup>`; `execute` does `bind_pipeline →
    bind_binding_group(set 0) → draw(3, 0)`. Used for tonemapping, post-effects, etc.
-2. **`CustomAction`** — closure-based escape hatch. Wraps a `Box<dyn FnMut(&mut dyn
+2. **`CustomPassAction`** — closure-based escape hatch. Wraps a `Box<dyn FnMut(&mut dyn
    CommandList, &PassInfo) -> Result<()> + Send + Sync>`.
 3. **`ScenePassAction`** — the scene-rendering action. Eagerly builds its set-1
    `BindingGroup` at construction (via `gd.create_binding_group_from_layout`), holds
@@ -2134,8 +2152,30 @@ Three implementations:
    At execute time, locks all three and forwards to `drawer.draw(scene, view, cmd,
    pass_info, &binding_group, bind_textures)`. The `bind_textures: bool` parameter is
    stored on the action.
+4. **`DebugPassAction`** — overlay action that draws selected `RenderInstance`s on top
+   of the scene with two independent debug visualizations sharing a single set-1
+   `BindingGroup` (same shape as `ScenePassAction`'s):
+   - **Wireframe** (`DebugDisplayMode::Wireframe`) — reuses each instance's
+     `default_vertex_shader()` paired with a shared debug fragment shader, draws the
+     real mesh with `PolygonMode::Line`. Pushes a 32-byte VS+FS push-constant block
+     `(draw_slot: u32, _pad, color: vec4)`.
+   - **Bounding box** (`DebugDisplayMode::BoundingBox`) — draws a unit-cube outline
+     (`PrimitiveTopology::LineList`, internal V/I buffers owned by the action, *not*
+     registered in `ResourceManager`) transformed by a CPU-built
+     `T(center) * S(size)` matrix derived from `AABB::transformed(world)`. The matrix
+     and color sit in a 96-byte combined push-constant block; both regions are pushed
+     with `VERTEX_FRAGMENT` to satisfy `VUID-vkCmdPushConstants-01796`.
+   The two draw lists are exposed as `Arc<Mutex<Vec<DebugDrawEntry>>>` so the
+   application can mutate them between frames without re-registering the pass.
+   `DebugDrawEntry { instance_key, color: [f32; 4], line_width: f32 }` controls one
+   draw — `color.a` drives the standard `SrcAlpha / OneMinusSrcAlpha` over-blend, and
+   `line_width` is set per draw via `DynamicRenderState::line_width`. Pipelines are
+   lazily created and cached by `(vs, fs, mode)`, no depth read/write. The
+   `RenderGraph` topo-sort tracks the LDR target as a *Write-After-Write* dependency
+   on the prior tonemap pass, so a debug overlay that reads + writes its color
+   attachment stays scheduled after whatever produced it (see §11.9).
 
-`SceneBinding` is the input list to `ScenePassAction::new`:
+`SceneBinding` is the input list to `ScenePassAction::new` and `DebugPassAction::new`:
 
 ```rust
 pub enum SceneBinding {
@@ -2236,22 +2276,39 @@ Critical points:
 
 ### 11.9 Topological sort
 
-`topological_sort` is Kahn's algorithm with writer-before-reader:
+`topological_sort` is Kahn's algorithm with **two distinct dependency kinds**:
+*Read-After-Write* (a reader depends on whoever wrote the resource last) and
+*Write-After-Write* (a second writer depends on the previous writer to preserve
+user-supplied order). The implementation uses a two-pass strategy with separate
+writer tables for each kind:
 
 1. Initialize `in_degree[k] = 0` for every pass `k`.
-2. **Build the writers map**: for every pass, for every access with
-   `access_type.is_write()`, set `writers[resource_key] = pass_key`. This records the
-   *last* writer of each resource within the batch.
-3. **Add reader-to-writer edges**: for every pass, for every read access, look up
-   `writers[resource_key]`. If found and `writer != self`, increment `in_degree[self]`
-   and append `self` to `successors[writer]`. The `writer != self` skip handles
-   self-loops (a pass that both writes and reads the same resource — read-modify-
-   write — does not depend on itself).
+2. **Pass 1 — global last-writer table** (drives RAW deps). Walk every pass, for every
+   write access set `self.writers[resource_key] = pass_key`. After this pass,
+   `self.writers` contains the *last* writer of each resource irrespective of user
+   order. This is what lets a reader correctly order itself behind a writer that
+   appears later in the batch (and what makes mutual reads form the classic cycle
+   detected at step 5).
+3. **Pass 2 — stream user order**. Maintain a separate `streaming_writers` map and
+   walk passes in user-supplied order:
+   - **Write access** → if `streaming_writers[resource_key]` exists and is not
+     `self`, add a WAW edge `prev → self`, then update
+     `streaming_writers[resource_key] = self`. WAW deps use the *streaming* table
+     (not the global one) so multiple writers of the same resource stay in user
+     order without injecting fake reverse-direction edges.
+   - **Read access** → if `self.writers[resource_key]` exists and is not `self`,
+     add a RAW edge `writer → self`. The `writer != self` skip handles read-modify-
+     write self-loops (a pass that both writes and reads the same resource).
 4. Push every pass with `in_degree == 0` onto `topo_queue`.
 5. Drain: pop, append to `sorted_passes`, decrement `in_degree` of successors, push
    newly-zeroed nodes.
 6. **Cycle detection**: if `sorted_passes.len() != passes.len()`, bail with
    `RenderGraph '{}': cycle detected ({} of {} passes ordered)`.
+
+The WAW path is what enables the `DebugPassAction` overlay: a debug pass that *reads
+and writes* the same LDR target as the upstream tonemap pass would, with RAW alone,
+appear unordered against tonemap (both write the same resource, no read-from-tonemap-
+writer). With WAW the debug overlay is correctly placed after tonemap.
 
 ### 11.10 RenderGraphManager — central authority
 
@@ -2409,6 +2466,20 @@ creates `VkRenderPass` or `VkFramebuffer` GPU objects at all**. They survive onl
 thin wrappers carrying their `RenderPassDesc` / `FramebufferDesc` data. The actual
 rendering setup is `vkCmdBeginRendering` with inline `VkRenderingAttachmentInfo` per
 attachment, plus a single `vkCmdPipelineBarrier2` for layout transitions.
+
+The backend also enables a small set of `VkPhysicalDeviceFeatures` unconditionally
+during device creation:
+
+- `samplerAnisotropy` — required by the `Anisotropic` predefined sampler.
+- `depthClamp` — gated by the dynamic-state caps probe (only enabled when
+  `VK_EXT_extended_dynamic_state3` reports `depth_clamp_enable` as dynamically
+  toggleable).
+- `fillModeNonSolid` — required for `PolygonMode::Line` (wireframe debug rendering).
+- `wideLines` — required to set `lineWidth != 1.0` through the dynamic-state path.
+
+The two latter features are flagged on so the `DebugPassAction` overlays work without
+any additional opt-in from the application; both correspond to a runtime engine
+capability rather than an optional extension surface.
 
 ### 12.3 GpuContext — shared backbone
 
@@ -2687,9 +2758,9 @@ pub struct VulkanPipeline {
 2. Merge reflections from both stages: dedupe by `(set, binding)`, OR `stage_flags`
    when the same binding appears in both stages.
 3. Build per-set `VkDescriptorSetLayout`s from the merged bindings.
-4. **Inject the bindless layout at set 0** if any binding references set 0 (typical of
-   any pipeline that samples a bindless texture).
-5. Build merged push-constant ranges.
+4. **Inject the bindless layout at set 0** whenever the pipeline ends up with at least
+   one descriptor set in its layout — see the contiguous-set rule below.
+5. Build merged push-constant ranges (see push-constants merge rule below).
 6. Create `VkPipelineLayout` from the layouts + push-constant ranges.
 7. Build `VkGraphicsPipelineCreateInfo`:
    - `VkPipelineRenderingCreateInfo` (chained as `pNext`) carries the color formats and
@@ -2700,14 +2771,38 @@ pub struct VulkanPipeline {
    - Multisample from `desc.multisample`.
    - Color blend from `desc.color_blend` (the *baked* blend mode).
    - Depth/stencil — minimal info; the dynamic states cover the rest.
-   - **Dynamic state list**: `VIEWPORT`, `SCISSOR`, `CULL_MODE`, `FRONT_FACE`,
-     `DEPTH_TEST_ENABLE`, `DEPTH_WRITE_ENABLE`, `DEPTH_COMPARE_OP`,
+   - **Dynamic state list**: `VIEWPORT`, `SCISSOR`, `LINE_WIDTH`, `CULL_MODE`,
+     `FRONT_FACE`, `DEPTH_TEST_ENABLE`, `DEPTH_WRITE_ENABLE`, `DEPTH_COMPARE_OP`,
      `DEPTH_BIAS_ENABLE`, `DEPTH_BIAS`, `DEPTH_BOUNDS_TEST_ENABLE`, `DEPTH_BOUNDS`,
      `STENCIL_TEST_ENABLE`, `STENCIL_OP`, `STENCIL_COMPARE_MASK`,
      `STENCIL_WRITE_MASK`, `STENCIL_REFERENCE`, `BLEND_CONSTANTS`. This list mirrors
      exactly what `set_dynamic_state` writes.
    - Stage list: vertex + fragment.
 8. `device.create_graphics_pipelines(VK_NULL_HANDLE, &[create_info], None)`.
+
+**Contiguous-set rule (set 0 always present).** Vulkan requires descriptor set indices
+in a pipeline layout to be contiguous from 0. If the SPIR-V declares only `set 1` and
+the layout omits set 0, the reflected set 1 collapses to layout index 0 and a later
+`vkCmdBindDescriptorSets(firstSet=1, …)` is rejected. The backend therefore injects
+the bindless layout at set 0 *whenever any descriptor set is used*, not only when the
+shader actually references set 0. The bindless layout is harmless to expose unused —
+Vulkan accepts pipeline layouts that declare sets the shader never reads. The
+`uses_bindless || !reflected_set_layouts.is_empty()` guard is what implements this.
+
+**Push-constants merge rule (max-size, both stages).** When the same push-constant
+block appears in both VS and FS reflections (e.g. Slang fuses a single
+`pc` struct across stages), the merged range:
+- ORs `stage_flags` so a single `vkCmdPushConstants` with `VERTEX | FRAGMENT` covers
+  both,
+- takes `max(vs_size, fs_size)` for the byte size.
+
+The size-max behavior matters because a stage can declare a *subset* of the block
+(VS reads only the matrix, FS reads only the color, with non-overlapping byte
+regions). Without the max-merge, the smaller stage's size would clip the range and
+`vkCmdPushConstants` would fail validation at the push that targets the larger
+region. The `DebugPassAction` bounding-box mode relies on this: VS pushes a 64-byte
+matrix at offset 32, FS pushes a 16-byte color at offset 16, both stages are merged
+into one `(VERTEX|FRAGMENT, 0, 96)` range.
 
 The pipeline owns its descriptor-set layouts (sets 1..N). The bindless set 0 layout
 lives on `BindlessState` and is shared across every pipeline.
@@ -2916,6 +3011,7 @@ them at end-of-call. **Zero heap allocation per pass** in steady state.
 ```rust
 device.cmd_set_cull_mode(cb, cull_mode_to_vk(state.cull_mode));
 device.cmd_set_front_face(cb, front_face_to_vk(state.front_face));
+device.cmd_set_line_width(cb, state.line_width);
 device.cmd_set_depth_test_enable(cb, state.depth_test_enable);
 device.cmd_set_depth_write_enable(cb, state.depth_write_enable);
 device.cmd_set_depth_compare_op(cb, compare_op_to_vk(state.depth_compare_op));

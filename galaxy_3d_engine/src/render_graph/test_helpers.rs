@@ -11,8 +11,14 @@ use crate::graphics_device::{
     self, mock_graphics_device::MockGraphicsDevice,
     TextureFormat, TextureType, TextureUsage, MipmapMode, SampleCount,
 };
-use crate::resource::resource_manager::TextureKey;
+use crate::resource::resource_manager::{PassInfo, TextureKey};
 use crate::resource::texture::{TextureDesc, LayerDesc};
+
+/// Build a minimal `PassInfo` (one R8G8B8A8 color, no depth, no MSAA) for
+/// pass-action unit tests that only need a placeholder.
+pub(crate) fn make_pass_info() -> PassInfo {
+    PassInfo::new(vec![TextureFormat::R8G8B8A8_UNORM], None, SampleCount::S1)
+}
 
 pub(crate) struct GraphTestEnv {
     pub color_texture: TextureKey,
