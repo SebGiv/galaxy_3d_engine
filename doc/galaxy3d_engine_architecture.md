@@ -2423,6 +2423,15 @@ clears each inner `Vec` individually at entry (capacity preserved) —
 zero allocation in steady state, identical pattern to
 `prev_image_accesses` / `prev_buffer_accesses` (correction B).
 
+The `successors` adjacency map and the `in_degree` map follow the same
+discipline: pre-sized at `RenderGraph::new` (`with_capacity(32)`),
+`clear_topo_state` empties each inner `Vec` of `successors` rather than
+dropping the outer entries, and `topological_sort` reuses pass-key
+entries via `entry().or_default()` — a no-op once a pass key has been
+seen at least once. The drain phase iterates `&self.successors[&k]`
+directly (disjoint-fields borrow against `self.in_degree` /
+`self.topo_queue`) instead of cloning the successor list.
+
 ### 11.10 RenderGraphManager — central authority
 
 ```rust

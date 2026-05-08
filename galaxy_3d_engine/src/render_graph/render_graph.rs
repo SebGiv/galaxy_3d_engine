@@ -105,8 +105,16 @@ impl RenderGraph {
             prev_buffer_accesses: FxHashMap::with_capacity_and_hasher(
                 32, Default::default(),
             ),
-            in_degree: FxHashMap::default(),
-            successors: FxHashMap::default(),
+            // Pre-size the topo-sort scratch maps. 32 passes covers our
+            // typical graphs without rehash; subsequent calls reuse this
+            // capacity. Inner Vecs of `successors` are reused across
+            // calls (cleared but not dropped — see `clear_topo_state`).
+            in_degree: FxHashMap::with_capacity_and_hasher(
+                32, Default::default(),
+            ),
+            successors: FxHashMap::with_capacity_and_hasher(
+                32, Default::default(),
+            ),
             // Pre-size the writer-history maps. 64 textures / 32 buffers
             // covers our typical graphs without rehash; subsequent
             // topological_sort calls reuse this capacity.
@@ -377,7 +385,12 @@ impl RenderGraph {
 
         for &k in passes {
             self.in_degree.insert(k, 0);
-            self.successors.insert(k, Vec::new());
+            // `entry().or_default()` is a no-op when the entry already
+            // exists (steady state: every pass key has been seen before),
+            // so the inner Vec — emptied by `clear_topo_state` — is
+            // reused with its capacity preserved. Only the very first
+            // appearance of a pass key allocates here.
+            self.successors.entry(k).or_default();
         }
 
         // ===== Pass 1: collect ALL writers per GPU key. =====
@@ -495,8 +508,10 @@ impl RenderGraph {
 
         while let Some(k) = self.topo_queue.pop_front() {
             self.sorted_passes.push(k);
-            let succs = self.successors.get(&k).unwrap().clone();
-            for s in succs {
+            // Disjoint-fields borrow: `self.successors` (immut) and
+            // `self.in_degree` / `self.topo_queue` (mut) are distinct fields,
+            // the borrow checker accepts the split — no Vec clone needed.
+            for &s in &self.successors[&k] {
                 let d = self.in_degree.get_mut(&s).unwrap();
                 *d -= 1;
                 if *d == 0 {
@@ -519,7 +534,10 @@ impl RenderGraph {
     /// for the next call; zero allocation in steady state.
     fn clear_topo_state(&mut self) {
         self.in_degree.clear();
-        self.successors.clear();
+        // Clear inner Vec contents but keep the outer HashMap entries
+        // alive — each Vec retains its capacity for the next call. Same
+        // pattern as the writer-history maps below.
+        for entries in self.successors.values_mut() { entries.clear(); }
         self.topo_queue.clear();
         self.sorted_passes.clear();
         for entries in self.image_writers.values_mut() { entries.clear(); }
