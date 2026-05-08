@@ -26,7 +26,7 @@ use crate::engine::Engine;
 use crate::engine_err;
 use crate::error::Result;
 use crate::graphics_device::{
-    BindingGroup, BindingGroupLayoutDesc, BindingResource, BindingSlotDesc, BindingType,
+    self, BindingGroup, BindingGroupLayoutDesc, BindingResource, BindingSlotDesc, BindingType,
     BlendFactor, BlendOp, Buffer, BufferDesc, BufferFormat, BufferUsage, ColorBlendState,
     ColorWriteMask, CommandList, CullMode, DynamicRenderState, IndexType, MultisampleState,
     PolygonMode, PrimitiveTopology, RasterizationState, ShaderStageFlags, VertexAttribute,
@@ -214,6 +214,7 @@ impl DebugPassAction {
         bb_vertex_shader: ShaderKey,
         bindings: Vec<SceneBinding>,
         bind_textures: bool,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
         let layout = BindingGroupLayoutDesc {
             entries: bindings
@@ -250,30 +251,25 @@ impl DebugPassAction {
             })
             .collect();
 
-        let gd_arc = Engine::graphics_device("main")?;
-        let mut gd = gd_arc.lock().unwrap();
-
-        let binding_group = gd.create_binding_group_from_layout(
+        let binding_group = graphics_device.create_binding_group_from_layout(
             &layout,
             1, // Set 1: per-pass bindings (set 0 is reserved for bindless textures).
             &resources,
         )?;
 
         // ---- Cube vertex buffer ----
-        let cube_vertex_buffer = gd.create_buffer(BufferDesc {
+        let cube_vertex_buffer = graphics_device.create_buffer(BufferDesc {
             size: CUBE_VERTEX_BUFFER_SIZE,
             usage: BufferUsage::Vertex,
         })?;
         cube_vertex_buffer.update(0, bytemuck::cast_slice(&CUBE_VERTICES))?;
 
         // ---- Cube index buffer ----
-        let cube_index_buffer = gd.create_buffer(BufferDesc {
+        let cube_index_buffer = graphics_device.create_buffer(BufferDesc {
             size: CUBE_INDEX_BUFFER_SIZE,
             usage: BufferUsage::Index,
         })?;
         cube_index_buffer.update(0, bytemuck::cast_slice(&CUBE_INDICES))?;
-
-        drop(gd);
 
         Ok(Self {
             scene,
@@ -376,7 +372,12 @@ fn bb_world_matrix(local_aabb: &crate::scene::AABB, world: &Mat4) -> Mat4 {
 // ============================================================
 
 impl PassAction for DebugPassAction {
-    fn execute(&mut self, cmd: &mut dyn CommandList, pass_info: &PassInfo) -> Result<()> {
+    fn execute(
+        &mut self,
+        cmd: &mut dyn CommandList,
+        pass_info: &PassInfo,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<()> {
         let scene = self.scene.lock().unwrap();
         let wireframe_entries = self.wireframe_entries.lock().unwrap();
         let bb_entries = self.bb_entries.lock().unwrap();
@@ -385,7 +386,6 @@ impl PassAction for DebugPassAction {
         }
 
         let rm_arc = Engine::resource_manager()?;
-        let gd_arc = Engine::graphics_device("main")?;
         let mut rm = rm_arc.lock().unwrap();
 
         let bg_set_index = self.binding_group.set_index();
@@ -439,9 +439,7 @@ impl PassAction for DebugPassAction {
                     depth_format: pass_info.depth_format,
                 };
 
-                let mut gd = gd_arc.lock().unwrap();
-                let new_key = rm.create_pipeline(pipeline_name, desc, &mut *gd)?;
-                drop(gd);
+                let new_key = rm.create_pipeline(pipeline_name, desc, graphics_device)?;
                 self.pipeline_cache.insert(cache_key, new_key);
                 new_key
             };
@@ -555,9 +553,7 @@ impl PassAction for DebugPassAction {
                     depth_format: pass_info.depth_format,
                 };
 
-                let mut gd = gd_arc.lock().unwrap();
-                let new_key = rm.create_pipeline(pipeline_name, desc, &mut *gd)?;
-                drop(gd);
+                let new_key = rm.create_pipeline(pipeline_name, desc, graphics_device)?;
                 self.pipeline_cache.insert(cache_key, new_key);
                 new_key
             };

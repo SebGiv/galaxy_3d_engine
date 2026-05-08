@@ -21,6 +21,8 @@ use serial_test::serial;
 #[ignore] // Requires GPU
 #[serial]
 fn test_integration_render_graph_manager_lifecycle() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     // Initialize engine
     Engine::initialize().unwrap();
 
@@ -40,8 +42,8 @@ fn test_integration_render_graph_manager_lifecycle() {
     // Use render graph manager: create render graphs
     {
         let mut rgm = rgm_arc.lock().unwrap();
-        let main_key = rgm.create_render_graph("main", 2).unwrap();
-        rgm.create_render_graph("shadow", 2).unwrap();
+        let main_key = rgm.create_render_graph("main", 2, &*gd).unwrap();
+        rgm.create_render_graph("shadow", 2, &*gd).unwrap();
         assert_eq!(rgm.render_graph_count(), 2);
         assert!(rgm.render_graph(main_key).is_some());
         assert!(rgm.render_graph_by_name("main").is_some());

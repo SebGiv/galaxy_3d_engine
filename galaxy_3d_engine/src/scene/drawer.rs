@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use crate::error::Result;
 use crate::engine::Engine;
-use crate::graphics_device::{CommandList, BindingGroup, ShaderStageFlags};
+use crate::graphics_device::{self, CommandList, BindingGroup, ShaderStageFlags};
 use crate::resource::resource_manager::PassInfo;
 use super::render_view::RenderView;
 use super::scene::Scene;
@@ -41,6 +41,7 @@ pub trait Drawer: Send + Sync {
         pass_info: &PassInfo,
         binding_group: &Arc<dyn BindingGroup>,
         bind_textures: bool,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
     ) -> Result<()>;
 }
 
@@ -76,6 +77,7 @@ impl Drawer for ForwardDrawer {
         pass_info: &PassInfo,
         binding_group: &Arc<dyn BindingGroup>,
         bind_textures: bool,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
     ) -> Result<()> {
         let pass_info_gen = pass_info.generation();
         let camera = view.camera();
@@ -159,13 +161,10 @@ impl Drawer for ForwardDrawer {
                          Arc::clone(geo.vertex_layout()))
                     };
 
-                    let gd_arc = Engine::graphics_device("main")?;
-                    let mut gd = gd_arc.lock().unwrap();
                     let resolved = rm.resolve_pipeline(
                         vertex_shader, frag_shader, vertex_layout_arc, topology,
-                        &color_blend, polygon_mode, pass_info, &mut *gd,
+                        &color_blend, polygon_mode, pass_info, graphics_device,
                     )?;
-                    drop(gd);
 
                     scene.render_instance_mut(key).unwrap()
                         .sub_mesh_mut(sm_idx).unwrap()

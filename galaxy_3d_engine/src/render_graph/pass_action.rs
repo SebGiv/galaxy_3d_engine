@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::error::Result;
-use crate::graphics_device::{CommandList, SamplerType};
+use crate::graphics_device::{self, CommandList, SamplerType};
 use crate::resource::buffer::Buffer;
 use crate::resource::resource_manager::PassInfo;
 use crate::resource::texture::Texture;
@@ -16,7 +16,17 @@ use crate::resource::texture::Texture;
 /// Action executed by a render pass.
 pub trait PassAction: Send + Sync {
     /// Record draw commands into the command list.
-    fn execute(&mut self, cmd: &mut dyn CommandList, pass_info: &PassInfo) -> Result<()>;
+    ///
+    /// `graphics_device` is passed explicitly: it is the device on which
+    /// the pass's backend resources were created. Implementations needing
+    /// to allocate transient GPU objects (pipelines, buffers) at execute
+    /// time should use it directly rather than looking up a named device.
+    fn execute(
+        &mut self,
+        cmd: &mut dyn CommandList,
+        pass_info: &PassInfo,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<()>;
 }
 
 // ===== SCENE BINDING =====

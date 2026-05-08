@@ -1,7 +1,7 @@
 use super::*;
 use crate::render_graph::{AccessType, ResourceAccess, GraphResourceKey, PassAction};
 use crate::error::Result;
-use crate::graphics_device::{CommandList, ClearValue};
+use crate::graphics_device::{self, CommandList, ClearValue};
 use crate::graphics_device::mock_graphics_device::MockRenderPass;
 use crate::resource::resource_manager::PassInfo;
 use crate::graphics_device::{TextureFormat, SampleCount};
@@ -12,7 +12,12 @@ struct DummyPassAction {
 }
 
 impl PassAction for DummyPassAction {
-    fn execute(&mut self, _cmd: &mut dyn CommandList, _pass_info: &PassInfo) -> Result<()> {
+    fn execute(
+        &mut self,
+        _cmd: &mut dyn CommandList,
+        _pass_info: &PassInfo,
+        _gd: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<()> {
         self.call_count += 1;
         Ok(())
     }
@@ -104,8 +109,9 @@ fn test_render_pass_action_mut_invokes_action() {
     let mut pass = make_pass("action", vec![]);
     let info = make_pass_info();
     let mut cmd = crate::graphics_device::mock_graphics_device::MockCommandList::new();
-    pass.action_mut().execute(&mut cmd, &info).unwrap();
-    pass.action_mut().execute(&mut cmd, &info).unwrap();
+    let mut gd = crate::graphics_device::mock_graphics_device::MockGraphicsDevice::new();
+    pass.action_mut().execute(&mut cmd, &info, &mut gd).unwrap();
+    pass.action_mut().execute(&mut cmd, &info, &mut gd).unwrap();
     // The DummyPassAction counter is internal — we can't read it directly through
     // the trait object, but we can verify execute() returned Ok twice.
 }

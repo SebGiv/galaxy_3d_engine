@@ -1,5 +1,5 @@
 use super::*;
-use crate::graphics_device::mock_graphics_device::MockCommandList;
+use crate::graphics_device::mock_graphics_device::{MockCommandList, MockGraphicsDevice};
 use crate::render_graph::test_helpers::make_pass_info;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -14,8 +14,9 @@ fn test_custom_action_execute_invokes_callback() {
     });
     let mut cmd = MockCommandList::new();
     let info = make_pass_info();
-    action.execute(&mut cmd, &info).unwrap();
-    action.execute(&mut cmd, &info).unwrap();
+    let mut gd = MockGraphicsDevice::new();
+    action.execute(&mut cmd, &info, &mut gd).unwrap();
+    action.execute(&mut cmd, &info, &mut gd).unwrap();
     assert_eq!(counter.load(Ordering::SeqCst), 2);
 }
 
@@ -26,7 +27,8 @@ fn test_custom_action_execute_propagates_error() {
     });
     let mut cmd = MockCommandList::new();
     let info = make_pass_info();
-    let result = action.execute(&mut cmd, &info);
+    let mut gd = MockGraphicsDevice::new();
+    let result = action.execute(&mut cmd, &info, &mut gd);
     assert!(result.is_err());
 }
 
@@ -39,6 +41,7 @@ fn test_custom_action_callback_can_emit_commands() {
     });
     let mut cmd = MockCommandList::new();
     let info = make_pass_info();
-    action.execute(&mut cmd, &info).unwrap();
+    let mut gd = MockGraphicsDevice::new();
+    action.execute(&mut cmd, &info, &mut gd).unwrap();
     assert_eq!(cmd.commands, vec!["draw", "draw"]);
 }

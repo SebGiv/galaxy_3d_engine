@@ -1,6 +1,6 @@
 use super::*;
 use crate::graphics_device::mock_graphics_device::{
-    MockBindingGroup, MockCommandList, MockPipeline,
+    MockBindingGroup, MockCommandList, MockGraphicsDevice, MockPipeline,
 };
 use crate::render_graph::test_helpers::make_pass_info;
 use std::sync::Arc;
@@ -14,7 +14,8 @@ fn test_fullscreen_action_execute_emits_three_commands() {
     let mut action = FullscreenPassAction::new(pipeline, binding_group);
     let mut cmd = MockCommandList::new();
     let info = make_pass_info();
-    action.execute(&mut cmd, &info).unwrap();
+    let mut gd = MockGraphicsDevice::new();
+    action.execute(&mut cmd, &info, &mut gd).unwrap();
     assert_eq!(cmd.commands, vec!["bind_pipeline", "bind_binding_group", "draw"]);
 }
 
@@ -27,7 +28,8 @@ fn test_fullscreen_action_execute_called_twice_emits_six_commands() {
     let mut action = FullscreenPassAction::new(pipeline, binding_group);
     let mut cmd = MockCommandList::new();
     let info = make_pass_info();
-    action.execute(&mut cmd, &info).unwrap();
-    action.execute(&mut cmd, &info).unwrap();
+    let mut gd = MockGraphicsDevice::new();
+    action.execute(&mut cmd, &info, &mut gd).unwrap();
+    action.execute(&mut cmd, &info, &mut gd).unwrap();
     assert_eq!(cmd.commands.len(), 6);
 }

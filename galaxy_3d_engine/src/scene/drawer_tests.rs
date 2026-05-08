@@ -137,7 +137,9 @@ fn test_forward_drawer_draw_empty_view() {
     let bg: Arc<dyn crate::graphics_device::BindingGroup> =
         Arc::new(MockBindingGroup::new("test_bg".to_string(), 1));
     let info = make_pass_info();
-    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true);
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
+    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &mut *gd);
     assert!(result.is_ok());
     // viewport + scissor recorded even for an empty view.
     assert!(cmd.commands.iter().any(|c| c == "set_viewport"));
@@ -177,7 +179,9 @@ fn test_forward_drawer_draw_with_one_visible_submesh() {
     let bg: Arc<dyn crate::graphics_device::BindingGroup> =
         Arc::new(MockBindingGroup::new("test_bg".to_string(), 1));
     let info = make_pass_info();
-    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true);
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
+    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &mut *gd);
     assert!(result.is_ok(), "draw failed: {:?}", result);
     // At least one bind_pipeline + draw_indexed recorded.
     assert!(cmd.commands.iter().any(|c| c == "bind_pipeline"));
@@ -221,7 +225,9 @@ fn test_forward_drawer_draw_skips_invalid_render_instance() {
     let bg: Arc<dyn crate::graphics_device::BindingGroup> =
         Arc::new(MockBindingGroup::new("test_bg".to_string(), 1));
     let info = make_pass_info();
-    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true);
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
+    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &mut *gd);
     assert!(result.is_ok());
     // No draw_indexed expected — the instance was removed.
     assert!(!cmd.commands.iter().any(|c| c == "draw_indexed"));
@@ -260,7 +266,9 @@ fn test_forward_drawer_draw_skips_textures_when_disabled() {
     let bg: Arc<dyn crate::graphics_device::BindingGroup> =
         Arc::new(MockBindingGroup::new("test_bg".to_string(), 1));
     let info = make_pass_info();
-    drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, false).unwrap();
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
+    drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, false, &mut *gd).unwrap();
     // bind_textures should NOT have been emitted.
     assert!(!cmd.commands.iter().any(|c| c == "bind_textures"));
 }

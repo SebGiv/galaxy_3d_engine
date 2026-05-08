@@ -460,7 +460,9 @@ fn test_draw_empty_view() {
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
     );
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false).unwrap();
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &mut *gd).unwrap();
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
     Engine::reset_for_testing();
 }
@@ -489,7 +491,9 @@ fn test_draw_single_instance() {
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
     );
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false).unwrap();
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &mut *gd).unwrap();
     assert_eq!(cmd.commands, vec![
         "set_viewport",
         "set_scissor",
@@ -529,7 +533,9 @@ fn test_draw_skips_committed_removal() {
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
     );
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false).unwrap();
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &mut *gd).unwrap();
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
     Engine::reset_for_testing();
 }
@@ -559,7 +565,9 @@ fn test_draw_multiple_instances() {
     let pass_info = crate::resource::resource_manager::PassInfo::new(
         vec![], None, crate::graphics_device::SampleCount::S1,
     );
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false).unwrap();
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &mut *gd).unwrap();
     // 2 instances: viewport + scissor + 2x (bind_vb, bind_ib, bind_pipeline, set_dynamic_state, bind_bg, draw_indexed)
     // push_constants skipped: MockShader has no reflected push constants
     assert_eq!(cmd.commands.len(), 2 + 2 * 6);

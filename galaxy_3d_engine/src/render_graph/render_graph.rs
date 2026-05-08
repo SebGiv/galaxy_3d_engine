@@ -159,6 +159,7 @@ impl RenderGraph {
         graph_resources: &SlotMap<GraphResourceKey, GraphResource>,
         framebuffers: &SlotMap<FramebufferKey, Framebuffer>,
         passes: &[RenderPassKey],
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
         post_passes: F,
     ) -> Result<()>
     where
@@ -327,6 +328,7 @@ impl RenderGraph {
                 pass.action_mut().execute(
                     &mut *self.command_lists[frame],
                     &pass_info_clone,
+                    graphics_device,
                 )?;
                 self.command_lists[frame].end_render_pass()?;
             }

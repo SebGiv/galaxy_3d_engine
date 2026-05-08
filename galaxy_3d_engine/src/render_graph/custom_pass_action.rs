@@ -5,7 +5,7 @@
 //! shapes (e.g. swapchain blits, debug overlays, or inline test recordings).
 
 use crate::error::Result;
-use crate::graphics_device::CommandList;
+use crate::graphics_device::{self, CommandList};
 use crate::resource::resource_manager::PassInfo;
 
 use super::pass_action::PassAction;
@@ -25,7 +25,12 @@ impl CustomPassAction {
 }
 
 impl PassAction for CustomPassAction {
-    fn execute(&mut self, cmd: &mut dyn CommandList, pass_info: &PassInfo) -> Result<()> {
+    fn execute(
+        &mut self,
+        cmd: &mut dyn CommandList,
+        pass_info: &PassInfo,
+        _graphics_device: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<()> {
         (self.callback)(cmd, pass_info)
     }
 }

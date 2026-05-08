@@ -69,15 +69,13 @@ impl RenderGraphManager {
         &mut self,
         name: &str,
         frames_in_flight: usize,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<RenderGraphKey> {
         if self.graph_names.contains_key(name) {
             engine_bail!("galaxy3d::RenderGraphManager",
                 "RenderGraph '{}' already exists", name);
         }
-        let gd_arc = Engine::graphics_device("main")?;
-        let gd = gd_arc.lock().unwrap();
-        let graph = RenderGraph::new(name.to_string(), &*gd, frames_in_flight)?;
-        drop(gd);
+        let graph = RenderGraph::new(name.to_string(), graphics_device, frames_in_flight)?;
         let key = self.graphs.insert(graph);
         self.graph_names.insert(name.to_string(), key);
         Ok(key)
@@ -116,15 +114,14 @@ impl RenderGraphManager {
         name: &str,
         accesses: Vec<ResourceAccess>,
         action: Box<dyn PassAction>,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<RenderPassKey> {
         if self.pass_names.contains_key(name) {
             engine_bail!("galaxy3d::RenderGraphManager",
                 "RenderPass '{}' already exists", name);
         }
         let rm_arc = Engine::resource_manager()?;
-        let gd_arc = Engine::graphics_device("main")?;
         let rm = rm_arc.lock().unwrap();
-        let gd = gd_arc.lock().unwrap();
         let cache = Self::build_pass_cache(
             &mut self.framebuffers,
             &mut self.framebuffer_lookup,
@@ -133,9 +130,8 @@ impl RenderGraphManager {
             name,
             None,
             &*rm,
-            &*gd,
+            graphics_device,
         )?;
-        drop(gd);
         drop(rm);
         let pass = RenderPass::new(
             name.to_string(),
@@ -176,43 +172,39 @@ impl RenderGraphManager {
         pass_key: RenderPassKey,
         access_idx: usize,
         gr_key: GraphResourceKey,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<()> {
-        let (name, accesses, prev_info) = {
-            let pass = self.passes.get_mut(pass_key).ok_or_else(|| {
-                crate::engine_err!("galaxy3d::RenderGraphManager",
-                    "set_pass_access_resource: RenderPassKey not found")
-            })?;
-            let access_count = pass.accesses().len();
-            let access = pass.accesses_mut().get_mut(access_idx).ok_or_else(|| {
-                crate::engine_err!("galaxy3d::RenderGraphManager",
-                    "set_pass_access_resource: access {} out of bounds (count: {})",
-                    access_idx, access_count)
-            })?;
-            access.graph_resource_key = gr_key;
-            (
-                pass.name().to_string(),
-                pass.accesses().to_vec(),
-                pass.pass_info().cloned(),
-            )
-        };
+        let pass = self.passes.get_mut(pass_key).ok_or_else(|| {
+            crate::engine_err!("galaxy3d::RenderGraphManager",
+                "set_pass_access_resource: RenderPassKey not found")
+        })?;
+        let access_count = pass.accesses().len();
+        let access = pass.accesses_mut().get_mut(access_idx).ok_or_else(|| {
+            crate::engine_err!("galaxy3d::RenderGraphManager",
+                "set_pass_access_resource: access {} out of bounds (count: {})",
+                access_idx, access_count)
+        })?;
+        access.graph_resource_key = gr_key;
+        // Mut-borrow on `access` is released here.
 
         let rm_arc = Engine::resource_manager()?;
-        let gd_arc = Engine::graphics_device("main")?;
         let rm = rm_arc.lock().unwrap();
-        let gd = gd_arc.lock().unwrap();
+        // Disjoint-fields borrow: `&mut self.framebuffers` /
+        // `&mut self.framebuffer_lookup` / `&self.graph_resources` are
+        // distinct fields from `self.passes` (which `pass` borrows
+        // from), so all four can coexist within this single call.
+        // No `to_vec()` / `to_string()` / `cloned()` needed.
         let cache = Self::build_pass_cache(
             &mut self.framebuffers,
             &mut self.framebuffer_lookup,
             &self.graph_resources,
-            &accesses,
-            &name,
-            prev_info.as_ref(),
+            pass.accesses(),
+            pass.name(),
+            pass.pass_info(),
             &*rm,
-            &*gd,
+            graphics_device,
         )?;
-        drop(gd);
         drop(rm);
-        let pass = self.passes.get_mut(pass_key).unwrap();
         pass.set_cache(cache.framebuffer_key, cache.pass_info, cache.gd_render_pass, cache.clear_values);
         Ok(())
     }
@@ -225,43 +217,38 @@ impl RenderGraphManager {
         pass_key: RenderPassKey,
         access_idx: usize,
         ops: TargetOps,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<()> {
-        let (name, accesses, prev_info) = {
-            let pass = self.passes.get_mut(pass_key).ok_or_else(|| {
-                crate::engine_err!("galaxy3d::RenderGraphManager",
-                    "set_pass_access_target_ops: RenderPassKey not found")
-            })?;
-            let access_count = pass.accesses().len();
-            let access = pass.accesses_mut().get_mut(access_idx).ok_or_else(|| {
-                crate::engine_err!("galaxy3d::RenderGraphManager",
-                    "set_pass_access_target_ops: access {} out of bounds (count: {})",
-                    access_idx, access_count)
-            })?;
-            access.target_ops = Some(ops);
-            (
-                pass.name().to_string(),
-                pass.accesses().to_vec(),
-                pass.pass_info().cloned(),
-            )
-        };
+        let pass = self.passes.get_mut(pass_key).ok_or_else(|| {
+            crate::engine_err!("galaxy3d::RenderGraphManager",
+                "set_pass_access_target_ops: RenderPassKey not found")
+        })?;
+        let access_count = pass.accesses().len();
+        let access = pass.accesses_mut().get_mut(access_idx).ok_or_else(|| {
+            crate::engine_err!("galaxy3d::RenderGraphManager",
+                "set_pass_access_target_ops: access {} out of bounds (count: {})",
+                access_idx, access_count)
+        })?;
+        access.target_ops = Some(ops);
+        // Mut-borrow on `access` is released here.
 
         let rm_arc = Engine::resource_manager()?;
-        let gd_arc = Engine::graphics_device("main")?;
         let rm = rm_arc.lock().unwrap();
-        let gd = gd_arc.lock().unwrap();
+        // Disjoint-fields borrow as in `set_pass_access_resource`:
+        // `pass` keeps a borrow on `self.passes` while `build_pass_cache`
+        // borrows `self.framebuffers` / `self.framebuffer_lookup` /
+        // `self.graph_resources` — all distinct fields, no clones needed.
         let cache = Self::build_pass_cache(
             &mut self.framebuffers,
             &mut self.framebuffer_lookup,
             &self.graph_resources,
-            &accesses,
-            &name,
-            prev_info.as_ref(),
+            pass.accesses(),
+            pass.name(),
+            pass.pass_info(),
             &*rm,
-            &*gd,
+            graphics_device,
         )?;
-        drop(gd);
         drop(rm);
-        let pass = self.passes.get_mut(pass_key).unwrap();
         pass.set_cache(cache.framebuffer_key, cache.pass_info, cache.gd_render_pass, cache.clear_values);
         Ok(())
     }
@@ -275,6 +262,7 @@ impl RenderGraphManager {
         &mut self,
         pass_key: RenderPassKey,
         new_accesses: Vec<ResourceAccess>,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<()> {
         let (name, prev_info) = {
             let pass = self.passes.get(pass_key).ok_or_else(|| {
@@ -285,9 +273,7 @@ impl RenderGraphManager {
         };
 
         let rm_arc = Engine::resource_manager()?;
-        let gd_arc = Engine::graphics_device("main")?;
         let rm = rm_arc.lock().unwrap();
-        let gd = gd_arc.lock().unwrap();
         let cache = Self::build_pass_cache(
             &mut self.framebuffers,
             &mut self.framebuffer_lookup,
@@ -296,9 +282,8 @@ impl RenderGraphManager {
             &name,
             prev_info.as_ref(),
             &*rm,
-            &*gd,
+            graphics_device,
         )?;
-        drop(gd);
         drop(rm);
         let pass = self.passes.get_mut(pass_key).unwrap();
         pass.replace_accesses(new_accesses);
@@ -395,11 +380,10 @@ impl RenderGraphManager {
         &mut self,
         color_attachments: &[ColorAttachmentSlot],
         depth_stencil_attachment: Option<GraphResourceKey>,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<FramebufferKey> {
         let rm_arc = Engine::resource_manager()?;
-        let gd_arc = Engine::graphics_device("main")?;
         let rm = rm_arc.lock().unwrap();
-        let gd = gd_arc.lock().unwrap();
         let key = Self::get_or_create_framebuffer_internal(
             &mut self.framebuffers,
             &mut self.framebuffer_lookup,
@@ -407,7 +391,7 @@ impl RenderGraphManager {
             color_attachments,
             depth_stencil_attachment,
             &*rm,
-            &*gd,
+            graphics_device,
         )?;
         Ok(key)
     }
@@ -450,6 +434,7 @@ impl RenderGraphManager {
         &mut self,
         graph_key: RenderGraphKey,
         passes: &[RenderPassKey],
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
         post_passes: F,
     ) -> Result<()>
     where
@@ -464,6 +449,7 @@ impl RenderGraphManager {
             &self.graph_resources,
             &self.framebuffers,
             passes,
+            graphics_device,
             post_passes,
         )
     }

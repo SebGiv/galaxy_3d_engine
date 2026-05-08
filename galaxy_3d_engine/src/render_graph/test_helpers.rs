@@ -105,6 +105,7 @@ impl super::pass_action::PassAction for RecordingPassAction {
         &mut self,
         _cmd: &mut dyn graphics_device::CommandList,
         _pass_info: &crate::resource::resource_manager::PassInfo,
+        _gd: &mut dyn graphics_device::GraphicsDevice,
     ) -> crate::error::Result<()> {
         self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())

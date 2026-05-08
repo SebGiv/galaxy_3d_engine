@@ -2250,7 +2250,9 @@ Engine::shutdown();</pre>
         <pre class='codeblock'>Engine::create_render_graph_manager()?;
 let rgm_arc = Engine::render_graph_manager()?;
 let mut rgm = rgm_arc.lock().unwrap();
-let graph = rgm.create_render_graph(&quot;main&quot;, 2 /* frames in flight */)?;</pre>
+let gd_arc = Engine::graphics_device(&quot;main&quot;)?;
+let gd = gd_arc.lock().unwrap();
+let graph = rgm.create_render_graph(&quot;main&quot;, 2 /* frames in flight */, &amp;*gd)?;</pre>
       </div>
     </section>
     
@@ -11606,9 +11608,10 @@ let x: DebugPassAction;</pre>
     bb_vertex_shader: ShaderKey,
     bindings: Vec&lt;SceneBinding&gt;,
     bind_textures: bool,
+    graphics_device: &amp;mut dyn graphics_device::GraphicsDevice,
 ) -&gt; Result&lt;Self&gt;</pre>
-      <div class="desc lang-en">Create a <code>DebugPassAction</code>. <br> <code>bindings</code> mirrors the per-pass descriptor set 1 used by <code>ScenePassAction</code> (typically: FrameData UBO + InstanceData SSBO at minimum, since the per-instance wireframe vertex shader reads both). The bounding-box vertex shader does not depend on these bindings but the binding group is shared. <br> The cube vertex/index buffers used by the bounding-box pass are created here directly on the graphics device &mdash; they are not registered in the resource manager because they are an internal implementation detail of this action.</div>
-      <div class="desc lang-fr" hidden>Cr&eacute;e un <code>DebugPassAction</code>. <br> <code>bindings</code> reproduit le descriptor set 1 par-passe utilis&eacute; par <code>ScenePassAction</code> (typiquement&nbsp;: FrameData UBO + InstanceData SSBO au minimum, le vertex shader wireframe par-instance lisant les deux). Le vertex shader bo&icirc;te englobante ne d&eacute;pend pas de ces bindings mais le binding group est partag&eacute;. <br> Les buffers de sommets/indices du cube utilis&eacute;s par la passe bo&icirc;te englobante sont cr&eacute;&eacute;s ici directement sur le graphics device &mdash; ils ne sont pas enregistr&eacute;s dans le resource manager car ils sont un d&eacute;tail d'impl&eacute;mentation interne de cette action.</div>
+      <div class="desc lang-en">Create a <code>DebugPassAction</code>. <br> <code>bindings</code> mirrors the per-pass descriptor set 1 used by <code>ScenePassAction</code> (typically: FrameData UBO + InstanceData SSBO at minimum, since the per-instance wireframe vertex shader reads both). The bounding-box vertex shader does not depend on these bindings but the binding group is shared. <br> The cube vertex/index buffers used by the bounding-box pass are created here directly on the supplied <code>graphics_device</code> (taken as <code>&amp;mut</code> because <code>create_buffer</code> needs mutable access) &mdash; they are not registered in the resource manager because they are an internal implementation detail of this action.</div>
+      <div class="desc lang-fr" hidden>Cr&eacute;e un <code>DebugPassAction</code>. <br> <code>bindings</code> reproduit le descriptor set 1 par-passe utilis&eacute; par <code>ScenePassAction</code> (typiquement&nbsp;: FrameData UBO + InstanceData SSBO au minimum, le vertex shader wireframe par-instance lisant les deux). Le vertex shader bo&icirc;te englobante ne d&eacute;pend pas de ces bindings mais le binding group est partag&eacute;. <br> Les buffers de sommets/indices du cube utilis&eacute;s par la passe bo&icirc;te englobante sont cr&eacute;&eacute;s ici directement sur le <code>graphics_device</code> fourni (pris en <code>&amp;mut</code> car <code>create_buffer</code> n&eacute;cessite un acc&egrave;s mutable) &mdash; ils ne sont pas enregistr&eacute;s dans le resource manager car ils sont un d&eacute;tail d'impl&eacute;mentation interne de cette action.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -12038,9 +12041,9 @@ let x: GraphResourceKey;</pre>
     
 </div>
 
-    <pre class="signature codeblock">pub fn new( scene: Arc&lt;Mutex&lt;Scene&gt;&gt;, drawer: Arc&lt;Mutex&lt;dyn Drawer&gt;&gt;, render_view: Arc&lt;Mutex&lt;Option&lt;RenderView&gt;&gt;&gt;, bindings: Vec&lt;SceneBinding&gt;, bind_textures: bool, ) -&gt; Result&lt;Self&gt;</pre>
-      <div class="desc lang-en">Create a ScenePassAction. <br> <code>bindings</code> is the list of buffers/textures for the per-pass descriptor set (set 1). The BindingGroup is created immediately — no lazy, no pipeline needed.</div>
-      <div class="desc lang-fr" hidden>Crée une ScenePassAction. <br> <code>bindings</code> est la liste de buffers/textures pour le descriptor set par-passe (set 1). Le BindingGroup est créé immédiatement — pas de chargement paresseux, pas de pipeline requis.</div>
+    <pre class="signature codeblock">pub fn new( scene: Arc&lt;Mutex&lt;Scene&gt;&gt;, drawer: Arc&lt;Mutex&lt;dyn Drawer&gt;&gt;, render_view: Arc&lt;Mutex&lt;Option&lt;RenderView&gt;&gt;&gt;, bindings: Vec&lt;SceneBinding&gt;, bind_textures: bool, graphics_device: &amp;dyn graphics_device::GraphicsDevice, ) -&gt; Result&lt;Self&gt;</pre>
+      <div class="desc lang-en">Create a ScenePassAction. <br> <code>bindings</code> is the list of buffers/textures for the per-pass descriptor set (set 1). The BindingGroup is created immediately on the supplied <code>graphics_device</code> — no lazy, no pipeline needed.</div>
+      <div class="desc lang-fr" hidden>Crée une ScenePassAction. <br> <code>bindings</code> est la liste de buffers/textures pour le descriptor set par-passe (set 1). Le BindingGroup est créé immédiatement sur le <code>graphics_device</code> fourni — pas de chargement paresseux, pas de pipeline requis.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -12123,8 +12126,8 @@ match value { SceneBinding::Foo =&gt; /* ... */, _ =&gt; /* ... */ }</pre>
         <h3 class="item-name">PassAction</h3>
       </div>
       <pre class="signature codeblock">pub trait PassAction: Send + Sync</pre>
-      <div class="desc lang-en"><p>Trait for the pass-recording strategy: <code>execute(cmd, pass_info)</code> records the pass's draw commands between the engine-managed <code>begin_render_pass</code> / <code>end_render_pass</code>. Four implementations are provided — <code>FullscreenPassAction</code> (3-vertex triangle), <code>CustomPassAction</code> (closure-based), <code>ScenePassAction</code> (delegates to a <code>Drawer</code>), <code>DebugPassAction</code> (wireframe + bounding-box overlays).</p></div>
-      <div class="desc lang-fr" hidden><p>Trait pour la stratégie d'enregistrement d'une passe : <code>execute(cmd, pass_info)</code> enregistre les commandes de draw de la passe entre les <code>begin_render_pass</code> / <code>end_render_pass</code> gérés par le moteur. Quatre implémentations sont fournies — <code>FullscreenPassAction</code> (triangle à 3 sommets), <code>CustomPassAction</code> (basée sur une closure), <code>ScenePassAction</code> (délègue à un <code>Drawer</code>), <code>DebugPassAction</code> (overlays wireframe + bounding-box).</p></div>
+      <div class="desc lang-en"><p>Trait for the pass-recording strategy: <code>execute(cmd, pass_info, graphics_device)</code> records the pass's draw commands between the engine-managed <code>begin_render_pass</code> / <code>end_render_pass</code>. The <code>graphics_device</code> argument is forwarded by <code>RenderGraphManager::execute_render_graph</code> down to each pass action so transient GPU objects (pipelines, scratch buffers) can be allocated without a named-device lookup. Four implementations are provided — <code>FullscreenPassAction</code> (3-vertex triangle), <code>CustomPassAction</code> (closure-based), <code>ScenePassAction</code> (delegates to a <code>Drawer</code>), <code>DebugPassAction</code> (wireframe + bounding-box overlays).</p></div>
+      <div class="desc lang-fr" hidden><p>Trait pour la stratégie d'enregistrement d'une passe : <code>execute(cmd, pass_info, graphics_device)</code> enregistre les commandes de draw de la passe entre les <code>begin_render_pass</code> / <code>end_render_pass</code> gérés par le moteur. L'argument <code>graphics_device</code> est transmis par <code>RenderGraphManager::execute_render_graph</code> à chaque pass action pour que les objets GPU transitoires (pipelines, buffers temporaires) soient alloués sans lookup de device par nom. Quatre implémentations sont fournies — <code>FullscreenPassAction</code> (triangle à 3 sommets), <code>CustomPassAction</code> (basée sur une closure), <code>ScenePassAction</code> (délègue à un <code>Drawer</code>), <code>DebugPassAction</code> (overlays wireframe + bounding-box).</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -12154,7 +12157,9 @@ match value { SceneBinding::Foo =&gt; /* ... */, _ =&gt; /* ... */ }</pre>
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
         <pre class='codeblock'>// Created by the manager:
-let graph_key = rgm.create_render_graph(&quot;main&quot;, 2)?;
+let gd_arc = Engine::graphics_device(&quot;main&quot;)?;
+let gd = gd_arc.lock().unwrap();
+let graph_key = rgm.create_render_graph(&quot;main&quot;, 2, &amp;*gd)?;
 let rg: &amp;RenderGraph = rgm.render_graph(graph_key).unwrap();
 let cmd: &amp;dyn CommandList = rg.command_list()?;</pre>
       </div>
@@ -12230,11 +12235,13 @@ let x: RenderGraphKey;</pre>
         <h4 class="lang-fr" hidden>Exemple</h4>
         <pre class='codeblock'>let rgm_arc = Engine::render_graph_manager()?;
 let mut rgm = rgm_arc.lock().unwrap();
-let graph = rgm.create_render_graph(&quot;main&quot;, /* frames in flight */ 2)?;
+let gd_arc = Engine::graphics_device(&quot;main&quot;)?;
+let gd = gd_arc.lock().unwrap();
+let graph = rgm.create_render_graph(&quot;main&quot;, /* frames in flight */ 2, &amp;*gd)?;
 let color = rgm.create_graph_resource(&quot;color&quot;, GraphResource::Texture {
     texture_key, base_mip_level: 0, base_array_layer: 0, layer_count: 1,
 })?;
-let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], action)?;</pre>
+let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], action, &amp;*gd)?;</pre>
       </div>
     </section>
     
@@ -12277,13 +12284,15 @@ let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], ac
         <span class="badge badge-method">method</span>
         <h3 class="item-name">RenderGraphManager::create_render_graph</h3>
       </div>
-      <pre class="signature codeblock">pub fn create_render_graph( &amp;mut self, name: &amp;str, frames_in_flight: usize, ) -&gt; Result&lt;RenderGraphKey&gt;</pre>
-      <div class="desc lang-en"><p>Create a named render graph backed by a ring of <code>frames_in_flight</code> command lists. Returns a stable <code>RenderGraphKey</code>. Bails if the name is already taken.</p></div>
-      <div class="desc lang-fr" hidden><p>Crée un render graph nommé adossé à un anneau de <code>frames_in_flight</code> command lists. Retourne un <code>RenderGraphKey</code> stable. Échoue si le nom est déjà utilisé.</p></div>
+      <pre class="signature codeblock">pub fn create_render_graph( &amp;mut self, name: &amp;str, frames_in_flight: usize, graphics_device: &amp;dyn graphics_device::GraphicsDevice, ) -&gt; Result&lt;RenderGraphKey&gt;</pre>
+      <div class="desc lang-en"><p>Create a named render graph backed by a ring of <code>frames_in_flight</code> command lists. Returns a stable <code>RenderGraphKey</code>. Bails if the name is already taken. The <code>graphics_device</code> argument is passed explicitly so a single <code>RenderGraphManager</code> may host graphs targeting different devices.</p></div>
+      <div class="desc lang-fr" hidden><p>Crée un render graph nommé adossé à un anneau de <code>frames_in_flight</code> command lists. Retourne un <code>RenderGraphKey</code> stable. Échoue si le nom est déjà utilisé. L'argument <code>graphics_device</code> est passé explicitement pour qu'un même <code>RenderGraphManager</code> puisse héberger des graphes ciblant des devices différents.</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
-        <pre class='codeblock'>let graph_key = rgm.create_render_graph(&quot;main&quot;, 2)?;</pre>
+        <pre class='codeblock'>let gd_arc = Engine::graphics_device(&quot;main&quot;)?;
+let gd = gd_arc.lock().unwrap();
+let graph_key = rgm.create_render_graph(&quot;main&quot;, 2, &amp;*gd)?;</pre>
       </div>
     </section>
     
@@ -12293,9 +12302,9 @@ let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], ac
         <span class="badge badge-method">method</span>
         <h3 class="item-name">RenderGraphManager::create_render_pass</h3>
       </div>
-      <pre class="signature codeblock">pub fn create_render_pass( &amp;mut self, name: &amp;str, accesses: Vec&lt;ResourceAccess&gt;, action: Box&lt;dyn PassAction&gt;, ) -&gt; Result&lt;RenderPassKey&gt;</pre>
-      <div class="desc lang-en"><p>Create a render pass with a list of <code>ResourceAccess</code> records and a <code>PassAction</code>. Eagerly builds the pass cache (framebuffer, render pass descriptor, pass info, clear values); validation errors (mismatched sample counts, mixed MSAA resolves, buffer used as color attachment) surface here.</p></div>
-      <div class="desc lang-fr" hidden><p>Crée une render pass avec une liste de <code>ResourceAccess</code> et une <code>PassAction</code>. Construit immédiatement le cache de la passe (framebuffer, descripteur de render pass, pass info, clear values) ; les erreurs de validation (sample counts incompatibles, resolves MSAA mixés, buffer utilisé comme attachement couleur) remontent ici.</p></div>
+      <pre class="signature codeblock">pub fn create_render_pass( &amp;mut self, name: &amp;str, accesses: Vec&lt;ResourceAccess&gt;, action: Box&lt;dyn PassAction&gt;, graphics_device: &amp;dyn graphics_device::GraphicsDevice, ) -&gt; Result&lt;RenderPassKey&gt;</pre>
+      <div class="desc lang-en"><p>Create a render pass with a list of <code>ResourceAccess</code> records and a <code>PassAction</code>. Eagerly builds the pass cache (framebuffer, render pass descriptor, pass info, clear values); validation errors (mismatched sample counts, mixed MSAA resolves, buffer used as color attachment) surface here. The <code>graphics_device</code> argument is the device that will own the pass's framebuffer and backend render-pass objects.</p></div>
+      <div class="desc lang-fr" hidden><p>Crée une render pass avec une liste de <code>ResourceAccess</code> et une <code>PassAction</code>. Construit immédiatement le cache de la passe (framebuffer, descripteur de render pass, pass info, clear values) ; les erreurs de validation (sample counts incompatibles, resolves MSAA mixés, buffer utilisé comme attachement couleur) remontent ici. L'argument <code>graphics_device</code> est le device qui possédera le framebuffer et les objets de render-pass du backend.</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -12309,7 +12318,7 @@ let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], ac
             resolve_target: None,
         }),
     },
-], Box::new(scene_action))?;</pre>
+], Box::new(scene_action), &amp;*gd)?;</pre>
       </div>
     </section>
     
@@ -12319,13 +12328,15 @@ let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], ac
         <span class="badge badge-method">method</span>
         <h3 class="item-name">RenderGraphManager::execute_render_graph</h3>
       </div>
-      <pre class="signature codeblock">pub fn execute_render_graph&lt;F&gt;( &amp;mut self, graph_key: RenderGraphKey, passes: &amp;[RenderPassKey], post_passes: F, ) -&gt; Result&lt;()&gt; where F: FnOnce(&amp;mut dyn graphics_device::CommandList) -&gt; Result&lt;()&gt;,</pre>
-      <div class="desc lang-en"><p>Execute one frame of a render graph. Provide the list of passes to run (subset of those registered) and a <code>post_passes</code> closure that runs after the last pass within the same command list (typical use: blitting the offscreen color into the swapchain image).</p><p>The render graph topologically sorts the passes (writer-before-reader), records each one's barriers + dynamic-rendering begin / action / end, then your post-pass closure, all into the next command list of the ring. The ResourceManager lock is held only briefly during access materialization and released before any user callback.</p></div>
-      <div class="desc lang-fr" hidden><p>Exécute une frame d'un render graph. Fournissez la liste des passes à lancer (sous-ensemble de celles enregistrées) et une closure <code>post_passes</code> qui s'exécute après la dernière passe dans la même command list (usage typique : blit du color offscreen vers l'image du swapchain).</p><p>Le render graph trie topologiquement les passes (writer avant reader), enregistre les barrières + dynamic-rendering begin / action / end de chacune, puis votre closure post-pass, le tout dans la prochaine command list de l'anneau. Le verrou du ResourceManager n'est tenu que brièvement pendant la matérialisation des accès et libéré avant toute callback utilisateur.</p></div>
+      <pre class="signature codeblock">pub fn execute_render_graph&lt;F&gt;( &amp;mut self, graph_key: RenderGraphKey, passes: &amp;[RenderPassKey], graphics_device: &amp;mut dyn graphics_device::GraphicsDevice, post_passes: F, ) -&gt; Result&lt;()&gt; where F: FnOnce(&amp;mut dyn graphics_device::CommandList) -&gt; Result&lt;()&gt;,</pre>
+      <div class="desc lang-en"><p>Execute one frame of a render graph. Provide the list of passes to run (subset of those registered), an explicit <code>graphics_device</code> argument forwarded down to each <code>PassAction::execute</code> / <code>Drawer::draw</code>, and a <code>post_passes</code> closure that runs after the last pass within the same command list (typical use: blitting the offscreen color into the swapchain image).</p><p>The render graph topologically sorts the passes (writer-before-reader), records each one's barriers + dynamic-rendering begin / action / end, then your post-pass closure, all into the next command list of the ring. The ResourceManager lock is held only briefly during access materialization and released before any user callback. The <code>graphics_device</code> reference traverses the entire chain so drawers can resolve pipelines and debug actions can lazily build pipelines without re-locking a named device.</p></div>
+      <div class="desc lang-fr" hidden><p>Exécute une frame d'un render graph. Fournissez la liste des passes à lancer (sous-ensemble de celles enregistrées), un argument <code>graphics_device</code> explicite transmis à chaque <code>PassAction::execute</code> / <code>Drawer::draw</code>, et une closure <code>post_passes</code> qui s'exécute après la dernière passe dans la même command list (usage typique : blit du color offscreen vers l'image du swapchain).</p><p>Le render graph trie topologiquement les passes (writer avant reader), enregistre les barrières + dynamic-rendering begin / action / end de chacune, puis votre closure post-pass, le tout dans la prochaine command list de l'anneau. Le verrou du ResourceManager n'est tenu que brièvement pendant la matérialisation des accès et libéré avant toute callback utilisateur. La référence <code>graphics_device</code> parcourt toute la chaîne pour que les drawers résolvent leurs pipelines et que les debug actions construisent leurs pipelines paresseusement sans relocker un device par nom.</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
-        <pre class='codeblock'>rgm.execute_render_graph(graph_key, &amp;[opaque_key, transparent_key], |cmd| {
+        <pre class='codeblock'>let gd_arc = Engine::graphics_device(&quot;main&quot;)?;
+let mut gd = gd_arc.lock().unwrap();
+rgm.execute_render_graph(graph_key, &amp;[opaque_key, transparent_key], &amp;mut *gd, |cmd| {
     swapchain.record_present_blit(cmd, offscreen_color, image_index)?;
     Ok(())
 })?;</pre>
@@ -12370,9 +12381,9 @@ let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], ac
         <span class="badge badge-method">method</span>
         <h3 class="item-name">RenderGraphManager::get_or_create_framebuffer</h3>
       </div>
-      <pre class="signature codeblock">pub fn get_or_create_framebuffer( &amp;mut self, color_attachments: &amp;[ColorAttachmentSlot], depth_stencil_attachment: Option&lt;GraphResourceKey&gt;, ) -&gt; Result&lt;FramebufferKey&gt;</pre>
-      <div class="desc lang-en">Get or create a <code>Framebuffer</code> matching the given attachment set. <br> Idempotent: identical inputs return the same <code>FramebufferKey</code> across calls. Validates dimensions, layer counts, sample counts, resolve consistency (all-or-none), and that every <code>GraphResourceKey</code> is a <code>Texture</code> (not a <code>Buffer</code>).</div>
-      <div class="desc lang-fr" hidden>Récupère ou crée un <code>Framebuffer</code> correspondant au jeu d'attachements donné. <br> Idempotent : des entrées identiques renvoient le même <code>FramebufferKey</code> entre appels. Valide les dimensions, le nombre de couches, le nombre de samples, la cohérence des résolutions (tout-ou-rien), et que chaque <code>GraphResourceKey</code> est bien une <code>Texture</code> (et non un <code>Buffer</code>).</div>
+      <pre class="signature codeblock">pub fn get_or_create_framebuffer( &amp;mut self, color_attachments: &amp;[ColorAttachmentSlot], depth_stencil_attachment: Option&lt;GraphResourceKey&gt;, graphics_device: &amp;dyn graphics_device::GraphicsDevice, ) -&gt; Result&lt;FramebufferKey&gt;</pre>
+      <div class="desc lang-en">Get or create a <code>Framebuffer</code> matching the given attachment set. <br> Idempotent: identical inputs return the same <code>FramebufferKey</code> across calls. Validates dimensions, layer counts, sample counts, resolve consistency (all-or-none), and that every <code>GraphResourceKey</code> is a <code>Texture</code> (not a <code>Buffer</code>). The <code>graphics_device</code> argument is the device that will own the new framebuffer if one needs to be created.</div>
+      <div class="desc lang-fr" hidden>Récupère ou crée un <code>Framebuffer</code> correspondant au jeu d'attachements donné. <br> Idempotent : des entrées identiques renvoient le même <code>FramebufferKey</code> entre appels. Valide les dimensions, le nombre de couches, le nombre de samples, la cohérence des résolutions (tout-ou-rien), et que chaque <code>GraphResourceKey</code> est bien une <code>Texture</code> (et non un <code>Buffer</code>). L'argument <code>graphics_device</code> est le device qui possédera le nouveau framebuffer s'il doit être créé.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -12642,9 +12653,9 @@ let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], ac
         <span class="badge badge-method">method</span>
         <h3 class="item-name">RenderGraphManager::replace_pass_accesses</h3>
       </div>
-      <pre class="signature codeblock">pub fn replace_pass_accesses( &amp;mut self, pass_key: RenderPassKey, new_accesses: Vec&lt;ResourceAccess&gt;, ) -&gt; Result&lt;()&gt;</pre>
-      <div class="desc lang-en">Replace every <code>ResourceAccess</code> of the pass at once. Useful when the access set changes structurally (e.g. toggling MSAA) — using the per-access setters one by one would walk through invalid intermediate states (mixed resolves, etc.) and create transient framebuffers we don't actually want.</div>
-      <div class="desc lang-fr" hidden>Remplace tous les <code>ResourceAccess</code> de la passe en une seule opération. Utile lorsque le jeu d'accès change structurellement (ex. activation/désactivation du MSAA) — utiliser les setters un par un ferait passer par des états intermédiaires invalides (résolutions mixtes, etc.) et créerait des framebuffers transitoires non souhaités.</div>
+      <pre class="signature codeblock">pub fn replace_pass_accesses( &amp;mut self, pass_key: RenderPassKey, new_accesses: Vec&lt;ResourceAccess&gt;, graphics_device: &amp;dyn graphics_device::GraphicsDevice, ) -&gt; Result&lt;()&gt;</pre>
+      <div class="desc lang-en">Replace every <code>ResourceAccess</code> of the pass at once. Useful when the access set changes structurally (e.g. toggling MSAA) — using the per-access setters one by one would walk through invalid intermediate states (mixed resolves, etc.) and create transient framebuffers we don't actually want. The <code>graphics_device</code> argument is the device that will own any framebuffer rebuilt during the swap.</div>
+      <div class="desc lang-fr" hidden>Remplace tous les <code>ResourceAccess</code> de la passe en une seule opération. Utile lorsque le jeu d'accès change structurellement (ex. activation/désactivation du MSAA) — utiliser les setters un par un ferait passer par des états intermédiaires invalides (résolutions mixtes, etc.) et créerait des framebuffers transitoires non souhaités. L'argument <code>graphics_device</code> est le device qui possédera tout framebuffer reconstruit durant le swap.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -12658,9 +12669,9 @@ let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], ac
         <span class="badge badge-method">method</span>
         <h3 class="item-name">RenderGraphManager::set_pass_access_resource</h3>
       </div>
-      <pre class="signature codeblock">pub fn set_pass_access_resource( &amp;mut self, pass_key: RenderPassKey, access_idx: usize, gr_key: GraphResourceKey, ) -&gt; Result&lt;()&gt;</pre>
-      <div class="desc lang-en">Replace the <code>GraphResource</code> of access #<code>access_idx</code>. Rebuilds the pass cache atomically.</div>
-      <div class="desc lang-fr" hidden>Remplace le <code>GraphResource</code> de l'accès #<code>access_idx</code>. Reconstruit le cache de passe de manière atomique.</div>
+      <pre class="signature codeblock">pub fn set_pass_access_resource( &amp;mut self, pass_key: RenderPassKey, access_idx: usize, gr_key: GraphResourceKey, graphics_device: &amp;dyn graphics_device::GraphicsDevice, ) -&gt; Result&lt;()&gt;</pre>
+      <div class="desc lang-en">Replace the <code>GraphResource</code> of access #<code>access_idx</code>. Rebuilds the pass cache atomically. The <code>graphics_device</code> argument is the device that will own any framebuffer or render-pass object rebuilt during the cache refresh.</div>
+      <div class="desc lang-fr" hidden>Remplace le <code>GraphResource</code> de l'accès #<code>access_idx</code>. Reconstruit le cache de passe de manière atomique. L'argument <code>graphics_device</code> est le device qui possédera tout framebuffer ou objet de render-pass reconstruit lors du refresh du cache.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -12674,9 +12685,9 @@ let opaque = rgm.create_render_pass(&quot;opaque&quot;, vec![/* accesses */], ac
         <span class="badge badge-method">method</span>
         <h3 class="item-name">RenderGraphManager::set_pass_access_target_ops</h3>
       </div>
-      <pre class="signature codeblock">pub fn set_pass_access_target_ops( &amp;mut self, pass_key: RenderPassKey, access_idx: usize, ops: TargetOps, ) -&gt; Result&lt;()&gt;</pre>
-      <div class="desc lang-en">Replace the <code>TargetOps</code> of access #<code>access_idx</code>. Rebuilds the pass cache atomically (the framebuffer cache hits when the resolve target is unchanged).</div>
-      <div class="desc lang-fr" hidden>Remplace les <code>TargetOps</code> de l'accès #<code>access_idx</code>. Reconstruit le cache de passe de manière atomique (le cache de framebuffer fait un hit lorsque la cible de résolution est inchangée).</div>
+      <pre class="signature codeblock">pub fn set_pass_access_target_ops( &amp;mut self, pass_key: RenderPassKey, access_idx: usize, ops: TargetOps, graphics_device: &amp;dyn graphics_device::GraphicsDevice, ) -&gt; Result&lt;()&gt;</pre>
+      <div class="desc lang-en">Replace the <code>TargetOps</code> of access #<code>access_idx</code>. Rebuilds the pass cache atomically (the framebuffer cache hits when the resolve target is unchanged). The <code>graphics_device</code> argument is the device that will own any framebuffer or render-pass object rebuilt during the cache refresh.</div>
+      <div class="desc lang-fr" hidden>Remplace les <code>TargetOps</code> de l'accès #<code>access_idx</code>. Reconstruit le cache de passe de manière atomique (le cache de framebuffer fait un hit lorsque la cible de résolution est inchangée). L'argument <code>graphics_device</code> est le device qui possédera tout framebuffer ou objet de render-pass reconstruit lors du refresh du cache.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -19250,13 +19261,15 @@ drawer.draw(&amp;mut scene, &amp;view, &amp;mut *cmd, &amp;pass_info, &amp;bindi
         <h3 class="item-name">Drawer</h3>
       </div>
       <pre class="signature codeblock">pub trait Drawer: Send + Sync</pre>
-      <div class="desc lang-en"><p>Trait for draw strategies. <code>draw(scene, view, cmd, pass_info, binding_group, bind_textures)</code> records draw commands for a <code>RenderView</code> into a command list. The <code>bind_textures: bool</code> gate lets shadow passes skip the bindless set 0 bind.</p><p>The engine ships <code>ForwardDrawer</code> as the only built-in implementation; you can plug in your own (deferred, GPU-driven, …).</p></div>
-      <div class="desc lang-fr" hidden><p>Trait pour les stratégies de draw. <code>draw(scene, view, cmd, pass_info, binding_group, bind_textures)</code> enregistre les commandes de draw pour un <code>RenderView</code> dans une command list. Le booléen <code>bind_textures</code> permet aux passes de shadow de sauter le bind du set 0 bindless.</p><p>Le moteur fournit <code>ForwardDrawer</code> comme seule implémentation intégrée ; vous pouvez brancher la vôtre (deferred, GPU-driven…).</p></div>
+      <div class="desc lang-en"><p>Trait for draw strategies. <code>draw(scene, view, cmd, pass_info, binding_group, bind_textures, graphics_device)</code> records draw commands for a <code>RenderView</code> into a command list. The <code>bind_textures: bool</code> gate lets shadow passes skip the bindless set 0 bind. The <code>graphics_device</code> argument is forwarded by <code>ScenePassAction::execute</code> and used by drawers to resolve pipelines on demand without a named-device lookup.</p><p>The engine ships <code>ForwardDrawer</code> as the only built-in implementation; you can plug in your own (deferred, GPU-driven, …).</p></div>
+      <div class="desc lang-fr" hidden><p>Trait pour les stratégies de draw. <code>draw(scene, view, cmd, pass_info, binding_group, bind_textures, graphics_device)</code> enregistre les commandes de draw pour un <code>RenderView</code> dans une command list. Le booléen <code>bind_textures</code> permet aux passes de shadow de sauter le bind du set 0 bindless. L'argument <code>graphics_device</code> est transmis par <code>ScenePassAction::execute</code> et utilisé par les drawers pour résoudre leurs pipelines à la demande sans lookup de device par nom.</p><p>Le moteur fournit <code>ForwardDrawer</code> comme seule implémentation intégrée ; vous pouvez brancher la vôtre (deferred, GPU-driven…).</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
         <pre class='codeblock'>let mut drawer: Box&lt;dyn Drawer&gt; = Box::new(ForwardDrawer::new());
-drawer.draw(&amp;mut scene, &amp;view, &amp;mut *cmd, &amp;pass_info, &amp;binding_group, true)?;</pre>
+let gd_arc = Engine::graphics_device(&quot;main&quot;)?;
+let mut gd = gd_arc.lock().unwrap();
+drawer.draw(&amp;mut scene, &amp;view, &amp;mut *cmd, &amp;pass_info, &amp;binding_group, true, &amp;mut *gd)?;</pre>
       </div>
     </section>
     

@@ -7,10 +7,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::engine::Engine;
 use crate::error::Result;
 use crate::graphics_device::{
-    BindingGroup, BindingGroupLayoutDesc, BindingResource, BindingSlotDesc, BindingType,
+    self, BindingGroup, BindingGroupLayoutDesc, BindingResource, BindingSlotDesc, BindingType,
     CommandList, ShaderStageFlags,
 };
 use crate::resource::resource_manager::PassInfo;
@@ -43,6 +42,7 @@ impl ScenePassAction {
         render_view: Arc<Mutex<Option<RenderView>>>,
         bindings: Vec<SceneBinding>,
         bind_textures: bool,
+        graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
         // Build layout description from bindings
         let layout = BindingGroupLayoutDesc {
@@ -75,9 +75,7 @@ impl ScenePassAction {
             .collect();
 
         // Create the BindingGroup immediately
-        let gd_arc = Engine::graphics_device("main")?;
-        let gd = gd_arc.lock().unwrap();
-        let binding_group = gd.create_binding_group_from_layout(
+        let binding_group = graphics_device.create_binding_group_from_layout(
             &layout,
             1, // Set 1: scene bindings (set 0 is reserved for bindless textures)
             &resources,
@@ -88,12 +86,20 @@ impl ScenePassAction {
 }
 
 impl PassAction for ScenePassAction {
-    fn execute(&mut self, cmd: &mut dyn CommandList, pass_info: &PassInfo) -> Result<()> {
+    fn execute(
+        &mut self,
+        cmd: &mut dyn CommandList,
+        pass_info: &PassInfo,
+        graphics_device: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<()> {
         let mut scene = self.scene.lock().unwrap();
         let mut drawer = self.drawer.lock().unwrap();
         let view = self.render_view.lock().unwrap();
         if let Some(ref view) = *view {
-            drawer.draw(&mut scene, view, cmd, pass_info, &self.binding_group, self.bind_textures)?;
+            drawer.draw(
+                &mut scene, view, cmd, pass_info, &self.binding_group, self.bind_textures,
+                graphics_device,
+            )?;
         }
         Ok(())
     }

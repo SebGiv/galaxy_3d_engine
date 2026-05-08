@@ -187,9 +187,11 @@ fn test_render_graph_lookups_on_empty_manager() {
 #[test]
 #[serial]
 fn test_create_render_graph_engine_backed() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
-    let key = rgm.create_render_graph("main", 2).unwrap();
+    let key = rgm.create_render_graph("main", 2, &*gd).unwrap();
     assert_eq!(rgm.render_graph_count(), 1);
     assert!(rgm.render_graph(key).is_some());
     assert!(rgm.render_graph_by_name("main").is_some());
@@ -199,10 +201,12 @@ fn test_create_render_graph_engine_backed() {
 #[test]
 #[serial]
 fn test_create_render_graph_duplicate_name_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
-    rgm.create_render_graph("main", 2).unwrap();
-    let result = rgm.create_render_graph("main", 2);
+    rgm.create_render_graph("main", 2, &*gd).unwrap();
+    let result = rgm.create_render_graph("main", 2, &*gd);
     assert!(result.is_err());
     assert_eq!(rgm.render_graph_count(), 1);
 }
@@ -210,6 +214,8 @@ fn test_create_render_graph_duplicate_name_fails() {
 #[test]
 #[serial]
 fn test_create_render_pass_color_only() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
@@ -222,7 +228,7 @@ fn test_create_render_pass_color_only() {
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
         },
-    ], action).unwrap();
+    ], action, &*gd).unwrap();
     assert_eq!(rgm.render_pass_count(), 1);
     let pass = rgm.render_pass(pass_key).unwrap();
     assert_eq!(pass.name(), "opaque");
@@ -234,6 +240,8 @@ fn test_create_render_pass_color_only() {
 #[test]
 #[serial]
 fn test_create_render_pass_color_and_depth() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
@@ -254,7 +262,7 @@ fn test_create_render_pass_color_and_depth() {
             access_type: AccessType::DepthStencilWrite,
             target_ops: Some(default_depth_ops()),
         },
-    ], action).unwrap();
+    ], action, &*gd).unwrap();
     let pass = rgm.render_pass(pass_key).unwrap();
     assert_eq!(pass.clear_values().len(), 2);
 }
@@ -262,6 +270,8 @@ fn test_create_render_pass_color_and_depth() {
 #[test]
 #[serial]
 fn test_create_render_pass_compute_only_has_no_framebuffer() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
@@ -275,7 +285,7 @@ fn test_create_render_pass_compute_only_has_no_framebuffer() {
             access_type: AccessType::FragmentShaderRead,
             target_ops: None,
         },
-    ], action).unwrap();
+    ], action, &*gd).unwrap();
     let pass = rgm.render_pass(pass_key).unwrap();
     assert!(pass.framebuffer_key().is_none(), "compute-only pass must have no framebuffer");
     assert!(pass.pass_info().is_none());
@@ -285,6 +295,8 @@ fn test_create_render_pass_compute_only_has_no_framebuffer() {
 #[test]
 #[serial]
 fn test_attachment_with_mip_count_gt_1_rejected() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let bad_gr = rgm.create_graph_resource("bad", GraphResource::Texture {
@@ -301,13 +313,15 @@ fn test_attachment_with_mip_count_gt_1_rejected() {
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
         },
-    ], action);
+    ], action, &*gd);
     assert!(result.is_err(), "attachment with mip_count=2 must be rejected");
 }
 
 #[test]
 #[serial]
 fn test_attachment_with_remaining_mips_rejected() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let bad_gr = rgm.create_graph_resource("bad", GraphResource::Texture {
@@ -324,13 +338,15 @@ fn test_attachment_with_remaining_mips_rejected() {
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
         },
-    ], action);
+    ], action, &*gd);
     assert!(result.is_err(), "attachment with REMAINING_MIP_LEVELS must be rejected");
 }
 
 #[test]
 #[serial]
 fn test_non_attachment_with_mip_count_gt_1_accepted() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     // FragmentShaderRead may legitimately span multiple mips (sampler
     // selects mip via LOD). The build_pass_cache rule only constrains
     // attachment accesses.
@@ -350,13 +366,15 @@ fn test_non_attachment_with_mip_count_gt_1_accepted() {
             access_type: AccessType::FragmentShaderRead,
             target_ops: None,
         },
-    ], action).expect("non-attachment access should accept any mip_count");
+    ], action, &*gd).expect("non-attachment access should accept any mip_count");
     assert!(rgm.render_pass(pass_key).is_some());
 }
 
 #[test]
 #[serial]
 fn test_layered_attachment_accepted() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     // mip_count == 1, layer_count > 1 is the canonical layered-rendering
     // shape (cubemap one-pass, cascaded shadow maps, multi-view) and must
     // be accepted on attachments.
@@ -376,13 +394,15 @@ fn test_layered_attachment_accepted() {
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
         },
-    ], action).expect("mip_count=1 attachment should be accepted regardless of layer_count");
+    ], action, &*gd).expect("mip_count=1 attachment should be accepted regardless of layer_count");
     assert!(rgm.render_pass(pass_key).is_some());
 }
 
 #[test]
 #[serial]
 fn test_create_render_pass_duplicate_name_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
@@ -393,15 +413,17 @@ fn test_create_render_pass_duplicate_name_fails() {
         graph_resource_key: color_gr,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action1).unwrap();
+    }], action1, &*gd).unwrap();
     let (action2, _) = make_recording_pass();
-    let result = rgm.create_render_pass("p", vec![], action2);
+    let result = rgm.create_render_pass("p", vec![], action2, &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_create_render_pass_color_attachment_missing_target_ops_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
@@ -412,13 +434,15 @@ fn test_create_render_pass_color_attachment_missing_target_ops_fails() {
         graph_resource_key: color_gr,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: None,
-    }], action);
+    }], action, &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_create_render_pass_unknown_graph_resource_key_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     use slotmap::Key;
@@ -428,13 +452,15 @@ fn test_create_render_pass_unknown_graph_resource_key_fails() {
         graph_resource_key: bogus,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action);
+    }], action, &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_create_render_pass_two_depth_writes_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let depth_gr = rgm.create_graph_resource("d1", GraphResource::Texture {
@@ -455,13 +481,15 @@ fn test_create_render_pass_two_depth_writes_fails() {
             access_type: AccessType::DepthStencilWrite,
             target_ops: Some(default_depth_ops()),
         },
-    ], action);
+    ], action, &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_create_render_pass_buffer_as_color_attachment_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let buf_gr = rgm.create_graph_resource("buf",
@@ -472,13 +500,15 @@ fn test_create_render_pass_buffer_as_color_attachment_fails() {
         graph_resource_key: buf_gr,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action);
+    }], action, &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_get_or_create_framebuffer_idempotent() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
@@ -486,9 +516,9 @@ fn test_get_or_create_framebuffer_idempotent() {
     }).unwrap();
     let slots = vec![ColorAttachmentSlot { color: color_gr, resolve: None }];
     // First call creates a new framebuffer.
-    let fb1 = rgm.get_or_create_framebuffer(&slots, None).unwrap();
+    let fb1 = rgm.get_or_create_framebuffer(&slots, None, &*gd).unwrap();
     // Second call with identical inputs hits the cache.
-    let fb2 = rgm.get_or_create_framebuffer(&slots, None).unwrap();
+    let fb2 = rgm.get_or_create_framebuffer(&slots, None, &*gd).unwrap();
     assert_eq!(fb1, fb2);
     assert_eq!(rgm.framebuffer_count(), 1);
 }
@@ -496,6 +526,8 @@ fn test_get_or_create_framebuffer_idempotent() {
 #[test]
 #[serial]
 fn test_get_or_create_framebuffer_different_for_different_attachments() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
@@ -505,8 +537,8 @@ fn test_get_or_create_framebuffer_different_for_different_attachments() {
         texture_key: env.depth_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let slots = vec![ColorAttachmentSlot { color: color_gr, resolve: None }];
-    let fb1 = rgm.get_or_create_framebuffer(&slots, None).unwrap();
-    let fb2 = rgm.get_or_create_framebuffer(&slots, Some(depth_gr)).unwrap();
+    let fb1 = rgm.get_or_create_framebuffer(&slots, None, &*gd).unwrap();
+    let fb2 = rgm.get_or_create_framebuffer(&slots, Some(depth_gr), &*gd).unwrap();
     assert_ne!(fb1, fb2);
     assert_eq!(rgm.framebuffer_count(), 2);
 }
@@ -514,16 +546,18 @@ fn test_get_or_create_framebuffer_different_for_different_attachments() {
 #[test]
 #[serial]
 fn test_remove_framebuffer_invalidates_cache() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
         texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     let slots = vec![ColorAttachmentSlot { color: color_gr, resolve: None }];
-    let fb1 = rgm.get_or_create_framebuffer(&slots, None).unwrap();
+    let fb1 = rgm.get_or_create_framebuffer(&slots, None, &*gd).unwrap();
     assert!(rgm.remove_framebuffer(fb1));
     assert_eq!(rgm.framebuffer_count(), 0);
-    let fb2 = rgm.get_or_create_framebuffer(&slots, None).unwrap();
+    let fb2 = rgm.get_or_create_framebuffer(&slots, None, &*gd).unwrap();
     assert_ne!(fb1, fb2, "post-remove call should rebuild a new framebuffer");
     // Removing an invalid key returns false.
     use slotmap::Key;
@@ -533,6 +567,8 @@ fn test_remove_framebuffer_invalidates_cache() {
 #[test]
 #[serial]
 fn test_set_pass_access_resource() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
@@ -546,8 +582,8 @@ fn test_set_pass_access_resource() {
         graph_resource_key: color_a,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action).unwrap();
-    rgm.set_pass_access_resource(pass_key, 0, color_b).unwrap();
+    }], action, &*gd).unwrap();
+    rgm.set_pass_access_resource(pass_key, 0, color_b, &*gd).unwrap();
     let pass = rgm.render_pass(pass_key).unwrap();
     assert_eq!(pass.accesses()[0].graph_resource_key, color_b);
 }
@@ -555,19 +591,23 @@ fn test_set_pass_access_resource() {
 #[test]
 #[serial]
 fn test_set_pass_access_resource_invalid_pass_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
         texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
     }).unwrap();
     use slotmap::Key;
-    let result = rgm.set_pass_access_resource(RenderPassKey::null(), 0, color_a);
+    let result = rgm.set_pass_access_resource(RenderPassKey::null(), 0, color_a, &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_set_pass_access_resource_out_of_bounds_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
@@ -578,14 +618,16 @@ fn test_set_pass_access_resource_out_of_bounds_fails() {
         graph_resource_key: color_a,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action).unwrap();
-    let result = rgm.set_pass_access_resource(pass_key, 99, color_a);
+    }], action, &*gd).unwrap();
+    let result = rgm.set_pass_access_resource(pass_key, 99, color_a, &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_set_pass_access_target_ops() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
@@ -596,29 +638,33 @@ fn test_set_pass_access_target_ops() {
         graph_resource_key: color_a,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action).unwrap();
+    }], action, &*gd).unwrap();
     let new_ops = TargetOps::Color {
         clear_color: [1.0, 0.0, 0.0, 1.0],
         load_op: graphics_device::LoadOp::Load,
         store_op: graphics_device::StoreOp::Store,
         resolve_target: None,
     };
-    rgm.set_pass_access_target_ops(pass_key, 0, new_ops).unwrap();
+    rgm.set_pass_access_target_ops(pass_key, 0, new_ops, &*gd).unwrap();
 }
 
 #[test]
 #[serial]
 fn test_set_pass_access_target_ops_invalid_pass_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     use slotmap::Key;
-    let result = rgm.set_pass_access_target_ops(RenderPassKey::null(), 0, default_color_ops());
+    let result = rgm.set_pass_access_target_ops(RenderPassKey::null(), 0, default_color_ops(), &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_set_pass_access_target_ops_out_of_bounds_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
@@ -629,14 +675,16 @@ fn test_set_pass_access_target_ops_out_of_bounds_fails() {
         graph_resource_key: color_a,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action).unwrap();
-    let result = rgm.set_pass_access_target_ops(pass_key, 99, default_color_ops());
+    }], action, &*gd).unwrap();
+    let result = rgm.set_pass_access_target_ops(pass_key, 99, default_color_ops(), &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_replace_pass_accesses() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_a = rgm.create_graph_resource("a", GraphResource::Texture {
@@ -650,7 +698,7 @@ fn test_replace_pass_accesses() {
         graph_resource_key: color_a,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action).unwrap();
+    }], action, &*gd).unwrap();
     let new_accesses = vec![
         ResourceAccess {
             graph_resource_key: color_a,
@@ -663,23 +711,27 @@ fn test_replace_pass_accesses() {
             target_ops: Some(default_depth_ops()),
         },
     ];
-    rgm.replace_pass_accesses(pass_key, new_accesses).unwrap();
+    rgm.replace_pass_accesses(pass_key, new_accesses, &*gd).unwrap();
     assert_eq!(rgm.render_pass(pass_key).unwrap().accesses().len(), 2);
 }
 
 #[test]
 #[serial]
 fn test_replace_pass_accesses_invalid_pass_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     use slotmap::Key;
-    let result = rgm.replace_pass_accesses(RenderPassKey::null(), vec![]);
+    let result = rgm.replace_pass_accesses(RenderPassKey::null(), vec![], &*gd);
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_execute_render_graph_runs_each_pass_once() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let rgm_arc = {
         Engine::create_render_graph_manager().unwrap();
@@ -687,7 +739,7 @@ fn test_execute_render_graph_runs_each_pass_once() {
     };
     let (graph_key, pass_key, counter): (RenderGraphKey, RenderPassKey, std::sync::Arc<std::sync::atomic::AtomicU32>) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
@@ -696,14 +748,14 @@ fn test_execute_render_graph_runs_each_pass_once() {
             graph_resource_key: color_gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action).unwrap();
+        }], action, &*gd).unwrap();
         (graph_key, pass_key, counter)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[pass_key], |_cmd| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[pass_key], &mut *gd, |_cmd| Ok(())).unwrap();
     assert_eq!(counter.load(Ordering::SeqCst), 1);
-    rgm.execute_render_graph(graph_key, &[pass_key], |_cmd| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[pass_key], &mut *gd, |_cmd| Ok(())).unwrap();
     assert_eq!(counter.load(Ordering::SeqCst), 2);
 }
 
@@ -714,27 +766,33 @@ fn test_execute_render_graph_invalid_graph_key_fails() {
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let mut rgm = rgm_arc.lock().unwrap();
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     use slotmap::Key;
-    let result = rgm.execute_render_graph(RenderGraphKey::null(), &[], |_| Ok(()));
+    let result = rgm.execute_render_graph(RenderGraphKey::null(), &[], &mut *gd, |_| Ok(()));
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_execute_render_graph_invalid_pass_key_fails() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let mut rgm = rgm_arc.lock().unwrap();
-    let graph_key = rgm.create_render_graph("main", 1).unwrap();
+    let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
     use slotmap::Key;
-    let result = rgm.execute_render_graph(graph_key, &[RenderPassKey::null()], |_| Ok(()));
+    let result = rgm.execute_render_graph(graph_key, &[RenderPassKey::null()], &mut *gd, |_| Ok(()));
     assert!(result.is_err());
 }
 
 #[test]
 #[serial]
 fn test_clear_drops_engine_backed_passes() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     let mut rgm = RenderGraphManager::new();
     let color_gr = rgm.create_graph_resource("c", GraphResource::Texture {
@@ -745,8 +803,8 @@ fn test_clear_drops_engine_backed_passes() {
         graph_resource_key: color_gr,
         access_type: AccessType::ColorAttachmentWrite,
         target_ops: Some(default_color_ops()),
-    }], action).unwrap();
-    rgm.create_render_graph("main", 1).unwrap();
+    }], action, &*gd).unwrap();
+    rgm.create_render_graph("main", 1, &*gd).unwrap();
 
     rgm.clear();
     assert_eq!(rgm.render_pass_count(), 0);

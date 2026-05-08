@@ -165,7 +165,7 @@ sequenceDiagram
     App->>Culler: cull_into(scene, camera, scene_index, &mut visible)
     App->>Updater: assign_lights(scene, visible, instance_buf)
     App->>Dispatcher: dispatch(visible, scene, rm, &mut [render_views])
-    App->>RGM: execute_render_graph(graph_key, &[passes], post_passes)
+    App->>RGM: execute_render_graph(graph_key, &[passes], gd, post_passes)
     RGM->>RG: execute(passes_map, graph_resources, framebuffers, ...)
     RG->>RG: topological_sort
     loop sorted passes
@@ -1743,9 +1743,15 @@ pub trait Drawer: Send + Sync {
         pass_info: &PassInfo,
         binding_group: &Arc<dyn BindingGroup>,
         bind_textures: bool,
+        graphics_device: &mut dyn GraphicsDevice,
     ) -> Result<()>;
 }
 ```
+
+`graphics_device` is passed by `ScenePassAction::execute` (which receives it from
+`RenderGraph::execute`). The drawer uses it for `resolve_pipeline(...)` calls when a
+draw call's cached pipeline key is stale or missing — no named-device lookup at frame
+time.
 
 `ForwardDrawer` is the only implementation. Its internal queue has a default capacity
 of 4096 draw calls (`DEFAULT_DRAW_CALL_CAPACITY`) — the queue grows on demand once,
@@ -2167,9 +2173,22 @@ the same depth attachment end up with the same `FramebufferKey`.
 
 ```rust
 pub trait PassAction: Send + Sync {
-    fn execute(&mut self, cmd: &mut dyn CommandList, pass_info: &PassInfo) -> Result<()>;
+    fn execute(
+        &mut self,
+        cmd: &mut dyn CommandList,
+        pass_info: &PassInfo,
+        graphics_device: &mut dyn GraphicsDevice,
+    ) -> Result<()>;
 }
 ```
+
+The `graphics_device` argument is passed explicitly down the execution chain
+(`RenderGraphManager::execute_render_graph` → `RenderGraph::execute` →
+`PassAction::execute` → `Drawer::draw`) so neither pass actions nor drawers need to
+look up a named device at frame time. Implementations that do not allocate transient
+GPU objects (e.g. `FullscreenPassAction`, `CustomPassAction`) simply ignore the
+argument; the ones that resolve pipelines or create scratch buffers
+(`ScenePassAction`'s drawer, `DebugPassAction`) use it directly.
 
 The trait and the shared `SceneBinding` enum live in
 `render_graph::pass_action`; each concrete implementation lives in its own file
@@ -2184,11 +2203,12 @@ Four implementations:
 2. **`CustomPassAction`** — closure-based escape hatch. Wraps a `Box<dyn FnMut(&mut dyn
    CommandList, &PassInfo) -> Result<()> + Send + Sync>`.
 3. **`ScenePassAction`** — the scene-rendering action. Eagerly builds its set-1
-   `BindingGroup` at construction (via `gd.create_binding_group_from_layout`), holds
+   `BindingGroup` at construction (via `gd.create_binding_group_from_layout`, where
+   `gd` is the explicit `&dyn GraphicsDevice` argument to `new`), holds
    `Arc<Mutex<Scene>>`, `Arc<Mutex<dyn Drawer>>`, and `Arc<Mutex<Option<RenderView>>>`.
    At execute time, locks all three and forwards to `drawer.draw(scene, view, cmd,
-   pass_info, &binding_group, bind_textures)`. The `bind_textures: bool` parameter is
-   stored on the action.
+   pass_info, &binding_group, bind_textures, graphics_device)`. The `bind_textures:
+   bool` parameter is stored on the action.
 4. **`DebugPassAction`** — overlay action that draws selected `RenderInstance`s on top
    of the scene with two independent debug visualizations sharing a single set-1
    `BindingGroup` (same shape as `ScenePassAction`'s):
@@ -2425,15 +2445,37 @@ The manager exposes the standard `create / get / get_mut / by_name / id / count 
 remove` accessor pattern for graphs, passes, and graph resources. Framebuffers are
 exposed as `framebuffer(key)`, `framebuffer_count`, `remove_framebuffer(key)`, plus the
 content-addressed `get_or_create_framebuffer(color_attachments, depth_stencil
-_attachment)` entry point.
+_attachment, graphics_device)` entry point.
 
-Pass mutators are explicit:
+The `RenderGraphManager` is a multi-instance-friendly singleton: each `GraphicsDevice` is
+identified by name and the manager holds passes, framebuffers, and graph resources that
+may target *different* devices in the same manager. Public mutators that allocate
+backend objects therefore take `graphics_device: &dyn GraphicsDevice` as an explicit
+argument — the same pattern as `ResourceManager::create_*`. There is no implicit lookup
+of a "main" device.
+
+The full set of public methods that take an explicit `GraphicsDevice` argument is:
 
 ```rust
-fn set_pass_access_resource(&mut self, pass_key, access_idx, gr_key) -> Result<()>;
-fn set_pass_access_target_ops(&mut self, pass_key, access_idx, ops) -> Result<()>;
-fn replace_pass_accesses(&mut self, pass_key, new_accesses) -> Result<()>;
+// &dyn GraphicsDevice — only need read access (validation + binding-group creation)
+fn create_render_graph(&mut self, name, frames_in_flight, gd) -> Result<RenderGraphKey>;
+fn create_render_pass(&mut self, name, accesses, action, gd) -> Result<RenderPassKey>;
+fn set_pass_access_resource(&mut self, pass_key, access_idx, gr_key, gd) -> Result<()>;
+fn set_pass_access_target_ops(&mut self, pass_key, access_idx, ops, gd) -> Result<()>;
+fn replace_pass_accesses(&mut self, pass_key, new_accesses, gd) -> Result<()>;
+fn get_or_create_framebuffer(&mut self, color_attachments, depth_stencil_attachment, gd)
+    -> Result<FramebufferKey>;
+
+// &mut dyn GraphicsDevice — frame execution drains pipelines/buffers via &mut
+fn execute_render_graph<F>(&mut self, graph_key, passes, gd, post_passes_fn) -> Result<()>;
 ```
+
+The `execute_render_graph` chain forwards `gd` down to `RenderGraph::execute` →
+`PassAction::execute` → `Drawer::draw`, so a drawer that calls `resolve_pipeline(...)`
+or a `DebugPassAction` that creates lazily-cached pipelines reaches the device through
+the call chain instead of looking it up by name.
+
+Pass mutators rebuild the pass cache atomically:
 
 Each one mutates the access list, calls `build_pass_cache`, and installs the new cache
 via `pass.set_cache(...)`. Errors at the cache step (mismatched sample counts, etc.)

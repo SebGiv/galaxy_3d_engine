@@ -51,12 +51,14 @@ fn test_render_graph_command_list_after_construction() {
 #[test]
 #[serial]
 fn test_render_graph_execute_via_manager_runs_post_passes() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, _pass_key) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
@@ -65,7 +67,7 @@ fn test_render_graph_execute_via_manager_runs_post_passes() {
             graph_resource_key: color_gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action).unwrap();
+        }], action, &*gd).unwrap();
         (graph_key, pass_key)
     };
 
@@ -74,7 +76,7 @@ fn test_render_graph_execute_via_manager_runs_post_passes() {
 
     let mut rgm = rgm_arc.lock().unwrap();
     let pass_keys = vec![_pass_key];
-    rgm.execute_render_graph(graph_key, &pass_keys, |_cmd| {
+    rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_cmd| {
         post_called_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }).unwrap();
@@ -84,19 +86,21 @@ fn test_render_graph_execute_via_manager_runs_post_passes() {
 #[test]
 #[serial]
 fn test_render_graph_execute_with_no_passes_runs_post_only() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let graph_key = {
         let mut rgm = rgm_arc.lock().unwrap();
-        rgm.create_render_graph("main", 1).unwrap()
+        rgm.create_render_graph("main", 1, &*gd).unwrap()
     };
 
     let post_called = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let post_called_inner = post_called.clone();
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[], |_cmd| {
+    rgm.execute_render_graph(graph_key, &[], &mut *gd, |_cmd| {
         post_called_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }).unwrap();
@@ -106,12 +110,14 @@ fn test_render_graph_execute_with_no_passes_runs_post_only() {
 #[test]
 #[serial]
 fn test_render_graph_topological_sort_with_writer_reader() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, writer_key, reader_key) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
@@ -121,32 +127,34 @@ fn test_render_graph_topological_sort_with_writer_reader() {
             graph_resource_key: color_gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], writer_action).unwrap();
+        }], writer_action, &*gd).unwrap();
         // Reader: reads color (sampled, no attachment, no framebuffer)
         let (reader_action, _) = make_recording_pass();
         let reader_key = rgm.create_render_pass("reader", vec![ResourceAccess {
             graph_resource_key: color_gr,
             access_type: AccessType::FragmentShaderRead,
             target_ops: None,
-        }], reader_action).unwrap();
+        }], reader_action, &*gd).unwrap();
         (graph_key, writer_key, reader_key)
     };
 
     // Submit reader BEFORE writer in the input list — topo sort should reorder.
     let mut rgm = rgm_arc.lock().unwrap();
-    let result = rgm.execute_render_graph(graph_key, &[reader_key, writer_key], |_| Ok(()));
+    let result = rgm.execute_render_graph(graph_key, &[reader_key, writer_key], &mut *gd, |_| Ok(()));
     assert!(result.is_ok(), "expected success, got {:?}", result);
 }
 
 #[test]
 #[serial]
 fn test_render_graph_command_list_ok_after_execute() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let graph_key = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 2).unwrap();
+        let graph_key = rgm.create_render_graph("main", 2, &*gd).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
@@ -155,12 +163,12 @@ fn test_render_graph_command_list_ok_after_execute() {
             graph_resource_key: color_gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action).unwrap();
+        }], action, &*gd).unwrap();
         graph_key
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[], |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[], &mut *gd, |_| Ok(())).unwrap();
     let graph = rgm.render_graph(graph_key).unwrap();
     assert!(graph.command_list().is_ok());
 }
@@ -174,12 +182,14 @@ fn test_render_graph_key_default() {
 #[test]
 #[serial]
 fn test_render_graph_execute_detects_cycle() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_a, pass_b) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
 
         let color_a = rgm.create_graph_resource("color_a", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
@@ -201,7 +211,7 @@ fn test_render_graph_execute_detects_cycle() {
                 access_type: AccessType::FragmentShaderRead,
                 target_ops: None,
             },
-        ], action_a).unwrap();
+        ], action_a, &*gd).unwrap();
 
         // Pass B: writes color_b, reads color_a → depends on A. Cycle.
         let (action_b, _) = make_recording_pass();
@@ -216,25 +226,27 @@ fn test_render_graph_execute_detects_cycle() {
                 access_type: AccessType::FragmentShaderRead,
                 target_ops: None,
             },
-        ], action_b).unwrap();
+        ], action_b, &*gd).unwrap();
 
         (graph_key, pass_a, pass_b)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    let result = rgm.execute_render_graph(graph_key, &[pass_a, pass_b], |_| Ok(()));
+    let result = rgm.execute_render_graph(graph_key, &[pass_a, pass_b], &mut *gd, |_| Ok(()));
     assert!(result.is_err(), "expected cycle detection to fail");
 }
 
 #[test]
 #[serial]
 fn test_render_graph_execute_advances_through_frames() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let graph_key = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 3).unwrap();
+        let graph_key = rgm.create_render_graph("main", 3, &*gd).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
@@ -243,14 +255,14 @@ fn test_render_graph_execute_advances_through_frames() {
             graph_resource_key: color_gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action).unwrap();
+        }], action, &*gd).unwrap();
         graph_key
     };
 
     // Run 5 frames — exercises ring rotation through 3 command lists.
     let mut rgm = rgm_arc.lock().unwrap();
     for _ in 0..5 {
-        rgm.execute_render_graph(graph_key, &[], |_| Ok(())).unwrap();
+        rgm.execute_render_graph(graph_key, &[], &mut *gd, |_| Ok(())).unwrap();
     }
     let graph = rgm.render_graph(graph_key).unwrap();
     assert!(graph.command_list().is_ok());
@@ -275,9 +287,11 @@ fn test_render_graph_execute_with_buffer_resource_access() {
         rm.create_default_instance_buffer("instances".to_string(), gd_arc, 4).unwrap()
     };
 
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let (graph_key, pass_key) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
@@ -295,17 +309,19 @@ fn test_render_graph_execute_with_buffer_resource_access() {
                 access_type: AccessType::ComputeRead,
                 target_ops: None,
             },
-        ], action).unwrap();
+        ], action, &*gd).unwrap();
         (graph_key, pass_key)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[pass_key], |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[pass_key], &mut *gd, |_| Ok(())).unwrap();
 }
 
 #[test]
 #[serial]
 fn test_render_graph_execute_writer_equals_reader_self_loop() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     // Covers the `if writer != k { ... }` false branch (line ~280) inside
     // topological_sort: a single pass that both writes AND reads the same
     // resource → writer == k → skip dependency edge.
@@ -315,7 +331,7 @@ fn test_render_graph_execute_writer_equals_reader_self_loop() {
 
     let (graph_key, pass_key) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1, base_array_layer: 0, layer_count: 1,
         }).unwrap();
@@ -333,12 +349,12 @@ fn test_render_graph_execute_writer_equals_reader_self_loop() {
                 access_type: AccessType::ColorAttachmentRead,
                 target_ops: Some(default_color_ops()),
             },
-        ], action).unwrap();
+        ], action, &*gd).unwrap();
         (graph_key, pass_key)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    let result = rgm.execute_render_graph(graph_key, &[pass_key], |_| Ok(()));
+    let result = rgm.execute_render_graph(graph_key, &[pass_key], &mut *gd, |_| Ok(()));
     assert!(result.is_ok(), "self read+write should sort cleanly: {:?}", result);
 }
 
@@ -374,12 +390,14 @@ fn test_graph_resource_with_buffer_does_not_panic_on_construction() {
 #[test]
 #[serial]
 fn test_two_grs_same_texture_same_subrange_share_history() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_keys) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
 
         // Two GraphResources, same TextureKey, same sub-range.
         let gr_a = rgm.create_graph_resource("color_a", GraphResource::Texture {
@@ -396,18 +414,18 @@ fn test_two_grs_same_texture_same_subrange_share_history() {
             graph_resource_key: gr_a,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let pass_b = rgm.create_render_pass("pass_b", vec![ResourceAccess {
             graph_resource_key: gr_b,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         (graph_key, vec![pass_a, pass_b])
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    let result = rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(()));
+    let result = rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_| Ok(()));
     // Without B, this would still succeed at the API level — the bug
     // was a silent layout-transition issue, not a Rust error. The smoke
     // test here just confirms execute() runs to completion with two
@@ -423,12 +441,14 @@ fn test_two_grs_same_texture_same_subrange_share_history() {
 #[test]
 #[serial]
 fn test_two_grs_same_texture_disjoint_subranges_independent_history() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_keys) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         // Engine test fixtures only expose a single-mip / single-layer
         // color texture, so we simulate disjoint sub-ranges by using
         // distinct base_array_layer values; the test fixture is
@@ -449,18 +469,18 @@ fn test_two_grs_same_texture_disjoint_subranges_independent_history() {
             graph_resource_key: gr_a,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let pass_b = rgm.create_render_pass("pass_b", vec![ResourceAccess {
             graph_resource_key: gr_b,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         (graph_key, vec![pass_a, pass_b])
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    let result = rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(()));
+    let result = rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_| Ok(()));
     assert!(result.is_ok(), "execute failed: {:?}", result);
 }
 
@@ -475,12 +495,14 @@ fn test_two_grs_same_texture_disjoint_subranges_independent_history() {
 #[test]
 #[serial]
 fn test_topo_overlap_creates_dependency_same_subrange() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_a, pass_b) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let gr_a = rgm.create_graph_resource("color_a", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
             base_array_layer: 0, layer_count: 1,
@@ -494,18 +516,18 @@ fn test_topo_overlap_creates_dependency_same_subrange() {
             graph_resource_key: gr_a,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let pass_b = rgm.create_render_pass("pass_b", vec![ResourceAccess {
             graph_resource_key: gr_b,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         (graph_key, pass_a, pass_b)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[pass_a, pass_b], |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[pass_a, pass_b], &mut *gd, |_| Ok(())).unwrap();
 
     let graph = rgm.render_graph(graph_key).unwrap();
     let preds_b = graph.predecessors_of(pass_b);
@@ -521,12 +543,14 @@ fn test_topo_overlap_creates_dependency_same_subrange() {
 #[test]
 #[serial]
 fn test_topo_no_dependency_when_subranges_disjoint() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_a, pass_b) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let gr_a = rgm.create_graph_resource("color_a", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
             base_array_layer: 0, layer_count: 1,
@@ -540,18 +564,18 @@ fn test_topo_no_dependency_when_subranges_disjoint() {
             graph_resource_key: gr_a,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let pass_b = rgm.create_render_pass("pass_b", vec![ResourceAccess {
             graph_resource_key: gr_b,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         (graph_key, pass_a, pass_b)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[pass_a, pass_b], |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[pass_a, pass_b], &mut *gd, |_| Ok(())).unwrap();
 
     let graph = rgm.render_graph(graph_key).unwrap();
     let preds_b = graph.predecessors_of(pass_b);
@@ -568,12 +592,14 @@ fn test_topo_no_dependency_when_subranges_disjoint() {
 #[test]
 #[serial]
 fn test_topo_raw_dep_fans_in_from_multiple_overlapping_writers() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, write_a, write_b, read_c) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         // A writes layer 0, B writes layer 1, C reads layer 0..2 (covers both).
         let gr_a = rgm.create_graph_resource("write_a", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
@@ -593,26 +619,26 @@ fn test_topo_raw_dep_fans_in_from_multiple_overlapping_writers() {
             graph_resource_key: gr_a,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let write_b = rgm.create_render_pass("write_b", vec![ResourceAccess {
             graph_resource_key: gr_b,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         // C is a sampled-read pass — no framebuffer.
         let (action_c, _) = make_recording_pass();
         let read_c = rgm.create_render_pass("read_c", vec![ResourceAccess {
             graph_resource_key: gr_c,
             access_type: AccessType::FragmentShaderRead,
             target_ops: None,
-        }], action_c).unwrap();
+        }], action_c, &*gd).unwrap();
         (graph_key, write_a, write_b, read_c)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
     rgm.execute_render_graph(
-        graph_key, &[write_a, write_b, read_c], |_| Ok(()),
+        graph_key, &[write_a, write_b, read_c], &mut *gd, |_| Ok(()),
     ).unwrap();
 
     let graph = rgm.render_graph(graph_key).unwrap();
@@ -635,12 +661,14 @@ fn test_topo_raw_dep_fans_in_from_multiple_overlapping_writers() {
 #[test]
 #[serial]
 fn test_topo_same_gr_preserves_user_order() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, p_a, p_b, p_c) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
             base_array_layer: 0, layer_count: 1,
@@ -651,24 +679,24 @@ fn test_topo_same_gr_preserves_user_order() {
             graph_resource_key: gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let p_b = rgm.create_render_pass("p_b", vec![ResourceAccess {
             graph_resource_key: gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         let (action_c, _) = make_recording_pass();
         let p_c = rgm.create_render_pass("p_c", vec![ResourceAccess {
             graph_resource_key: gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_c).unwrap();
+        }], action_c, &*gd).unwrap();
         (graph_key, p_a, p_b, p_c)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[p_a, p_b, p_c], |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[p_a, p_b, p_c], &mut *gd, |_| Ok(())).unwrap();
 
     let graph = rgm.render_graph(graph_key).unwrap();
     let pos_a = graph.sorted_position_of(p_a).unwrap();
@@ -682,13 +710,15 @@ fn test_topo_same_gr_preserves_user_order() {
 #[test]
 #[serial]
 fn test_topo_buffer_overlap_creates_dependency() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     use crate::resource::resource_manager::BufferKey;
     setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_a, pass_b) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         // Same BufferKey, overlapping byte ranges (0..64 vs 32..96).
         let buf = BufferKey::default();
         let gr_a = rgm.create_graph_resource("buf_a", GraphResource::Buffer {
@@ -702,18 +732,18 @@ fn test_topo_buffer_overlap_creates_dependency() {
             graph_resource_key: gr_a,
             access_type: AccessType::ComputeWrite,
             target_ops: None,
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let pass_b = rgm.create_render_pass("pass_b", vec![ResourceAccess {
             graph_resource_key: gr_b,
             access_type: AccessType::ComputeWrite,
             target_ops: None,
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         (graph_key, pass_a, pass_b)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[pass_a, pass_b], |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[pass_a, pass_b], &mut *gd, |_| Ok(())).unwrap();
 
     let graph = rgm.render_graph(graph_key).unwrap();
     let preds_b = graph.predecessors_of(pass_b);
@@ -725,13 +755,15 @@ fn test_topo_buffer_overlap_creates_dependency() {
 #[test]
 #[serial]
 fn test_topo_buffer_disjoint_no_dependency() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     use crate::resource::resource_manager::BufferKey;
     setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_a, pass_b) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let buf = BufferKey::default();
         let gr_a = rgm.create_graph_resource("buf_a", GraphResource::Buffer {
             buffer_key: buf, offset: 0, size: 64,
@@ -744,18 +776,18 @@ fn test_topo_buffer_disjoint_no_dependency() {
             graph_resource_key: gr_a,
             access_type: AccessType::ComputeWrite,
             target_ops: None,
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let pass_b = rgm.create_render_pass("pass_b", vec![ResourceAccess {
             graph_resource_key: gr_b,
             access_type: AccessType::ComputeWrite,
             target_ops: None,
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         (graph_key, pass_a, pass_b)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &[pass_a, pass_b], |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &[pass_a, pass_b], &mut *gd, |_| Ok(())).unwrap();
 
     let graph = rgm.render_graph(graph_key).unwrap();
     let preds_b = graph.predecessors_of(pass_b);
@@ -777,12 +809,14 @@ fn test_topo_buffer_disjoint_no_dependency() {
 #[test]
 #[serial]
 fn test_topo_cycle_detected_via_overlap() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, p_a, p_b) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         // Two textures, two passes, mutual read-then-write through
         // distinct GraphResources targeting overlapping sub-ranges.
         // Pass A: write tex_color, read tex_depth.
@@ -817,7 +851,7 @@ fn test_topo_cycle_detected_via_overlap() {
                 access_type: AccessType::FragmentShaderRead,
                 target_ops: None,
             },
-        ], action_a).unwrap();
+        ], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let p_b = rgm.create_render_pass("pass_b", vec![
             ResourceAccess {
@@ -830,12 +864,12 @@ fn test_topo_cycle_detected_via_overlap() {
                 access_type: AccessType::FragmentShaderRead,
                 target_ops: None,
             },
-        ], action_b).unwrap();
+        ], action_b, &*gd).unwrap();
         (graph_key, p_a, p_b)
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    let result = rgm.execute_render_graph(graph_key, &[p_a, p_b], |_| Ok(()));
+    let result = rgm.execute_render_graph(graph_key, &[p_a, p_b], &mut *gd, |_| Ok(()));
     assert!(result.is_err(),
         "mutual read-then-write between A and B via distinct GraphResources \
          must trigger cycle detection");
@@ -847,12 +881,14 @@ fn test_topo_cycle_detected_via_overlap() {
 #[test]
 #[serial]
 fn test_topo_zero_alloc_in_steady_state() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_keys) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
             base_array_layer: 0, layer_count: 1,
@@ -862,22 +898,22 @@ fn test_topo_zero_alloc_in_steady_state() {
             graph_resource_key: gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_a).unwrap();
+        }], action_a, &*gd).unwrap();
         let (action_b, _) = make_recording_pass();
         let pass_b = rgm.create_render_pass("b", vec![ResourceAccess {
             graph_resource_key: gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action_b).unwrap();
+        }], action_b, &*gd).unwrap();
         (graph_key, vec![pass_a, pass_b])
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
-    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_| Ok(())).unwrap();
     let cap_after_frame_1 = rgm.render_graph(graph_key).unwrap()
         .topo_writer_history_capacities();
-    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
-    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_| Ok(())).unwrap();
     let cap_after_frame_3 = rgm.render_graph(graph_key).unwrap()
         .topo_writer_history_capacities();
 
@@ -896,12 +932,14 @@ fn test_topo_zero_alloc_in_steady_state() {
 #[test]
 #[serial]
 fn test_zero_alloc_in_steady_state() {
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let mut gd = gd_arc.lock().unwrap();
     let env = setup_engine_for_render_graph();
     Engine::create_render_graph_manager().unwrap();
     let rgm_arc = Engine::render_graph_manager().unwrap();
     let (graph_key, pass_keys) = {
         let mut rgm = rgm_arc.lock().unwrap();
-        let graph_key = rgm.create_render_graph("main", 1).unwrap();
+        let graph_key = rgm.create_render_graph("main", 1, &*gd).unwrap();
         let color_gr = rgm.create_graph_resource("color", GraphResource::Texture {
             texture_key: env.color_texture, base_mip_level: 0, mip_count: 1,
             base_array_layer: 0, layer_count: 1,
@@ -911,14 +949,14 @@ fn test_zero_alloc_in_steady_state() {
             graph_resource_key: color_gr,
             access_type: AccessType::ColorAttachmentWrite,
             target_ops: Some(default_color_ops()),
-        }], action).unwrap();
+        }], action, &*gd).unwrap();
         (graph_key, vec![pass])
     };
 
     let mut rgm = rgm_arc.lock().unwrap();
 
     // Frame 1: warm up the access-history map.
-    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_| Ok(())).unwrap();
 
     // Snapshot capacities right after frame 1.
     let cap_after_frame_1: Vec<usize> = rgm
@@ -926,8 +964,8 @@ fn test_zero_alloc_in_steady_state() {
         .image_access_history_capacities();
 
     // Frames 2 & 3: re-run the same graph.
-    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
-    rgm.execute_render_graph(graph_key, &pass_keys, |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_| Ok(())).unwrap();
+    rgm.execute_render_graph(graph_key, &pass_keys, &mut *gd, |_| Ok(())).unwrap();
 
     let cap_after_frame_3: Vec<usize> = rgm
         .render_graph(graph_key).unwrap()

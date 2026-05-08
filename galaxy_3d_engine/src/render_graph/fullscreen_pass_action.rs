@@ -28,7 +28,12 @@ impl FullscreenPassAction {
 }
 
 impl PassAction for FullscreenPassAction {
-    fn execute(&mut self, cmd: &mut dyn CommandList, _pass_info: &PassInfo) -> Result<()> {
+    fn execute(
+        &mut self,
+        cmd: &mut dyn CommandList,
+        _pass_info: &PassInfo,
+        _graphics_device: &mut dyn graphics_device::GraphicsDevice,
+    ) -> Result<()> {
         cmd.bind_pipeline(&self.pipeline)?;
         cmd.bind_binding_group(&self.pipeline, 0, &self.binding_group)?;
         cmd.draw(3, 0)

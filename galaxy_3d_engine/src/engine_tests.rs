@@ -921,12 +921,15 @@ fn test_render_graph_manager_returned_is_usable() {
     Engine::create_graphics_device("main", MockGraphicsDevice::new()).unwrap();
     Engine::create_render_graph_manager().unwrap();
 
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
+
     let rgm = Engine::render_graph_manager().unwrap();
 
     // Lock and use the render graph manager (the manager looks up the
     // graphics_device "main" internally — no need to lock it manually).
     let mut guard = rgm.lock().unwrap();
-    let graph = guard.create_render_graph("main", 2);
+    let graph = guard.create_render_graph("main", 2, &*gd);
     assert!(graph.is_ok());
 
     drop(guard);
@@ -1020,12 +1023,15 @@ fn test_full_engine_lifecycle_with_render_graph_manager() {
     Engine::create_scene_manager().unwrap();
     Engine::create_render_graph_manager().unwrap();
 
+    let gd_arc = Engine::graphics_device("main").unwrap();
+    let gd = gd_arc.lock().unwrap();
+
     // Use render graph manager
     {
         let rgm = Engine::render_graph_manager().unwrap();
         let mut guard = rgm.lock().unwrap();
-        guard.create_render_graph("main", 2).unwrap();
-        guard.create_render_graph("shadow", 2).unwrap();
+        guard.create_render_graph("main", 2, &*gd).unwrap();
+        guard.create_render_graph("shadow", 2, &*gd).unwrap();
         assert_eq!(guard.render_graph_count(), 2);
     }
 
