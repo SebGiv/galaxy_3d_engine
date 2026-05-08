@@ -105,13 +105,19 @@ fn test_render_pass_pass_info_format_matches() {
 }
 
 #[test]
-fn test_render_pass_action_mut_invokes_action() {
+fn test_render_pass_execute_components_mut_invokes_action() {
     let mut pass = make_pass("action", vec![]);
     let info = make_pass_info();
     let mut cmd = crate::graphics_device::mock_graphics_device::MockCommandList::new();
     let mut gd = crate::graphics_device::mock_graphics_device::MockGraphicsDevice::new();
-    pass.action_mut().execute(&mut cmd, &info, &mut gd).unwrap();
-    pass.action_mut().execute(&mut cmd, &info, &mut gd).unwrap();
+    {
+        let (_name, _info_opt, action) = pass.execute_components_mut();
+        action.execute(&mut cmd, &info, &mut gd).unwrap();
+    }
+    {
+        let (_name, _info_opt, action) = pass.execute_components_mut();
+        action.execute(&mut cmd, &info, &mut gd).unwrap();
+    }
     // The DummyPassAction counter is internal — we can't read it directly through
     // the trait object, but we can verify execute() returned Ok twice.
 }

@@ -84,8 +84,15 @@ impl RenderPass {
         &self.clear_values
     }
 
-    pub(crate) fn action_mut(&mut self) -> &mut dyn PassAction {
-        self.action.as_mut()
+    /// Crate-internal split-borrow accessor used by `RenderGraph::execute`
+    /// to forward `pass_info` to `PassAction::execute` without cloning.
+    /// The three returned references are projections of three distinct
+    /// fields (`name`, `pass_info`, `action`), which the borrow checker
+    /// accepts as disjoint borrows.
+    pub(crate) fn execute_components_mut(
+        &mut self,
+    ) -> (&str, Option<&PassInfo>, &mut dyn PassAction) {
+        (&self.name, self.pass_info.as_ref(), self.action.as_mut())
     }
 
     /// Crate-internal mutable access to the access list — only the

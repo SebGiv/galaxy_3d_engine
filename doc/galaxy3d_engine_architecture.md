@@ -2432,6 +2432,16 @@ seen at least once. The drain phase iterates `&self.successors[&k]`
 directly (disjoint-fields borrow against `self.in_degree` /
 `self.topo_queue`) instead of cloning the successor list.
 
+`RenderGraph::execute` itself never clones `PassInfo`. Forwarding it to
+each `PassAction::execute` would normally collide with the `&mut`
+borrow of the action (both come from `pass: &mut RenderPass`), so the
+pass exposes a crate-internal split-borrow accessor —
+`RenderPass::execute_components_mut(&mut self) -> (&str, Option<&PassInfo>,
+&mut dyn PassAction)` — which the borrow checker accepts because the
+three returned references project distinct fields. Each frame therefore
+walks every pass with zero `Vec`/`String` allocation in the runtime
+path.
+
 ### 11.10 RenderGraphManager — central authority
 
 ```rust

@@ -224,7 +224,7 @@ impl RenderGraph {
                 self.buffer_accesses.clear();
                 // Materialise image/buffer accesses (Arc clones) under
                 // a brief RM lock — the lock is dropped at the end of
-                // this scope before pass.action_mut().execute() runs.
+                // this scope before the PassAction::execute() runs.
                 {
                     let resource_manager = rm_arc.lock().unwrap();
                     let pass = passes_map.get(pass_key).unwrap();
@@ -329,13 +329,18 @@ impl RenderGraph {
                     &self.image_accesses,
                     &self.buffer_accesses,
                 )?;
-                let pass_info_clone = pass.pass_info().cloned().ok_or_else(|| {
+                // Split-borrow the three fields needed by execute() so we
+                // can hand `pass_info` to the action without cloning it.
+                // The borrow checker accepts the projection because the
+                // method signature distinguishes the three field origins.
+                let (pass_name, pass_info_opt, action) = pass.execute_components_mut();
+                let pass_info_ref = pass_info_opt.ok_or_else(|| {
                     crate::engine_err!("galaxy3d::RenderGraph",
-                        "Pass '{}' has attachments but no PassInfo", pass.name())
+                        "Pass '{}' has attachments but no PassInfo", pass_name)
                 })?;
-                pass.action_mut().execute(
+                action.execute(
                     &mut *self.command_lists[frame],
-                    &pass_info_clone,
+                    pass_info_ref,
                     graphics_device,
                 )?;
                 self.command_lists[frame].end_render_pass()?;
