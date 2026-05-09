@@ -68,6 +68,7 @@ fn create_test_pipeline() -> crate::resource::Pipeline {
         multisample: Default::default(),
         color_formats: vec![],
         depth_format: None,
+        dynamic_bindings: graphics_device::DynamicBindings::new(),
     };
 
     let gd_pipeline = gd_lock.create_pipeline(desc, &vertex_shader, &fragment_shader).unwrap();
@@ -157,6 +158,7 @@ fn test_pipeline_from_gpu_pipeline_with_explicit_ids() {
         multisample: Default::default(),
         color_formats: vec![],
         depth_format: None,
+        dynamic_bindings: graphics_device::DynamicBindings::new(),
     };
     let gd_pipeline = gd_lock.create_pipeline(desc, &vs, &fs).unwrap();
     let pipeline = crate::resource::Pipeline::from_gpu_pipeline(

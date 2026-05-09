@@ -1,7 +1,7 @@
 use super::*;
 use crate::engine::Engine;
 use crate::camera::VisibleInstances;
-use crate::graphics_device::{TextureFormat, SampleCount, mock_graphics_device::{MockGraphicsDevice, MockCommandList, MockBindingGroup}};
+use crate::graphics_device::{TextureFormat, SampleCount, DynamicBindings, mock_graphics_device::{MockGraphicsDevice, MockCommandList, MockBindingGroup}};
 use crate::resource::resource_manager::PassInfo;
 use crate::scene::{Scene, BruteForceCuller, CameraCuller, RenderView};
 use crate::scene::scene_test_helpers::{create_test_aabb, create_test_camera};
@@ -97,6 +97,7 @@ fn populate_resource_manager() -> (
         vertex_layout: layout, topology: PrimitiveTopology::TriangleList,
         rasterization: Default::default(), color_blend: Default::default(),
         multisample: Default::default(), color_formats: vec![], depth_format: None,
+        dynamic_bindings: DynamicBindings::new(),
     }, &mut *gd_arc.lock().unwrap()).unwrap();
     let mk = rm.create_material("m".to_string(), MaterialDesc {
         passes: vec![MaterialPassDesc {
@@ -139,7 +140,7 @@ fn test_forward_drawer_draw_empty_view() {
     let info = make_pass_info();
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut gd = gd_arc.lock().unwrap();
-    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &mut *gd);
+    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &DynamicBindings::new(), &mut *gd);
     assert!(result.is_ok());
     // viewport + scissor recorded even for an empty view.
     assert!(cmd.commands.iter().any(|c| c == "set_viewport"));
@@ -181,7 +182,7 @@ fn test_forward_drawer_draw_with_one_visible_submesh() {
     let info = make_pass_info();
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut gd = gd_arc.lock().unwrap();
-    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &mut *gd);
+    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &DynamicBindings::new(), &mut *gd);
     assert!(result.is_ok(), "draw failed: {:?}", result);
     // At least one bind_pipeline + draw_indexed recorded.
     assert!(cmd.commands.iter().any(|c| c == "bind_pipeline"));
@@ -227,7 +228,7 @@ fn test_forward_drawer_draw_skips_invalid_render_instance() {
     let info = make_pass_info();
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut gd = gd_arc.lock().unwrap();
-    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &mut *gd);
+    let result = drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, true, &DynamicBindings::new(), &mut *gd);
     assert!(result.is_ok());
     // No draw_indexed expected — the instance was removed.
     assert!(!cmd.commands.iter().any(|c| c == "draw_indexed"));
@@ -268,7 +269,7 @@ fn test_forward_drawer_draw_skips_textures_when_disabled() {
     let info = make_pass_info();
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut gd = gd_arc.lock().unwrap();
-    drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, false, &mut *gd).unwrap();
+    drawer.draw(&mut scene, &view, &mut cmd, &info, &bg, false, &DynamicBindings::new(), &mut *gd).unwrap();
     // bind_textures should NOT have been emitted.
     assert!(!cmd.commands.iter().any(|c| c == "bind_textures"));
 }

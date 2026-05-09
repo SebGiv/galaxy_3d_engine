@@ -111,6 +111,7 @@ pub(crate) fn setup_resources() -> TestSetup {
         multisample: Default::default(),
         color_formats: vec![],
         depth_format: None,
+        dynamic_bindings: graphics_device::DynamicBindings::new(),
     }, &mut *gd.lock().unwrap()).unwrap();
 
     let mk = rm.create_material("m".to_string(), MaterialDesc {

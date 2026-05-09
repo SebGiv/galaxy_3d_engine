@@ -12,6 +12,7 @@ use galaxy_3d_engine::galaxy3d::resource::PipelineDesc;
 use galaxy_3d_engine::galaxy3d::render::{
     VertexLayout, VertexBinding, VertexAttribute,
     BufferFormat, VertexInputRate, PrimitiveTopology, ShaderStage,
+    DynamicBindings,
 };
 use gpu_test_utils::get_test_graphics_device;
 use serial_test::serial;
@@ -108,6 +109,7 @@ fn test_integration_create_pipeline() {
         multisample: Default::default(),
         color_formats: vec![],
         depth_format: None,
+        dynamic_bindings: DynamicBindings::new(),
     };
 
     let result = rm.create_pipeline("test_pipeline".to_string(), desc, &mut *graphics_device_lock);

@@ -298,6 +298,7 @@ mod engine_backed {
     use crate::graphics_device::{
         BufferFormat, ShaderStage, IndexType, PrimitiveTopology, PolygonMode,
         VertexLayout, VertexBinding, VertexAttribute, VertexInputRate,
+        DynamicBindings,
     };
     use crate::resource::geometry::{
         GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
@@ -356,6 +357,7 @@ mod engine_backed {
             vertex_layout: layout, topology: PrimitiveTopology::TriangleList,
             rasterization: Default::default(), color_blend: Default::default(),
             multisample: Default::default(), color_formats: vec![], depth_format: None,
+            dynamic_bindings: DynamicBindings::new(),
         }, &mut *gd_arc.lock().unwrap()).unwrap();
         let mk = rm.create_material("m".to_string(), MaterialDesc {
             passes: vec![MaterialPassDesc {

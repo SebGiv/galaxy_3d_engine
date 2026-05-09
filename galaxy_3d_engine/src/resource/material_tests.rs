@@ -83,6 +83,7 @@ fn create_test_pipeline(rm: &mut ResourceManager, gd: &Arc<Mutex<dyn graphics_de
         vertex_layout, topology: graphics_device::PrimitiveTopology::TriangleList,
         rasterization: Default::default(), color_blend: Default::default(),
         multisample: Default::default(), color_formats: vec![], depth_format: None,
+        dynamic_bindings: graphics_device::DynamicBindings::new(),
     }, &mut *gd.lock().unwrap()).unwrap();
     (pk, fk)
 }

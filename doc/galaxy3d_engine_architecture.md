@@ -631,6 +631,40 @@ The backend uses `BindingResource::SampledTexture(_, SamplerType::Anisotropic)` 
 the descriptor-write code which sampler index to pair with the texture. The texture
 itself is resolved through its `bindless_index()`.
 
+`DynamicBindings` is the bitmask that tells a pipeline layout which `(set, binding)`
+pairs must be declared with the `*_BUFFER_DYNAMIC` Vulkan descriptor type rather than
+the static variant inferred from SPIR-V reflection:
+
+```rust
+pub struct DynamicBindings {
+    set_masks: [u64; Self::MAX_SETS],
+}
+
+impl DynamicBindings {
+    pub const MAX_SETS: usize = 8;            // sets 0..=7
+    pub const MAX_BINDINGS_PER_SET: u32 = 64; // bindings 0..=63
+    pub const fn new() -> Self;
+    pub fn add(&mut self, set: u32, binding: u32) -> &mut Self;
+    pub fn contains(&self, set: u32, binding: u32) -> bool; // O(1)
+    pub fn is_empty(&self) -> bool;
+}
+```
+
+It is a 64-byte `Copy` value: 8 sets × 64 bits each, the smallest layout that covers
+the engine's current binding model (set 0 = bindless, set 1 = scene, room for 6
+more) with O(1) `contains` lookups. `PipelineDesc` carries one `dynamic_bindings`
+field; the Vulkan backend's `build_descriptor_set_layouts` consults it to upgrade
+the listed pairs from `UNIFORM_BUFFER` / `STORAGE_BUFFER` to their `*_DYNAMIC`
+counterparts. The `*Dynamic` variants of `BindingType` and the entries of the
+matching `BindingGroup` then line up: the descriptor set, the pipeline layout and
+the buffer's `update_mode` are kept in lockstep, eliminating the descriptor-type
+mismatch class of `ERROR_DEVICE_LOST`.
+
+The render-graph pass actions (`ScenePassAction`, `DebugPassAction`) build their
+`DynamicBindings` automatically from their `SceneBinding` list — the user never
+calls `add()` manually unless they create a `Pipeline` outside the pass-action flow
+and want to bind a Dynamic buffer through it.
+
 ### 5.5 PipelineReflection and PipelineSignatureKey
 
 `PipelineReflection` is built once at backend pipeline creation and stored on the
@@ -1106,6 +1140,7 @@ pub fn resolve_pipeline(
     color_blend: &ColorBlendState,
     polygon_mode: PolygonMode,
     pass_info: &PassInfo,
+    dynamic_bindings: &graphics_device::DynamicBindings,
     gd: &mut dyn graphics_device::GraphicsDevice,
 ) -> Result<PipelineKey>
 ```
@@ -1113,6 +1148,14 @@ pub fn resolve_pipeline(
 The `PipelineCacheKey` covers everything that affects the pipeline state object: shader
 keys, vertex-layout content (Arc-hashed by inner content), topology, blend state,
 polygon mode, color formats, depth format, sample count.
+
+`dynamic_bindings` is forwarded to `create_pipeline` on a cache miss so the new
+pipeline layout matches the `BindingGroup` the caller built (see § 5.4). The mask
+is **not** part of `PipelineCacheKey`: passes that bind a Dynamic buffer to set 1
+always declare the same `dynamic_bindings`, and reusing a cached pipeline created
+with a different mask would have produced a layout-incompatible `BindingGroup`
+anyway. Callers that need a different mask must use distinct shaders or color
+formats so the cache key differs.
 
 On a cache hit, the existing `PipelineKey` is returned. On a miss, the function calls
 `gd.create_pipeline`, stores the result under an auto-generated name
@@ -1763,6 +1806,7 @@ pub trait Drawer: Send + Sync {
         pass_info: &PassInfo,
         binding_group: &Arc<dyn BindingGroup>,
         bind_textures: bool,
+        dynamic_bindings: &graphics_device::DynamicBindings,
         graphics_device: &mut dyn GraphicsDevice,
     ) -> Result<()>;
 }
@@ -1772,6 +1816,14 @@ pub trait Drawer: Send + Sync {
 `RenderGraph::execute`). The drawer uses it for `resolve_pipeline(...)` calls when a
 draw call's cached pipeline key is stale or missing — no named-device lookup at frame
 time.
+
+`dynamic_bindings` is the same `DynamicBindings` mask the caller's `BindingGroup`
+was built with (set 1 / scene bindings, see § 5.4). It is forwarded as-is to
+`resolve_pipeline` on every cache miss, so the freshly-created pipeline layout
+declares the matching `*_BUFFER_DYNAMIC` descriptor types and stays compatible
+with the descriptor set the action passed in. `ScenePassAction` pre-computes the
+mask once at construction from the `SceneBinding` list, so the drawer never has
+to introspect the buffers itself.
 
 `ForwardDrawer` is the only implementation. Its internal queue has a default capacity
 of 4096 draw calls (`DEFAULT_DRAW_CALL_CAPACITY`) — the queue grows on demand once,
@@ -2986,6 +3038,12 @@ pub struct VulkanPipeline {
 2. Merge reflections from both stages: dedupe by `(set, binding)`, OR `stage_flags`
    when the same binding appears in both stages.
 3. Build per-set `VkDescriptorSetLayout`s from the merged bindings.
+   `build_descriptor_set_layouts` consults `desc.dynamic_bindings`: any
+   `(set, binding)` pair in the mask sees its descriptor type upgraded from
+   `UNIFORM_BUFFER` to `UNIFORM_BUFFER_DYNAMIC`, or from `STORAGE_BUFFER` to
+   `STORAGE_BUFFER_DYNAMIC`. SPIR-V reflection alone cannot tell static from
+   dynamic — `dynamic_bindings` is the explicit handshake from the pass action
+   (which knows the bound buffers' `update_mode`) to the pipeline layout.
 4. **Inject the bindless layout at set 0** whenever the pipeline ends up with at least
    one descriptor set in its layout — see the contiguous-set rule below.
 5. Build merged push-constant ranges (see push-constants merge rule below).

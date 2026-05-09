@@ -6,7 +6,7 @@ use crate::graphics_device::{
     PrimitiveTopology, BufferFormat, TextureFormat, TextureUsage,
     MipmapMode, TextureData, SamplerType, ShaderStage,
     VertexLayout, VertexBinding, VertexAttribute,
-    VertexInputRate, IndexType, PolygonMode,
+    VertexInputRate, IndexType, PolygonMode, DynamicBindings,
 };
 use crate::resource::geometry::{
     GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
@@ -59,6 +59,7 @@ fn create_test_pipeline_desc(vk: ShaderKey, fk: ShaderKey) -> PipelineDesc {
         topology: PrimitiveTopology::TriangleList,
         rasterization: Default::default(), color_blend: Default::default(),
         multisample: Default::default(), color_formats: vec![], depth_format: None,
+        dynamic_bindings: DynamicBindings::new(),
     }
 }
 

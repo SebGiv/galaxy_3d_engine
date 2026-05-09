@@ -5,7 +5,7 @@ use crate::graphics_device::mock_graphics_device::MockGraphicsDevice;
 use crate::graphics_device::{
     PrimitiveTopology, BufferFormat, ShaderStage,
     VertexLayout, VertexBinding, VertexAttribute,
-    VertexInputRate, IndexType, PolygonMode,
+    VertexInputRate, IndexType, PolygonMode, DynamicBindings,
 };
 use crate::resource::geometry::{
     GeometryDesc, GeometryMeshDesc, GeometrySubMeshDesc, GeometrySubMeshLODDesc,
@@ -88,6 +88,7 @@ fn setup_resources() -> TestSetup {
         vertex_layout: create_vertex_layout(), topology: PrimitiveTopology::TriangleList,
         rasterization: Default::default(), color_blend: Default::default(),
         multisample: Default::default(), color_formats: vec![], depth_format: None,
+        dynamic_bindings: DynamicBindings::new(),
     }, &mut *gd.lock().unwrap()).unwrap();
 
     let mk = rm.create_material("m".to_string(), MaterialDesc {
@@ -370,10 +371,13 @@ fn create_test_camera() -> Camera {
 fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey, Arc<dyn crate::graphics_device::BindingGroup>) {
     Engine::initialize().unwrap();
     Engine::reset_for_testing();
+    // Register the mock GD as "main" so the `Engine::graphics_device("main")`
+    // lookups further down in this fn (and in the test bodies) succeed.
+    Engine::create_graphics_device("main", MockGraphicsDevice::new()).unwrap();
     Engine::create_resource_manager().unwrap();
 
     let rm_arc = Engine::resource_manager().unwrap();
-    let gd = create_mock_graphics_device();
+    let gd = Engine::graphics_device("main").unwrap();
 
     let (mesh_key, vertex_shader_key) = {
         let mut rm = rm_arc.lock().unwrap();
@@ -402,6 +406,7 @@ fn setup_engine_draw_test() -> (Scene, MeshKey, ShaderKey, Arc<dyn crate::graphi
             vertex_layout: create_vertex_layout(), topology: PrimitiveTopology::TriangleList,
             rasterization: Default::default(), color_blend: Default::default(),
             multisample: Default::default(), color_formats: vec![], depth_format: None,
+            dynamic_bindings: DynamicBindings::new(),
         }, &mut *gd.lock().unwrap()).unwrap();
 
         let mk = rm.create_material("m".to_string(), MaterialDesc {
@@ -462,7 +467,7 @@ fn test_draw_empty_view() {
     );
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut gd = gd_arc.lock().unwrap();
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &mut *gd).unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &DynamicBindings::new(), &mut *gd).unwrap();
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
     Engine::reset_for_testing();
 }
@@ -493,15 +498,15 @@ fn test_draw_single_instance() {
     );
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut gd = gd_arc.lock().unwrap();
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &mut *gd).unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &DynamicBindings::new(), &mut *gd).unwrap();
     assert_eq!(cmd.commands, vec![
         "set_viewport",
         "set_scissor",
+        "bind_pipeline",
+        "bind_binding_group",  // global set 0
         "bind_vertex_buffer",
         "bind_index_buffer",
-        "bind_pipeline",
         "set_dynamic_state",
-        "bind_binding_group",  // global set 0
         // push_constants skipped: MockShader has no reflected push constants
         "draw_indexed",
     ]);
@@ -535,7 +540,7 @@ fn test_draw_skips_committed_removal() {
     );
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut gd = gd_arc.lock().unwrap();
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &mut *gd).unwrap();
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &DynamicBindings::new(), &mut *gd).unwrap();
     assert_eq!(cmd.commands, vec!["set_viewport", "set_scissor"]);
     Engine::reset_for_testing();
 }
@@ -567,10 +572,12 @@ fn test_draw_multiple_instances() {
     );
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut gd = gd_arc.lock().unwrap();
-    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &mut *gd).unwrap();
-    // 2 instances: viewport + scissor + 2x (bind_vb, bind_ib, bind_pipeline, set_dynamic_state, bind_bg, draw_indexed)
+    drawer.draw(&mut scene, &render_view, &mut cmd, &pass_info, &binding_group, false, &DynamicBindings::new(), &mut *gd).unwrap();
+    // 2 instances sharing the same pipeline/material/geometry: shared binds
+    // (pipeline, bg, vb, ib, dyn_state) are recorded once, draw_indexed twice.
+    // viewport + scissor + 5 shared binds + 2 draw_indexed = 9
     // push_constants skipped: MockShader has no reflected push constants
-    assert_eq!(cmd.commands.len(), 2 + 2 * 6);
+    assert_eq!(cmd.commands.len(), 2 + 5 + 2);
     Engine::reset_for_testing();
 }
 

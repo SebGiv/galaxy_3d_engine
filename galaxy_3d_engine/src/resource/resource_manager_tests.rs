@@ -175,6 +175,7 @@ fn create_test_pipeline_desc(vertex_shader: ShaderKey, fragment_shader: ShaderKe
         multisample: Default::default(),
         color_formats: vec![],
         depth_format: None,
+        dynamic_bindings: graphics_device::DynamicBindings::new(),
     }
 }
 
