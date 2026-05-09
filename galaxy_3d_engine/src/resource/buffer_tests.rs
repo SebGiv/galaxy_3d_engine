@@ -24,6 +24,7 @@ fn create_test_buffer(kind: BufferKind, fields: &[(&str, FieldType)], count: u32
         kind,
         fields: make_fields(fields),
         count,
+        update_mode: crate::graphics_device::BufferUpdateMode::Static,
     }).unwrap()
 }
 
@@ -67,6 +68,7 @@ fn test_empty_fields_fails() {
         kind: BufferKind::Storage,
         fields: vec![],
         count: 10,
+        update_mode: crate::graphics_device::BufferUpdateMode::Static,
     });
     assert!(result.is_err());
 }
@@ -79,6 +81,7 @@ fn test_zero_count_fails() {
         kind: BufferKind::Storage,
         fields: make_fields(&[("world", FieldType::Mat4)]),
         count: 0,
+        update_mode: crate::graphics_device::BufferUpdateMode::Static,
     });
     assert!(result.is_err());
 }
@@ -94,6 +97,7 @@ fn test_duplicate_field_names_fails() {
             ("world", FieldType::Mat4),
         ]),
         count: 10,
+        update_mode: crate::graphics_device::BufferUpdateMode::Static,
     });
     assert!(result.is_err());
 }

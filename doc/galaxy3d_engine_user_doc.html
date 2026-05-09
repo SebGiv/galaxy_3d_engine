@@ -542,6 +542,7 @@ body { padding-top: 56px; }
 <summary><a href='#mod-galaxy_3d_engine-graphics_device-buffer'>buffer</a></summary>
 <ul class='item-list'>
 <li><a href='#galaxy_3d_engine-graphics_device-buffer-enum-BufferFormat' data-kind='enum'><span class='kbadge kbadge-enum'>enu</span>BufferFormat</a></li>
+<li><a href='#galaxy_3d_engine-graphics_device-buffer-enum-BufferUpdateMode' data-kind='enum'><span class='kbadge kbadge-enum'>enu</span>BufferUpdateMode</a></li>
 <li><a href='#galaxy_3d_engine-graphics_device-buffer-enum-BufferUsage' data-kind='enum'><span class='kbadge kbadge-enum'>enu</span>BufferUsage</a></li>
 <li><a href='#galaxy_3d_engine-graphics_device-buffer-struct-BufferDesc' data-kind='struct'><span class='kbadge kbadge-struct'>str</span>BufferDesc</a></li>
 <li><a href='#galaxy_3d_engine-graphics_device-buffer-trait-Buffer' data-kind='trait'><span class='kbadge kbadge-trait'>tra</span>Buffer</a></li>
@@ -3697,29 +3698,29 @@ match value { BindingResource::Foo =&gt; /* ... */, _ =&gt; /* ... */ }</pre>
         <span class="badge badge-variant">variant</span>
         <h3 class="item-name">BindingResource::StorageBuffer</h3>
       </div>
-      <pre class="signature codeblock">StorageBuffer(&amp;&#x27;a dyn Buffer)</pre>
-      <div class="desc lang-en">Storage buffer binding</div>
-      <div class="desc lang-fr" hidden>Binding de storage buffer</div>
+      <pre class="signature codeblock">StorageBuffer(&amp;&#x27;a Arc&lt;dyn Buffer&gt;)</pre>
+      <div class="desc lang-en">Storage buffer binding. Takes <code>&amp;Arc&lt;dyn Buffer&gt;</code> so the backend can keep a strong reference to Dynamic buffers and resync their GPU slot at bind time.</div>
+      <div class="desc lang-fr" hidden>Binding de storage buffer. Prend <code>&amp;Arc&lt;dyn Buffer&gt;</code> pour que le backend puisse conserver une référence forte aux buffers Dynamic et re-synchroniser leur slot GPU au moment du bind.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
-        <pre class='codeblock'>let v = BindingResource::StorageBuffer;</pre>
+        <pre class='codeblock'>let v = BindingResource::StorageBuffer(&amp;buf_arc);</pre>
       </div>
     </section>
-    
+
 
     <section class="item kind-variant" id="galaxy_3d_engine-graphics_device-binding_group-BindingResource-variant-UniformBuffer">
       <div class="item-head">
         <span class="badge badge-variant">variant</span>
         <h3 class="item-name">BindingResource::UniformBuffer</h3>
       </div>
-      <pre class="signature codeblock">UniformBuffer(&amp;&#x27;a dyn Buffer)</pre>
-      <div class="desc lang-en">Uniform buffer binding</div>
-      <div class="desc lang-fr" hidden>Binding de uniform buffer</div>
+      <pre class="signature codeblock">UniformBuffer(&amp;&#x27;a Arc&lt;dyn Buffer&gt;)</pre>
+      <div class="desc lang-en">Uniform buffer binding. Takes <code>&amp;Arc&lt;dyn Buffer&gt;</code> so the backend can keep a strong reference to Dynamic buffers and resync their GPU slot at bind time.</div>
+      <div class="desc lang-fr" hidden>Binding de uniform buffer. Prend <code>&amp;Arc&lt;dyn Buffer&gt;</code> pour que le backend puisse conserver une référence forte aux buffers Dynamic et re-synchroniser leur slot GPU au moment du bind.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
-        <pre class='codeblock'>let v = BindingResource::UniformBuffer;</pre>
+        <pre class='codeblock'>let v = BindingResource::UniformBuffer(&amp;buf_arc);</pre>
       </div>
     </section>
     
@@ -3765,15 +3766,31 @@ match value { BindingType::Foo =&gt; /* ... */, _ =&gt; /* ... */ }</pre>
         <h3 class="item-name">BindingType::StorageBuffer</h3>
       </div>
       <pre class="signature codeblock">StorageBuffer</pre>
-      <div class="desc lang-en">Storage buffer (read/write for compute shaders)</div>
-      <div class="desc lang-fr" hidden>Storage buffer (lecture/écriture pour les compute shaders)</div>
+      <div class="desc lang-en">Storage buffer (read/write for compute shaders) — static binding.</div>
+      <div class="desc lang-fr" hidden>Storage buffer (lecture/écriture pour les compute shaders) — binding statique.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
         <pre class='codeblock'>let v = BindingType::StorageBuffer;</pre>
       </div>
     </section>
-    
+
+
+    <section class="item kind-variant" id="galaxy_3d_engine-graphics_device-binding_group-BindingType-variant-StorageBufferDynamic">
+      <div class="item-head">
+        <span class="badge badge-variant">variant</span>
+        <h3 class="item-name">BindingType::StorageBufferDynamic</h3>
+      </div>
+      <pre class="signature codeblock">StorageBufferDynamic</pre>
+      <div class="desc lang-en">Storage buffer with a dynamic offset supplied at bind time. Pair with a buffer whose <code>update_mode</code> is <code>Dynamic</code>; the backend computes <code>slot * slot_size</code> automatically.</div>
+      <div class="desc lang-fr" hidden>Storage buffer avec un offset dynamique fourni au moment du bind. À utiliser avec un buffer dont l'<code>update_mode</code> est <code>Dynamic</code> ; le backend calcule <code>slot * slot_size</code> automatiquement.</div>
+      <div class="example">
+        <h4 class="lang-en">Example</h4>
+        <h4 class="lang-fr" hidden>Exemple</h4>
+        <pre class='codeblock'>let v = BindingType::StorageBufferDynamic;</pre>
+      </div>
+    </section>
+
 
     <section class="item kind-variant" id="galaxy_3d_engine-graphics_device-binding_group-BindingType-variant-UniformBuffer">
       <div class="item-head">
@@ -3781,15 +3798,31 @@ match value { BindingType::Foo =&gt; /* ... */, _ =&gt; /* ... */ }</pre>
         <h3 class="item-name">BindingType::UniformBuffer</h3>
       </div>
       <pre class="signature codeblock">UniformBuffer</pre>
-      <div class="desc lang-en">Uniform buffer (read-only structured data)</div>
-      <div class="desc lang-fr" hidden>Uniform buffer (données structurées en lecture seule)</div>
+      <div class="desc lang-en">Uniform buffer (read-only structured data) — static binding.</div>
+      <div class="desc lang-fr" hidden>Uniform buffer (données structurées en lecture seule) — binding statique.</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
         <pre class='codeblock'>let v = BindingType::UniformBuffer;</pre>
       </div>
     </section>
-    
+
+
+    <section class="item kind-variant" id="galaxy_3d_engine-graphics_device-binding_group-BindingType-variant-UniformBufferDynamic">
+      <div class="item-head">
+        <span class="badge badge-variant">variant</span>
+        <h3 class="item-name">BindingType::UniformBufferDynamic</h3>
+      </div>
+      <pre class="signature codeblock">UniformBufferDynamic</pre>
+      <div class="desc lang-en">Uniform buffer with a dynamic offset supplied at bind time. Pair with a buffer whose <code>update_mode</code> is <code>Dynamic</code>; the backend computes <code>slot * slot_size</code> automatically.</div>
+      <div class="desc lang-fr" hidden>Uniform buffer avec un offset dynamique fourni au moment du bind. À utiliser avec un buffer dont l'<code>update_mode</code> est <code>Dynamic</code> ; le backend calcule <code>slot * slot_size</code> automatiquement.</div>
+      <div class="example">
+        <h4 class="lang-en">Example</h4>
+        <h4 class="lang-fr" hidden>Exemple</h4>
+        <pre class='codeblock'>let v = BindingType::UniformBufferDynamic;</pre>
+      </div>
+    </section>
+
 </div>
 
     <section class="item kind-trait" id="galaxy_3d_engine-graphics_device-binding_group-trait-BindingGroup">
@@ -3862,7 +3895,74 @@ let x: BufferDesc;</pre>
         <pre class='codeblock'>let value = instance.usage;</pre>
       </div>
     </section>
-    
+
+
+    <section class="item kind-field" id="galaxy_3d_engine-graphics_device-buffer-BufferDesc-field-update_mode">
+      <div class="item-head">
+        <span class="badge badge-field">field</span>
+        <h3 class="item-name">BufferDesc::update_mode</h3>
+      </div>
+      <pre class="signature codeblock">pub update_mode: BufferUpdateMode</pre>
+      <div class="desc lang-en">Update mode (defaults to <code>Static</code> for backwards compatibility). Set to <code>Dynamic</code> for buffers the CPU rewrites every frame; the backend then automatically rings the buffer across all frames-in-flight.</div>
+      <div class="desc lang-fr" hidden>Mode de mise à jour (<code>Static</code> par défaut pour la rétrocompatibilité). Mettre <code>Dynamic</code> pour les buffers réécrits par le CPU à chaque frame ; le backend gère alors automatiquement le ring entre toutes les frames en vol.</div>
+      <div class="example">
+        <h4 class="lang-en">Example</h4>
+        <h4 class="lang-fr" hidden>Exemple</h4>
+        <pre class='codeblock'>let value = instance.update_mode;</pre>
+      </div>
+    </section>
+
+</div>
+
+    <section class="item kind-enum" id="galaxy_3d_engine-graphics_device-buffer-enum-BufferUpdateMode">
+      <div class="item-head">
+        <span class="badge badge-enum">enum</span>
+        <h3 class="item-name">BufferUpdateMode</h3>
+      </div>
+      <pre class="signature codeblock">pub enum BufferUpdateMode</pre>
+      <div class="desc lang-en">How a buffer's data is updated over its lifetime. Orthogonal to <code>BufferUsage</code>: any <code>BufferUsage</code> can be either <code>Static</code> (loaded once) or <code>Dynamic</code> (rewritten by the CPU each frame).</div>
+      <div class="desc lang-fr" hidden>Comment les données d'un buffer sont mises à jour au cours de sa vie. Orthogonal à <code>BufferUsage</code> : tout <code>BufferUsage</code> peut être soit <code>Static</code> (chargé une fois), soit <code>Dynamic</code> (réécrit par le CPU à chaque frame).</div>
+      <div class="example">
+        <h4 class="lang-en">Example</h4>
+        <h4 class="lang-fr" hidden>Exemple</h4>
+        <pre class='codeblock'>// Match on variants:
+match value { BufferUpdateMode::Foo =&gt; /* ... */, _ =&gt; /* ... */ }</pre>
+      </div>
+    </section>
+
+<div class='members'>
+
+    <section class="item kind-variant" id="galaxy_3d_engine-graphics_device-buffer-BufferUpdateMode-variant-Static">
+      <div class="item-head">
+        <span class="badge badge-variant">variant</span>
+        <h3 class="item-name">BufferUpdateMode::Static</h3>
+      </div>
+      <pre class="signature codeblock">Static</pre>
+      <div class="desc lang-en">Written once at creation/loading, not modified after. Backed by a single GPU buffer.</div>
+      <div class="desc lang-fr" hidden>Écrit une fois à la création/chargement, jamais modifié après. Adossé à un unique buffer GPU.</div>
+      <div class="example">
+        <h4 class="lang-en">Example</h4>
+        <h4 class="lang-fr" hidden>Exemple</h4>
+        <pre class='codeblock'>let v = BufferUpdateMode::Static;</pre>
+      </div>
+    </section>
+
+
+    <section class="item kind-variant" id="galaxy_3d_engine-graphics_device-buffer-BufferUpdateMode-variant-Dynamic">
+      <div class="item-head">
+        <span class="badge badge-variant">variant</span>
+        <h3 class="item-name">BufferUpdateMode::Dynamic</h3>
+      </div>
+      <pre class="signature codeblock">Dynamic</pre>
+      <div class="desc lang-en">Rewritten by the CPU each frame. Backed by a single VkBuffer of size <code>FRAMES_IN_FLIGHT × size</code>, accessed via dynamic offsets at descriptor binding time (UBO/SSBO) or via direct offset (VB/IB). The backend handles slot rotation transparently — the user always sees a buffer of <code>size</code> bytes.</div>
+      <div class="desc lang-fr" hidden>Réécrit par le CPU à chaque frame. Adossé à un unique VkBuffer de taille <code>FRAMES_IN_FLIGHT × size</code>, accédé via des offsets dynamiques au moment du binding (UBO/SSBO) ou via offset direct (VB/IB). Le backend gère la rotation des slots de façon transparente — l'utilisateur voit toujours un buffer de <code>size</code> octets.</div>
+      <div class="example">
+        <h4 class="lang-en">Example</h4>
+        <h4 class="lang-fr" hidden>Exemple</h4>
+        <pre class='codeblock'>let v = BufferUpdateMode::Dynamic;</pre>
+      </div>
+    </section>
+
 </div>
 
     <section class="item kind-enum" id="galaxy_3d_engine-graphics_device-buffer-enum-BufferFormat">
@@ -4373,8 +4473,8 @@ match value { BufferUsage::Foo =&gt; /* ... */, _ =&gt; /* ... */ }</pre>
         <h3 class="item-name">Buffer</h3>
       </div>
       <pre class="signature codeblock">pub trait Buffer: Send + Sync</pre>
-      <div class="desc lang-en">Buffer resource trait <br> Implemented by backend-specific buffer types (e.g., VulkanBuffer). The buffer is automatically destroyed when dropped.</div>
-      <div class="desc lang-fr" hidden>Trait de ressource Buffer <br> Implémenté par les types buffer spécifiques au backend (ex. VulkanBuffer). Le buffer est automatiquement détruit au drop.</div>
+      <div class="desc lang-en">Buffer resource trait <br> Implemented by backend-specific buffer types (e.g., VulkanBuffer). The buffer is automatically destroyed when dropped. <br> Methods: <code>update(offset, data)</code>, <code>mapped_ptr()</code>, <code>update_mode()</code> (returns the <code>BufferUpdateMode</code> requested at creation, used by the render graph to wire static / dynamic descriptor types automatically).</div>
+      <div class="desc lang-fr" hidden>Trait de ressource Buffer <br> Implémenté par les types buffer spécifiques au backend (ex. VulkanBuffer). Le buffer est automatiquement détruit au drop. <br> Méthodes : <code>update(offset, data)</code>, <code>mapped_ptr()</code>, <code>update_mode()</code> (retourne le <code>BufferUpdateMode</code> choisi à la création, utilisé par le render graph pour brancher automatiquement les types de descripteurs statiques / dynamiques).</div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
@@ -5646,7 +5746,7 @@ match value { DebugSeverity::Foo =&gt; /* ... */, _ =&gt; /* ... */ }</pre>
         <h4 class="lang-fr" hidden>Exemple</h4>
         <pre class='codeblock'>let gd_arc = Engine::graphics_device(&quot;main&quot;)?;
 let mut gd = gd_arc.lock().unwrap();
-let buffer = gd.create_buffer(BufferDesc { size: 4096, usage: BufferUsage::Uniform })?;</pre>
+let buffer = gd.create_buffer(BufferDesc { size: 4096, usage: BufferUsage::Uniform, update_mode: BufferUpdateMode::Static })?;</pre>
       </div>
     </section>
     
@@ -13140,6 +13240,7 @@ let x: RenderPassKey;</pre>
         FieldDesc { name: &quot;miss&quot;.into(),  field_type: FieldType::UInt },
     ],
     count: 1,
+    update_mode: BufferUpdateMode::Static,
 })?;
 let buf = rm.buffer(key).unwrap();
 buf.update_field(0, /* hits index */ 0, bytemuck::bytes_of(&amp;42u32))?;</pre>
@@ -13437,7 +13538,23 @@ let x: BufferDesc;</pre>
         <pre class='codeblock'>let value = instance.kind;</pre>
       </div>
     </section>
-    
+
+
+    <section class="item kind-field" id="galaxy_3d_engine-resource-buffer-BufferDesc-field-update_mode">
+      <div class="item-head">
+        <span class="badge badge-field">field</span>
+        <h3 class="item-name">BufferDesc::update_mode</h3>
+      </div>
+      <pre class="signature codeblock">pub update_mode: graphics_device::BufferUpdateMode</pre>
+      <div class="desc lang-en">How the buffer's data is updated over its lifetime. Default is <code>Static</code> (loaded once, not modified).</div>
+      <div class="desc lang-fr" hidden>Mode de mise à jour des données du buffer au cours de sa vie. Par défaut <code>Static</code> (chargé une fois, jamais modifié).</div>
+      <div class="example">
+        <h4 class="lang-en">Example</h4>
+        <h4 class="lang-fr" hidden>Exemple</h4>
+        <pre class='codeblock'>let value = instance.update_mode;</pre>
+      </div>
+    </section>
+
 </div>
 
     <section class="item kind-struct" id="galaxy_3d_engine-resource-buffer-struct-FieldDesc">
@@ -17307,13 +17424,13 @@ let mat = rm.material_by_name(&quot;steel&quot;);</pre>
         <span class="badge badge-method">method</span>
         <h3 class="item-name">ResourceManager::create_default_frame_uniform_buffer</h3>
       </div>
-      <pre class="signature codeblock">pub fn create_default_frame_uniform_buffer( &amp;mut self, name: String, graphics_device: Arc&lt;Mutex&lt;dyn graphics_device::GraphicsDevice&gt;&gt;, ) -&gt; Result&lt;BufferKey&gt;</pre>
+      <pre class="signature codeblock">pub fn create_default_frame_uniform_buffer( &amp;mut self, name: String, graphics_device: Arc&lt;Mutex&lt;dyn graphics_device::GraphicsDevice&gt;&gt;, update_mode: graphics_device::BufferUpdateMode, ) -&gt; Result&lt;BufferKey&gt;</pre>
       <div class="desc lang-en"><p>Convenience constructor for the engine's canonical <strong>frame uniform buffer</strong> layout (16 fields: view, projection, viewProjection, cameraPosition, cameraDirection, sunDirection, sunColor, ambientColor, time, deltaTime, frameIndex, exposure, gamma, nearPlane, farPlane, ambientIntensity). Returns a <code>BufferKey</code>; the buffer is a UBO with std140 layout.</p><p>Hand the buffer to <code>DefaultUpdater::update_frame</code> every frame; fields not touched by the updater (sun, time, exposure…) keep their factory defaults until you write them yourself.</p></div>
       <div class="desc lang-fr" hidden><p>Constructeur de commodité pour la disposition canonique du <strong>frame uniform buffer</strong> du moteur (16 champs : view, projection, viewProjection, cameraPosition, cameraDirection, sunDirection, sunColor, ambientColor, time, deltaTime, frameIndex, exposure, gamma, nearPlane, farPlane, ambientIntensity). Retourne un <code>BufferKey</code> ; le buffer est un UBO en disposition std140.</p><p>Passez le buffer à <code>DefaultUpdater::update_frame</code> chaque frame ; les champs non touchés par l'updater (sun, time, exposure…) gardent leurs valeurs par défaut d'usine jusqu'à ce que vous les écriviez vous-même.</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
-        <pre class='codeblock'>let frame_key = rm.create_default_frame_uniform_buffer(&quot;frame&quot;.to_string(), gd_arc)?;
+        <pre class='codeblock'>let frame_key = rm.create_default_frame_uniform_buffer(&quot;frame&quot;.to_string(), gd_arc, BufferUpdateMode::Dynamic)?;
 let frame_buf = rm.buffer(frame_key).unwrap().clone();
 updater.update_frame(&amp;camera, &amp;frame_buf)?;</pre>
       </div>
@@ -17325,13 +17442,13 @@ updater.update_frame(&amp;camera, &amp;frame_buf)?;</pre>
         <span class="badge badge-method">method</span>
         <h3 class="item-name">ResourceManager::create_default_instance_buffer</h3>
       </div>
-      <pre class="signature codeblock">pub fn create_default_instance_buffer( &amp;mut self, name: String, graphics_device: Arc&lt;Mutex&lt;dyn graphics_device::GraphicsDevice&gt;&gt;, count: u32, ) -&gt; Result&lt;BufferKey&gt;</pre>
+      <pre class="signature codeblock">pub fn create_default_instance_buffer( &amp;mut self, name: String, graphics_device: Arc&lt;Mutex&lt;dyn graphics_device::GraphicsDevice&gt;&gt;, count: u32, update_mode: graphics_device::BufferUpdateMode, ) -&gt; Result&lt;BufferKey&gt;</pre>
       <div class="desc lang-en"><p>Convenience constructor for the engine's canonical <strong>per-instance SSBO</strong> layout (9 fields: world, previousWorld, inverseWorld, materialSlotId, flags, lightCount, customData, lightIndices0, lightIndices1). The <code>count</code> argument sets the number of slots — must be at least <code>scene.draw_slot_high_water_mark()</code> at any time.</p></div>
       <div class="desc lang-fr" hidden><p>Constructeur de commodité pour la disposition canonique du <strong>SSBO par instance</strong> du moteur (9 champs : world, previousWorld, inverseWorld, materialSlotId, flags, lightCount, customData, lightIndices0, lightIndices1). L'argument <code>count</code> fixe le nombre de slots — doit valoir au moins <code>scene.draw_slot_high_water_mark()</code> à tout moment.</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
-        <pre class='codeblock'>let inst_key = rm.create_default_instance_buffer(&quot;instances&quot;.to_string(), gd_arc, /* count */ 4096)?;</pre>
+        <pre class='codeblock'>let inst_key = rm.create_default_instance_buffer(&quot;instances&quot;.to_string(), gd_arc, /* count */ 4096, BufferUpdateMode::Dynamic)?;</pre>
       </div>
     </section>
     
@@ -17341,13 +17458,13 @@ updater.update_frame(&amp;camera, &amp;frame_buf)?;</pre>
         <span class="badge badge-method">method</span>
         <h3 class="item-name">ResourceManager::create_default_light_buffer</h3>
       </div>
-      <pre class="signature codeblock">pub fn create_default_light_buffer( &amp;mut self, name: String, graphics_device: Arc&lt;Mutex&lt;dyn graphics_device::GraphicsDevice&gt;&gt;, count: u32, ) -&gt; Result&lt;BufferKey&gt;</pre>
+      <pre class="signature codeblock">pub fn create_default_light_buffer( &amp;mut self, name: String, graphics_device: Arc&lt;Mutex&lt;dyn graphics_device::GraphicsDevice&gt;&gt;, count: u32, update_mode: graphics_device::BufferUpdateMode, ) -&gt; Result&lt;BufferKey&gt;</pre>
       <div class="desc lang-en"><p>Convenience constructor for the engine's canonical <strong>light SSBO</strong> layout: 5 Vec4 fields per light (positionType, directionRange, colorIntensity, spotParams, attenuation). Slot index = <code>light.light_slot()</code>.</p></div>
       <div class="desc lang-fr" hidden><p>Constructeur de commodité pour la disposition canonique du <strong>SSBO de lumières</strong> du moteur : 5 champs Vec4 par lumière (positionType, directionRange, colorIntensity, spotParams, attenuation). Index de slot = <code>light.light_slot()</code>.</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
-        <pre class='codeblock'>let light_key = rm.create_default_light_buffer(&quot;lights&quot;.to_string(), gd_arc, /* count */ 128)?;</pre>
+        <pre class='codeblock'>let light_key = rm.create_default_light_buffer(&quot;lights&quot;.to_string(), gd_arc, /* count */ 128, BufferUpdateMode::Dynamic)?;</pre>
       </div>
     </section>
     
@@ -17357,13 +17474,13 @@ updater.update_frame(&amp;camera, &amp;frame_buf)?;</pre>
         <span class="badge badge-method">method</span>
         <h3 class="item-name">ResourceManager::create_default_material_buffer</h3>
       </div>
-      <pre class="signature codeblock">pub fn create_default_material_buffer( &amp;mut self, name: String, graphics_device: Arc&lt;Mutex&lt;dyn graphics_device::GraphicsDevice&gt;&gt;, count: u32, ) -&gt; Result&lt;BufferKey&gt;</pre>
+      <pre class="signature codeblock">pub fn create_default_material_buffer( &amp;mut self, name: String, graphics_device: Arc&lt;Mutex&lt;dyn graphics_device::GraphicsDevice&gt;&gt;, count: u32, update_mode: graphics_device::BufferUpdateMode, ) -&gt; Result&lt;BufferKey&gt;</pre>
       <div class="desc lang-en"><p>Convenience constructor for the engine's canonical <strong>material SSBO</strong> layout — PBR base parameters plus 5 texture slots (each represented as 3 fields: <code>{name}Texture</code> u32 bindless index, <code>{name}Sampler</code> u32 sampler index, <code>{name}Layer</code> u32 layer). Slot index = <code>material.slot_id()</code>.</p></div>
       <div class="desc lang-fr" hidden><p>Constructeur de commodité pour la disposition canonique du <strong>SSBO de matériaux</strong> du moteur — paramètres PBR de base plus 5 slots de texture (chacun représenté par 3 champs : <code>{name}Texture</code> u32 index bindless, <code>{name}Sampler</code> u32 index de sampler, <code>{name}Layer</code> u32 couche). Index de slot = <code>material.slot_id()</code>.</p></div>
       <div class="example">
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
-        <pre class='codeblock'>let mat_key = rm.create_default_material_buffer(&quot;materials&quot;.to_string(), gd_arc, /* count */ 256)?;
+        <pre class='codeblock'>let mat_key = rm.create_default_material_buffer(&quot;materials&quot;.to_string(), gd_arc, /* count */ 256, BufferUpdateMode::Static)?;
 rm.sync_materials_to_buffer(rm.buffer(mat_key).unwrap())?;</pre>
       </div>
     </section>
@@ -22262,7 +22379,7 @@ let x: SlotAllocator;</pre>
         <h4 class="lang-en">Example</h4>
         <h4 class="lang-fr" hidden>Exemple</h4>
         <pre class='codeblock'>let needed = alloc.high_water_mark() as usize;
-let ssbo = rm.create_default_instance_buffer(&quot;inst&quot;, gd, needed.max(64) as u32)?;</pre>
+let ssbo = rm.create_default_instance_buffer(&quot;inst&quot;, gd, needed.max(64) as u32, BufferUpdateMode::Dynamic)?;</pre>
       </div>
     </section>
     

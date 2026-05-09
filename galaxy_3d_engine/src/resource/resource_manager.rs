@@ -596,6 +596,7 @@ impl ResourceManager {
             multisample: desc.multisample,
             color_formats: desc.color_formats,
             depth_format: desc.depth_format,
+            dynamic_bindings: desc.dynamic_bindings,
         };
 
         let gd_pipeline = graphics_device.create_pipeline(
@@ -669,6 +670,7 @@ impl ResourceManager {
     /// with this exact combination already exists in the cache, returns its key.
     /// Otherwise, creates a new `resource::Pipeline` (stored in the same SlotMap
     /// as manual pipelines) and caches the mapping.
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve_pipeline(
         &mut self,
         vertex_shader: ShaderKey,
@@ -678,6 +680,7 @@ impl ResourceManager {
         color_blend: &graphics_device::ColorBlendState,
         polygon_mode: graphics_device::PolygonMode,
         pass_info: &PassInfo,
+        dynamic_bindings: &graphics_device::DynamicBindings,
         graphics_device: &mut dyn graphics_device::GraphicsDevice,
     ) -> Result<PipelineKey> {
         let cache_key = PipelineCacheKey {
@@ -725,6 +728,7 @@ impl ResourceManager {
                 },
                 color_formats: cache_key.color_formats.clone(),
                 depth_format: cache_key.depth_format,
+                dynamic_bindings: *dynamic_bindings,
             },
             graphics_device,
         )?;
@@ -1034,6 +1038,7 @@ impl ResourceManager {
         &mut self,
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
+        update_mode: graphics_device::BufferUpdateMode,
     ) -> Result<BufferKey> {
         let key = self.create_buffer(name, BufferDesc {
             graphics_device,
@@ -1057,6 +1062,7 @@ impl ResourceManager {
                 FieldDesc { name: "ambientIntensity".to_string(), field_type: FieldType::Float },
             ],
             count: 1,
+            update_mode,
         })?;
 
         let buffer = self.buffer(key).unwrap();
@@ -1082,6 +1088,7 @@ impl ResourceManager {
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
+        update_mode: graphics_device::BufferUpdateMode,
     ) -> Result<BufferKey> {
         let key = self.create_buffer(name, BufferDesc {
             graphics_device,
@@ -1098,6 +1105,7 @@ impl ResourceManager {
                 FieldDesc { name: "lightIndices1".to_string(),  field_type: FieldType::UVec4 },
             ],
             count,
+            update_mode,
         })?;
 
         let buffer = self.buffer(key).unwrap();
@@ -1118,6 +1126,7 @@ impl ResourceManager {
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
+        update_mode: graphics_device::BufferUpdateMode,
     ) -> Result<BufferKey> {
         let key = self.create_buffer(name, BufferDesc {
             graphics_device,
@@ -1149,6 +1158,7 @@ impl ResourceManager {
                 FieldDesc { name: "flags".to_string(),                        field_type: FieldType::UInt },
             ],
             count,
+            update_mode,
         })?;
 
         let buffer = self.buffer(key).unwrap();
@@ -1190,6 +1200,7 @@ impl ResourceManager {
         name: String,
         graphics_device: Arc<Mutex<dyn graphics_device::GraphicsDevice>>,
         count: u32,
+        update_mode: graphics_device::BufferUpdateMode,
     ) -> Result<BufferKey> {
         let key = self.create_buffer(name, BufferDesc {
             graphics_device,
@@ -1202,6 +1213,7 @@ impl ResourceManager {
                 FieldDesc { name: "attenuation".to_string(),    field_type: FieldType::Vec4 },
             ],
             count,
+            update_mode,
         })?;
 
         let buffer = self.buffer(key).unwrap();

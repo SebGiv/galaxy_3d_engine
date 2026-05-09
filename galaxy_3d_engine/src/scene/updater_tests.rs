@@ -373,7 +373,10 @@ mod engine_backed {
                 material: mk,
             }],
         }).unwrap();
-        let buf_key = rm.create_default_instance_buffer("inst".to_string(), gd_arc.clone(), 16).unwrap();
+        let buf_key = rm.create_default_instance_buffer(
+            "inst".to_string(), gd_arc.clone(), 16,
+            crate::graphics_device::BufferUpdateMode::Static,
+        ).unwrap();
         let buf = rm.buffer(buf_key).unwrap().clone();
         (buf, mesh_key, vk)
     }
@@ -558,7 +561,10 @@ mod engine_backed {
             let rm_arc = Engine::resource_manager().unwrap();
             let mut rm = rm_arc.lock().unwrap();
             let gd_arc = Engine::graphics_device("main").unwrap();
-            let key = rm.create_default_light_buffer("lights".to_string(), gd_arc, 8).unwrap();
+            let key = rm.create_default_light_buffer(
+                "lights".to_string(), gd_arc, 8,
+                crate::graphics_device::BufferUpdateMode::Static,
+            ).unwrap();
             rm.buffer(key).unwrap().clone()
         };
 
@@ -584,7 +590,10 @@ mod engine_backed {
             let rm_arc = Engine::resource_manager().unwrap();
             let mut rm = rm_arc.lock().unwrap();
             let gd_arc = Engine::graphics_device("main").unwrap();
-            let key = rm.create_default_light_buffer("lights2".to_string(), gd_arc, 8).unwrap();
+            let key = rm.create_default_light_buffer(
+                "lights2".to_string(), gd_arc, 8,
+                crate::graphics_device::BufferUpdateMode::Static,
+            ).unwrap();
             rm.buffer(key).unwrap().clone()
         };
 
@@ -609,7 +618,10 @@ mod engine_backed {
             let rm_arc = Engine::resource_manager().unwrap();
             let mut rm = rm_arc.lock().unwrap();
             let gd_arc = Engine::graphics_device("main").unwrap();
-            let key = rm.create_default_light_buffer("lights3".to_string(), gd_arc, 8).unwrap();
+            let key = rm.create_default_light_buffer(
+                "lights3".to_string(), gd_arc, 8,
+                crate::graphics_device::BufferUpdateMode::Static,
+            ).unwrap();
             rm.buffer(key).unwrap().clone()
         };
 

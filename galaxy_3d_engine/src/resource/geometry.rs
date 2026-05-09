@@ -326,6 +326,7 @@ impl Geometry {
             let buffer = graphics_device.create_buffer(graphics_device::BufferDesc {
                 size: desc.vertex_data.len() as u64,
                 usage: graphics_device::BufferUsage::Vertex,
+                update_mode: graphics_device::BufferUpdateMode::Static,
             })?;
             buffer.update(0, &desc.vertex_data)?;
             buffer
@@ -347,6 +348,7 @@ impl Geometry {
                 let buf = graphics_device.create_buffer(graphics_device::BufferDesc {
                     size: index_data.len() as u64,
                     usage: graphics_device::BufferUsage::Index,
+                    update_mode: graphics_device::BufferUpdateMode::Static,
                 })?;
                 buf.update(0, index_data)?;
                 buf

@@ -141,20 +141,29 @@ pub(crate) fn setup_resources() -> TestSetup {
 /// match `DefaultUpdater::update_frame`'s field layout.
 pub(crate) fn make_frame_buffer(rm: &mut ResourceManager) -> Arc<Buffer> {
     let gd = create_mock_graphics_device();
-    let key = rm.create_default_frame_uniform_buffer("frame".to_string(), gd).unwrap();
+    let key = rm.create_default_frame_uniform_buffer(
+        "frame".to_string(), gd,
+        graphics_device::BufferUpdateMode::Static,
+    ).unwrap();
     rm.buffer(key).unwrap().clone()
 }
 
 /// Build an instance buffer detached from the global Engine.
 pub(crate) fn make_instance_buffer(rm: &mut ResourceManager, count: u32) -> Arc<Buffer> {
     let gd = create_mock_graphics_device();
-    let key = rm.create_default_instance_buffer("instance".to_string(), gd, count).unwrap();
+    let key = rm.create_default_instance_buffer(
+        "instance".to_string(), gd, count,
+        graphics_device::BufferUpdateMode::Static,
+    ).unwrap();
     rm.buffer(key).unwrap().clone()
 }
 
 /// Build a light buffer detached from the global Engine.
 pub(crate) fn make_light_buffer(rm: &mut ResourceManager, count: u32) -> Arc<Buffer> {
     let gd = create_mock_graphics_device();
-    let key = rm.create_default_light_buffer("light".to_string(), gd, count).unwrap();
+    let key = rm.create_default_light_buffer(
+        "light".to_string(), gd, count,
+        graphics_device::BufferUpdateMode::Static,
+    ).unwrap();
     rm.buffer(key).unwrap().clone()
 }

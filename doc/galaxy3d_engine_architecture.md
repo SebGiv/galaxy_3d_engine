@@ -515,6 +515,7 @@ through its own state, but Rust ownership is shared. A texture lives until the l
 pub trait Buffer: Send + Sync {
     fn update(&self, offset: u64, data: &[u8]) -> Result<()>;
     fn mapped_ptr(&self) -> Option<*mut u8>;
+    fn update_mode(&self) -> BufferUpdateMode;
 }
 
 pub trait Texture: Send + Sync {
@@ -588,10 +589,19 @@ Notable design choices:
 
 ### 5.4 Descriptors and binding model
 
-`BindingType` is the engine-side resource enum: `UniformBuffer`,
-`CombinedImageSampler`, `StorageBuffer`. (The "combined image sampler" naming follows
-GLSL/Vulkan; in practice the engine routes the sampler through the bindless `sampler[6]`
-array and so the texture binding is technically a separate `sampled_image`.)
+`BindingType` is the engine-side resource enum: `UniformBuffer`, `UniformBufferDynamic`,
+`CombinedImageSampler`, `StorageBuffer`, `StorageBufferDynamic`. (The "combined image
+sampler" naming follows GLSL/Vulkan; in practice the engine routes the sampler through
+the bindless `sampler[6]` array and so the texture binding is technically a separate
+`sampled_image`.)
+
+The `*Dynamic` variants pair with a `Buffer` whose `update_mode` is `Dynamic`. They map
+to `VK_DESCRIPTOR_TYPE_*_BUFFER_DYNAMIC` and let the same descriptor set be reused
+across all frames-in-flight: the backend computes `slot * slot_size` at bind time and
+passes it through `pDynamicOffsets` in `vkCmdBindDescriptorSets`. `create_binding_group_from_layout`
+debug-asserts that the binding type matches the buffer's `update_mode`
+(`UniformBuffer ↔ Static`, `UniformBufferDynamic ↔ Dynamic`, etc.) so a mismatched
+binding fails loudly under `debug_assertions` and is zero-cost in release.
 
 `ShaderStageFlags` is a packed `u32` (`VERTEX=0x01`, `FRAGMENT=0x02`, `COMPUTE=0x04`)
 with helpers `from_stages(&[ShaderStage])`, `from_bits(u32)`, `contains_vertex/fragment/
@@ -605,11 +615,17 @@ slot. `BindingGroupLayoutDesc { entries: Vec<BindingSlotDesc> }` is the full lay
 
 ```rust
 pub enum BindingResource<'a> {
-    UniformBuffer(&'a dyn Buffer),
+    UniformBuffer(&'a Arc<dyn Buffer>),
     SampledTexture(&'a dyn Texture, SamplerType),
-    StorageBuffer(&'a dyn Buffer),
+    StorageBuffer(&'a Arc<dyn Buffer>),
 }
 ```
+
+Buffer variants take `&Arc<dyn Buffer>` (rather than `&dyn Buffer`) so the backend can
+`Arc::clone()` and keep a strong reference to every Dynamic buffer inside the resulting
+`BindingGroup`. That reference is walked at bind time to call `ensure_slot_synced()` —
+a CPU→GPU memcpy from the buffer's master to the current frame's slot, performed at
+most once per frame per buffer thanks to a `last_synced_slot` cursor.
 
 The backend uses `BindingResource::SampledTexture(_, SamplerType::Anisotropic)` to tell
 the descriptor-write code which sampler index to pair with the texture. The texture
@@ -730,9 +746,13 @@ array textures with partial uploads.
 `NearestClamp`, `Shadow`, `Anisotropic`). The backend caches these as a fixed table at
 init.
 
-`BufferDesc { size: u64, usage: BufferUsage }` where `BufferUsage` is `Vertex`, `Index`,
-`Uniform`, `Storage`. Buffer formats for vertex attributes are a separate enum
-`BufferFormat` (R32_SFLOAT, R32G32_SFLOAT, …, R8G8B8A8_UINT) used in `VertexAttribute`.
+`BufferDesc { size: u64, usage: BufferUsage, update_mode: BufferUpdateMode }` where
+`BufferUsage` is `Vertex`, `Index`, `Uniform`, `Storage`, and `BufferUpdateMode` is
+`Static` (default — written once at creation, single-slot allocation) or `Dynamic`
+(rewritten by the CPU each frame — backed by a single `VkBuffer` of size
+`FRAMES_IN_FLIGHT × slot_size` plus a CPU-side master, see § 14.4 for the backend
+layout). Buffer formats for vertex attributes are a separate enum `BufferFormat`
+(R32_SFLOAT, R32G32_SFLOAT, …, R8G8B8A8_UINT) used in `VertexAttribute`.
 
 ### 5.9 Configuration
 
@@ -2246,6 +2266,13 @@ The constructor walks the slice, builds a `BindingGroupLayoutDesc` (entries inde
 0..N), materializes `BindingResource`s, and calls `create_binding_group_from_layout`
 with set index `1` (set 0 is reserved for bindless textures).
 
+For each `SceneBinding::UniformBuffer` / `StorageBuffer`, the constructor inspects the
+underlying `Buffer::update_mode()` and picks the matching `BindingType` variant:
+`Static` → `UniformBuffer` / `StorageBuffer`, `Dynamic` → `UniformBufferDynamic` /
+`StorageBufferDynamic`. The caller therefore never has to mention the buffer's update
+mode at binding time — it is a property of the buffer itself, set once at creation.
+The render graph picks the right descriptor type automatically.
+
 ### 11.7 RenderGraph — command-list ring + scratch
 
 ```rust
@@ -2792,10 +2819,14 @@ The callback uses an FxHashMap to deduplicate identical messages within a window
 
 ```rust
 pub struct VulkanBuffer {
+    ctx: Arc<GpuContext>,
     buffer: vk::Buffer,
     allocation: Option<Allocation>,
-    size: u64,
-    ctx: Arc<GpuContext>,
+    size: u64,                          // user-requested size
+    update_mode: BufferUpdateMode,      // Static or Dynamic
+    slot_size: u64,                     // padded slot stride (== size for Static)
+    master: Mutex<Vec<u8>>,             // CPU canonical state (Dynamic only)
+    last_synced_slot: AtomicUsize,      // cursor for ensure_slot_synced
 }
 ```
 
@@ -2803,13 +2834,56 @@ pub struct VulkanBuffer {
 `VkBufferUsageFlags` (`VERTEX_BUFFER`, `INDEX_BUFFER`, `UNIFORM_BUFFER`,
 `STORAGE_BUFFER`), always OR'd with `TRANSFER_DST` for staging-buffer paths. Memory is
 allocated as `MemoryLocation::CpuToGpu`, which maps to host-visible + device-local on
-discrete GPUs and host-coherent on integrated GPUs. The allocation is *persistently
-mapped* so `Buffer::update(offset, data)` is a `std::ptr::copy_nonoverlapping` into the
-mapped region — no staging buffer involved.
+discrete GPUs (when ReBAR/SAM is available) and host-coherent on integrated GPUs. The
+allocation is *persistently mapped*.
 
-`Buffer::mapped_ptr()` returns the persistent mapping pointer for callers that want to
-batch writes themselves (e.g., direct memcpy of `bytemuck::bytes_of` data without
-going through `update_field`).
+The `update_mode` field branches on the allocation strategy:
+
+- **Static**: a single `VkBuffer` of exactly `desc.size` bytes; `slot_size == size`.
+  `master` is an empty `Vec`. `update(offset, data)` is a direct
+  `std::ptr::copy_nonoverlapping` into the mapped region — same hot path as before
+  the Dynamic feature was introduced.
+
+- **Dynamic**: a single `VkBuffer` of size `FRAMES_IN_FLIGHT × slot_size`, where
+  `slot_size = align_up(desc.size, ctx.dynamic_buffer_alignment)` — see § 14.8 for
+  how the unified alignment is computed. The CPU side keeps a `master: Mutex<Vec<u8>>`
+  of length `slot_size`, zero-initialised at creation, that holds the canonical
+  state of the buffer's user-visible content. Every `update()` writes to the master
+  first, then `ensure_slot_synced()` is called to propagate the master into the
+  GPU slot for the current frame-in-flight.
+
+`ensure_slot_synced()` is the single point of synchronisation between the CPU master
+and a GPU slot:
+
+1. Read `ctx.current_submit_fence` (= the slot the next submit will use).
+2. If equal to `last_synced_slot`, nothing to do — the slot is already in sync with
+   the master for this frame.
+3. Otherwise, perform a single `memcpy(master → slot * slot_size)` of `slot_size`
+   bytes, then store the new value in `last_synced_slot` (atomic, `Ordering::Relaxed`).
+
+The cursor is a sentinel `usize::MAX` at startup so the very first interaction with
+any slot triggers a full memcpy.
+
+`update()` for Dynamic combines the master write with `ensure_slot_synced()`: if the
+sync did a full memcpy, the freshly-written delta is already inside the slot and
+there's nothing more to do. Otherwise (slot was already synced this frame, master
+just changed), `update()` writes the delta into the slot to keep it consistent.
+
+`mapped_ptr()` for Dynamic also calls `ensure_slot_synced()` first, then returns
+`base_mapped_ptr + slot * slot_size` — a slot-relative pointer the caller sees as
+"a buffer of `size` bytes" without ever knowing the slot mechanism exists.
+
+The bind paths in `VulkanCommandList` (`bind_binding_group`, `bind_vertex_buffer`,
+`bind_index_buffer`) call `ensure_slot_synced()` before the `cmd_bind_*` so that
+even buffers untouched by `update()` this frame are still propagated from master
+to the current slot before the GPU reads from them. This covers the case where the
+engine's delta-update logic (e.g. `DefaultUpdater`) skips writing because nothing
+changed since the last frame.
+
+`Buffer::mapped_ptr()` thus returns the persistent mapping pointer for the *current
+slot* (Dynamic) or the whole buffer (Static), so callers that want to batch writes
+themselves (e.g. direct memcpy of `bytemuck::bytes_of` without going through
+`update_field`) get a slot-correct pointer transparently.
 
 The `Drop` impl frees the allocation through the shared allocator, then destroys the
 `VkBuffer` handle. The order matters: free the allocation first (returns the underlying
@@ -3004,9 +3078,8 @@ through Arc references.
 pub struct VulkanBindingGroup {
     descriptor_set: vk::DescriptorSet,
     set_index: u32,
-    layout: vk::DescriptorSetLayout,            // owned, destroyed on Drop
-    pool: vk::DescriptorPool,                    // borrowed; not destroyed
-    device: ash::Device,
+    dynamic_slot_sizes: Vec<u64>,                  // per-slot stride for each Dynamic binding
+    dynamic_buffers: Vec<Arc<dyn RendererBuffer>>, // strong refs to Dynamic buffers
 }
 ```
 
@@ -3014,20 +3087,34 @@ Two creation paths:
 
 - **`create_binding_group(pipeline, set_index, &resources)`** — derives the layout from
   the pipeline's reflection at the requested set index, allocates a descriptor set
-  from the pool, fills it with the resource handles.
+  from the pool, fills it with the resource handles. The reflection only knows static
+  UBO/SSBO so this path debug-asserts that no `Dynamic` buffer is bound here. Use the
+  `_from_layout` variant with explicit `*BufferDynamic` types instead.
 - **`create_binding_group_from_layout(layout_desc, set_index, &resources)`** — creates
   a *fresh* `VkDescriptorSetLayout` from the user-supplied `BindingGroupLayoutDesc`,
   allocates and fills the set. This is what `ScenePassAction` uses (no pipeline
-  required at action-construction time).
+  required at action-construction time). Supports `UniformBufferDynamic` and
+  `StorageBufferDynamic` entries.
 
 Resource binding logic:
 
-- `BindingResource::UniformBuffer(b)` → `VkDescriptorBufferInfo` with `range = WHOLE_
-  SIZE`, descriptor type `UNIFORM_BUFFER`.
-- `BindingResource::StorageBuffer(b)` → `STORAGE_BUFFER` similarly.
+- `BindingResource::UniformBuffer(b)` → `VkDescriptorBufferInfo` with
+  `range = b.slot_size`, descriptor type from the layout (`UNIFORM_BUFFER` or
+  `UNIFORM_BUFFER_DYNAMIC`). Using `slot_size` rather than `WHOLE_SIZE` is required
+  for dynamic descriptors (Vulkan validation rejects `WHOLE_SIZE` paired with a
+  non-zero dynamic offset) and is harmless for static ones since `slot_size == size`.
+- `BindingResource::StorageBuffer(b)` → analogous with `STORAGE_BUFFER` /
+  `STORAGE_BUFFER_DYNAMIC`.
 - `BindingResource::SampledTexture(t, sampler_type)` → `VkDescriptorImageInfo` with
   the texture's image view, the bindless-cached `VkSampler` for the requested type,
   and `SHADER_READ_ONLY_OPTIMAL` layout. Descriptor type `COMBINED_IMAGE_SAMPLER`.
+
+For every `*BufferDynamic` entry, the binding group records two parallel pieces of
+information: the buffer's `slot_size` (used to compute the `pDynamicOffsets` array
+at bind time) and a strong `Arc<dyn Buffer>` reference (used at bind time to call
+`ensure_slot_synced()` so the GPU sees an up-to-date slot). Together with the
+`debug_assert!(binding_type ↔ buffer.update_mode)` consistency check, this gives
+zero-cost release behaviour and a loud failure mode in debug.
 
 Once written, the descriptor set is immutable; mutating bound resources requires
 creating a new `BindingGroup`.

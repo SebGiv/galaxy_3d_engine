@@ -48,6 +48,10 @@ impl Buffer for MockBuffer {
     fn mapped_ptr(&self) -> Option<*mut u8> {
         None
     }
+
+    fn update_mode(&self) -> crate::graphics_device::BufferUpdateMode {
+        crate::graphics_device::BufferUpdateMode::Static
+    }
 }
 
 // ============================================================================

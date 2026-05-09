@@ -16,7 +16,10 @@ fn setup_engine_and_buffer() -> Arc<crate::resource::buffer::Buffer> {
     let rm_arc = Engine::resource_manager().unwrap();
     let gd_arc = Engine::graphics_device("main").unwrap();
     let mut rm = rm_arc.lock().unwrap();
-    let key = rm.create_default_frame_uniform_buffer("frame".to_string(), gd_arc).unwrap();
+    let key = rm.create_default_frame_uniform_buffer(
+        "frame".to_string(), gd_arc,
+        crate::graphics_device::BufferUpdateMode::Static,
+    ).unwrap();
     rm.buffer(key).unwrap().clone()
 }
 

@@ -284,7 +284,10 @@ fn test_render_graph_execute_with_buffer_resource_access() {
         let rm_arc = Engine::resource_manager().unwrap();
         let mut rm = rm_arc.lock().unwrap();
         let gd_arc = Engine::graphics_device("main").unwrap();
-        rm.create_default_instance_buffer("instances".to_string(), gd_arc, 4).unwrap()
+        rm.create_default_instance_buffer(
+            "instances".to_string(), gd_arc, 4,
+            crate::graphics_device::BufferUpdateMode::Static,
+        ).unwrap()
     };
 
     let gd_arc = Engine::graphics_device("main").unwrap();

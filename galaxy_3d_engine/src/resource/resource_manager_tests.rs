@@ -1417,6 +1417,7 @@ fn test_sync_materials_basic() {
             FieldDesc { name: "color".to_string(), field_type: FieldType::Vec4 },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     let result = rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap());
@@ -1455,6 +1456,7 @@ fn test_sync_materials_type_mismatch_skips() {
             FieldDesc { name: "roughness".to_string(), field_type: FieldType::Vec4 },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     // Should succeed (warning, not error)
@@ -1494,6 +1496,7 @@ fn test_sync_materials_missing_field_skips() {
             FieldDesc { name: "metallic".to_string(), field_type: FieldType::Float },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     // Should succeed (warning, not error)
@@ -1533,6 +1536,7 @@ fn test_sync_materials_bool_to_uint() {
             FieldDesc { name: "is_metallic".to_string(), field_type: FieldType::UInt },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     let result = rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap());
@@ -1571,6 +1575,7 @@ fn test_sync_materials_vec3_padding() {
             FieldDesc { name: "normal".to_string(), field_type: FieldType::Vec3 },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     // This validates that param_to_padded_bytes produces 16 bytes for Vec3,
@@ -1613,6 +1618,7 @@ fn test_sync_materials_slot_exceeds_buffer() {
             FieldDesc { name: "roughness".to_string(), field_type: FieldType::Float },
         ],
         count: 1,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     // Should succeed (warning, not error)
@@ -1714,6 +1720,7 @@ fn test_default_material_buffer_creation() {
 
     let buffer = rm.create_default_material_buffer(
         "material".to_string(), graphics_device, 4,
+        graphics_device::BufferUpdateMode::Static,
     );
     assert!(buffer.is_ok());
     let buffer_key = buffer.unwrap();
@@ -1729,6 +1736,7 @@ fn test_default_material_buffer_fields() {
 
     let buffer_key = rm.create_default_material_buffer(
         "material".to_string(), graphics_device, 1,
+        graphics_device::BufferUpdateMode::Static,
     ).unwrap();
     let buffer = rm.buffer(buffer_key).unwrap();
 
@@ -1756,6 +1764,7 @@ fn test_default_material_buffer_stride() {
 
     let buffer_key = rm.create_default_material_buffer(
         "material".to_string(), graphics_device, 1,
+        graphics_device::BufferUpdateMode::Static,
     ).unwrap();
     let buffer = rm.buffer(buffer_key).unwrap();
 
@@ -1773,6 +1782,7 @@ fn test_default_material_buffer_defaults() {
     // back the values, but we can verify all update_field calls succeed)
     let buffer_key = rm.create_default_material_buffer(
         "material".to_string(), graphics_device, 4,
+        graphics_device::BufferUpdateMode::Static,
     ).unwrap();
 
     assert_eq!(rm.buffer(buffer_key).unwrap().count(), 4);
@@ -1841,6 +1851,7 @@ fn test_sync_materials_texture_slot_writes_layer() {
             FieldDesc { name: "albedoLayer".to_string(),   field_type: FieldType::UInt },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     // Sync should succeed (bindless index, sampler index, layer written to buffer)
@@ -1887,6 +1898,7 @@ fn test_sync_materials_texture_slot_no_layer_writes_zero() {
             FieldDesc { name: "albedoLayer".to_string(),   field_type: FieldType::UInt },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
@@ -1930,6 +1942,7 @@ fn test_sync_materials_texture_slot_missing_field_skips() {
             FieldDesc { name: "roughness".to_string(), field_type: FieldType::Float },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
@@ -1973,6 +1986,7 @@ fn test_sync_materials_texture_slot_wrong_type_skips() {
             FieldDesc { name: "albedoTexture".to_string(), field_type: FieldType::Float },
         ],
         count: 4,
+        update_mode: graphics_device::BufferUpdateMode::Static,
     }).unwrap();
 
     assert!(rm.sync_materials_to_buffer(rm.buffer(buffer).unwrap()).is_ok());
@@ -1995,6 +2009,7 @@ mod buffer_api {
                 FieldDesc { name: "value".to_string(), field_type: FieldType::Float },
             ],
             count: 1,
+            update_mode: graphics_device::BufferUpdateMode::Static,
         }
     }
 
@@ -2056,7 +2071,10 @@ mod buffer_api {
     fn test_create_default_material_buffer() {
         let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
         let mut rm = ResourceManager::new();
-        let key = rm.create_default_material_buffer("mat_buf".to_string(), gd, 16).unwrap();
+        let key = rm.create_default_material_buffer(
+            "mat_buf".to_string(), gd, 16,
+            graphics_device::BufferUpdateMode::Static,
+        ).unwrap();
         assert!(rm.buffer(key).is_some());
     }
 
@@ -2064,7 +2082,10 @@ mod buffer_api {
     fn test_create_default_light_buffer() {
         let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
         let mut rm = ResourceManager::new();
-        let key = rm.create_default_light_buffer("light_buf".to_string(), gd, 32).unwrap();
+        let key = rm.create_default_light_buffer(
+            "light_buf".to_string(), gd, 32,
+            graphics_device::BufferUpdateMode::Static,
+        ).unwrap();
         assert!(rm.buffer(key).is_some());
     }
 
@@ -2072,7 +2093,10 @@ mod buffer_api {
     fn test_create_default_frame_uniform_buffer() {
         let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
         let mut rm = ResourceManager::new();
-        let key = rm.create_default_frame_uniform_buffer("frame".to_string(), gd).unwrap();
+        let key = rm.create_default_frame_uniform_buffer(
+            "frame".to_string(), gd,
+            graphics_device::BufferUpdateMode::Static,
+        ).unwrap();
         assert!(rm.buffer(key).is_some());
     }
 
@@ -2080,7 +2104,10 @@ mod buffer_api {
     fn test_create_default_instance_buffer() {
         let gd = Arc::new(Mutex::new(graphics_device::mock_graphics_device::MockGraphicsDevice::new()));
         let mut rm = ResourceManager::new();
-        let key = rm.create_default_instance_buffer("inst".to_string(), gd, 8).unwrap();
+        let key = rm.create_default_instance_buffer(
+            "inst".to_string(), gd, 8,
+            graphics_device::BufferUpdateMode::Static,
+        ).unwrap();
         assert!(rm.buffer(key).is_some());
     }
 }

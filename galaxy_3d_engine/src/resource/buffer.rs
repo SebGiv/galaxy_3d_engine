@@ -90,6 +90,9 @@ pub struct BufferDesc {
     pub kind: BufferKind,
     pub fields: Vec<FieldDesc>,
     pub count: u32,
+    /// How the buffer's data is updated over its lifetime.
+    /// Default is `Static` (loaded once, not modified).
+    pub update_mode: graphics_device::BufferUpdateMode,
 }
 
 // ===== BUFFER =====
@@ -165,7 +168,11 @@ impl Buffer {
         };
 
         let graphics_device_buffer = desc.graphics_device.lock().unwrap()
-            .create_buffer(graphics_device::BufferDesc { size, usage })?;
+            .create_buffer(graphics_device::BufferDesc {
+                size,
+                usage,
+                update_mode: desc.update_mode,
+            })?;
 
         Ok(Self {
             graphics_device_buffer,

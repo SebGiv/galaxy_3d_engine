@@ -8,6 +8,7 @@
 /// - Layout deduced from the Pipeline (user never manipulates layouts directly)
 /// - Pool managed internally by the graphics_device
 
+use std::sync::Arc;
 use crate::graphics_device::{Texture, Buffer, SamplerType, ShaderStage};
 
 // ============================================================================
@@ -17,12 +18,20 @@ use crate::graphics_device::{Texture, Buffer, SamplerType, ShaderStage};
 /// Type of resource bound at a given slot
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindingType {
-    /// Uniform buffer (read-only structured data)
+    /// Uniform buffer (read-only structured data) — static binding.
     UniformBuffer,
+    /// Uniform buffer with a dynamic offset supplied at bind time.
+    /// Use this with a `Dynamic` buffer to make the descriptor set
+    /// reusable across all frames-in-flight slots; the backend computes
+    /// `slot * slot_size` automatically when binding.
+    UniformBufferDynamic,
     /// Combined image sampler (texture + sampler in one binding)
     CombinedImageSampler,
-    /// Storage buffer (read/write for compute shaders)
+    /// Storage buffer (read/write for compute shaders) — static binding.
     StorageBuffer,
+    /// Storage buffer with a dynamic offset supplied at bind time.
+    /// See `UniformBufferDynamic` for semantics.
+    StorageBufferDynamic,
 }
 
 /// Shader stage visibility flags
@@ -85,14 +94,20 @@ pub struct BindingGroupLayoutDesc {
 // Binding resources (concrete data passed at creation time)
 // ============================================================================
 
-/// A concrete resource to bind into a BindingGroup
+/// A concrete resource to bind into a BindingGroup.
+///
+/// Buffer variants take `&Arc<dyn Buffer>` (rather than `&dyn Buffer`) so the
+/// backend can `Arc::clone()` and keep a strong reference to Dynamic buffers
+/// inside the resulting `BindingGroup`. This is required to call
+/// `ensure_slot_synced()` at bind time, which propagates the CPU master into
+/// the current frame's slot.
 pub enum BindingResource<'a> {
     /// Uniform buffer binding
-    UniformBuffer(&'a dyn Buffer),
+    UniformBuffer(&'a Arc<dyn Buffer>),
     /// Sampled texture (the backend resolves the actual GPU sampler from the type)
     SampledTexture(&'a dyn Texture, SamplerType),
     /// Storage buffer binding
-    StorageBuffer(&'a dyn Buffer),
+    StorageBuffer(&'a Arc<dyn Buffer>),
 }
 
 // ============================================================================

@@ -33,6 +33,12 @@ pub trait Drawer: Send + Sync {
     /// `bind_textures` controls whether the bindless texture descriptor set
     /// (set 0) is bound after each pipeline-layout change. Shadow passes can
     /// set this to false to skip the texture bind.
+    ///
+    /// `dynamic_bindings` is forwarded to `resolve_pipeline` whenever a
+    /// pipeline cache miss happens, so the new pipeline layout uses
+    /// `*_BUFFER_DYNAMIC` for the same `(set, binding)` pairs the caller's
+    /// `BindingGroup` was built with.
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &mut self,
         scene: &mut Scene,
@@ -41,6 +47,7 @@ pub trait Drawer: Send + Sync {
         pass_info: &PassInfo,
         binding_group: &Arc<dyn BindingGroup>,
         bind_textures: bool,
+        dynamic_bindings: &graphics_device::DynamicBindings,
         graphics_device: &mut dyn graphics_device::GraphicsDevice,
     ) -> Result<()>;
 }
@@ -77,6 +84,7 @@ impl Drawer for ForwardDrawer {
         pass_info: &PassInfo,
         binding_group: &Arc<dyn BindingGroup>,
         bind_textures: bool,
+        dynamic_bindings: &graphics_device::DynamicBindings,
         graphics_device: &mut dyn graphics_device::GraphicsDevice,
     ) -> Result<()> {
         let pass_info_gen = pass_info.generation();
@@ -163,7 +171,8 @@ impl Drawer for ForwardDrawer {
 
                     let resolved = rm.resolve_pipeline(
                         vertex_shader, frag_shader, vertex_layout_arc, topology,
-                        &color_blend, polygon_mode, pass_info, graphics_device,
+                        &color_blend, polygon_mode, pass_info, dynamic_bindings,
+                        graphics_device,
                     )?;
 
                     scene.render_instance_mut(key).unwrap()

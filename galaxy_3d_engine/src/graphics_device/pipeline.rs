@@ -526,11 +526,80 @@ impl From<&DynamicRenderState> for DynamicRenderStateKey {
 
 // ===== PIPELINE DESCRIPTOR =====
 
+/// Compact bitmask describing which `(set, binding)` pairs in a pipeline's
+/// descriptor layouts use the `*_BUFFER_DYNAMIC` Vulkan descriptor type
+/// instead of the static variant inferred from SPIR-V reflection.
+///
+/// Used together with `BufferUpdateMode::Dynamic` on the bound buffer:
+/// the buffer carries the runtime data layout (slot ring + master), while
+/// `DynamicBindings` tells the pipeline layout to declare the matching
+/// descriptor type so `vkCmdBindDescriptorSets` accepts it without a
+/// "descriptor set layout mismatch" validation error.
+///
+/// Compact (64 bytes), `Copy`, O(1) lookup — built once per pass action and
+/// reused for every pipeline that pass action creates on the fly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DynamicBindings {
+    /// Bitmask per descriptor set. Bit `b` of `set_masks[s]` set ⇒
+    /// `(set=s, binding=b)` is dynamic.
+    /// `MAX_SETS = 8` covers current and foreseeable layouts (set 0 is the
+    /// bindless texture/sampler set, set 1 the per-pass scene set, room for
+    /// 6 more).
+    set_masks: [u64; Self::MAX_SETS],
+}
+
+impl DynamicBindings {
+    pub const MAX_SETS: usize = 8;
+    pub const MAX_BINDINGS_PER_SET: u32 = 64;
+
+    /// An empty mask — every binding is treated as static.
+    pub const fn new() -> Self {
+        Self { set_masks: [0; Self::MAX_SETS] }
+    }
+
+    /// Mark `(set, binding)` as dynamic. Returns `&mut self` for builder-style
+    /// chaining. Out-of-range arguments trigger a debug assertion (and are
+    /// silently ignored in release).
+    pub fn add(&mut self, set: u32, binding: u32) -> &mut Self {
+        debug_assert!(
+            (set as usize) < Self::MAX_SETS,
+            "DynamicBindings::add: set {} out of range (max {})",
+            set, Self::MAX_SETS,
+        );
+        debug_assert!(
+            binding < Self::MAX_BINDINGS_PER_SET,
+            "DynamicBindings::add: binding {} out of range (max {})",
+            binding, Self::MAX_BINDINGS_PER_SET,
+        );
+        if (set as usize) < Self::MAX_SETS && binding < Self::MAX_BINDINGS_PER_SET {
+            self.set_masks[set as usize] |= 1u64 << binding;
+        }
+        self
+    }
+
+    /// Test whether `(set, binding)` is marked dynamic. O(1).
+    #[inline]
+    pub fn contains(&self, set: u32, binding: u32) -> bool {
+        let s = set as usize;
+        if s >= Self::MAX_SETS || binding >= Self::MAX_BINDINGS_PER_SET {
+            return false;
+        }
+        (self.set_masks[s] & (1u64 << binding)) != 0
+    }
+
+    /// `true` if no binding is marked dynamic.
+    pub fn is_empty(&self) -> bool {
+        self.set_masks.iter().all(|&m| m == 0)
+    }
+}
+
 /// Descriptor for creating a graphics pipeline
 ///
 /// Shaders are passed separately to GraphicsDevice::create_pipeline().
 /// Push constant ranges and descriptor set layouts are deduced automatically
-/// from shader reflection (SPIR-V) by the backend.
+/// from shader reflection (SPIR-V) by the backend, except for descriptor
+/// types listed in `dynamic_bindings`, which are upgraded from the static
+/// `*_BUFFER` to the `*_BUFFER_DYNAMIC` variant.
 #[derive(Clone)]
 pub struct PipelineDesc {
     /// Vertex input layout
@@ -547,6 +616,11 @@ pub struct PipelineDesc {
     pub color_formats: Vec<TextureFormat>,
     /// Depth/stencil attachment format (None if no depth/stencil)
     pub depth_format: Option<TextureFormat>,
+    /// `(set, binding)` pairs to declare with `*_BUFFER_DYNAMIC` descriptor
+    /// type. Defaults to empty (every UBO/SSBO is static) — render-graph pass
+    /// actions populate this automatically from their `SceneBinding` list when
+    /// any bound buffer is `BufferUpdateMode::Dynamic`.
+    pub dynamic_bindings: DynamicBindings,
 }
 
 // ============================================================================

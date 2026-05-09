@@ -51,6 +51,10 @@ pub struct PipelineDesc {
     pub color_formats: Vec<graphics_device::TextureFormat>,
     /// Depth/stencil attachment format (None if no depth/stencil)
     pub depth_format: Option<graphics_device::TextureFormat>,
+    /// `(set, binding)` pairs to declare with `*_BUFFER_DYNAMIC` descriptor
+    /// type. Defaults to empty. Forwarded as-is to the underlying
+    /// `graphics_device::PipelineDesc`.
+    pub dynamic_bindings: graphics_device::DynamicBindings,
 }
 
 // ===== PIPELINE IMPLEMENTATION =====

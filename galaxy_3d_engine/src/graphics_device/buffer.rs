@@ -15,6 +15,24 @@ pub enum BufferUsage {
     Storage,
 }
 
+/// How a buffer's data is updated over its lifetime.
+///
+/// Orthogonal to `BufferUsage`: any `BufferUsage` can be either `Static`
+/// (loaded once) or `Dynamic` (rewritten by the CPU each frame).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BufferUpdateMode {
+    /// Written once at creation/loading, not modified after.
+    /// Backed by a single GPU buffer.
+    #[default]
+    Static,
+    /// Rewritten by the CPU each frame.
+    /// Backed by a single VkBuffer of size `FRAMES_IN_FLIGHT × size`,
+    /// accessed via dynamic offsets at descriptor binding time (UBO/SSBO)
+    /// or via direct offset (VB/IB). The backend handles slot rotation
+    /// transparently — the user always sees a buffer of `size` bytes.
+    Dynamic,
+}
+
 /// Descriptor for creating a buffer
 #[derive(Debug, Clone)]
 pub struct BufferDesc {
@@ -22,6 +40,8 @@ pub struct BufferDesc {
     pub size: u64,
     /// Buffer usage
     pub usage: BufferUsage,
+    /// Update mode (defaults to `Static` for backwards compatibility)
+    pub update_mode: BufferUpdateMode,
 }
 
 /// Buffer data format for vertex attributes and indices
@@ -111,6 +131,14 @@ pub trait Buffer: Send + Sync {
     /// Returns None if the buffer is not CPU-accessible (device-local only).
     /// The pointer remains valid for the lifetime of the buffer.
     fn mapped_ptr(&self) -> Option<*mut u8>;
+
+    /// How this buffer is updated over its lifetime.
+    ///
+    /// Used by the render graph to derive the matching `BindingType`
+    /// (`*Buffer` vs `*BufferDynamic`) automatically when wiring a
+    /// binding group. Backends return whatever `BufferUpdateMode` was
+    /// requested at creation time.
+    fn update_mode(&self) -> BufferUpdateMode;
 }
 
 #[cfg(test)]

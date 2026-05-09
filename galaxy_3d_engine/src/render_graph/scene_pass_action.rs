@@ -28,6 +28,11 @@ pub struct ScenePassAction {
     render_view: Arc<Mutex<Option<RenderView>>>,
     binding_group: Arc<dyn BindingGroup>,
     bind_textures: bool,
+    /// Pre-computed dynamic-bindings mask for set 1, derived from the
+    /// `SceneBinding` list at `new()`. Forwarded to the `Drawer` at every
+    /// execute so on-the-fly pipeline cache misses produce a layout
+    /// matching this BindingGroup's dynamic-offset descriptors.
+    dynamic_bindings: graphics_device::DynamicBindings,
 }
 
 impl ScenePassAction {
@@ -44,14 +49,24 @@ impl ScenePassAction {
         bind_textures: bool,
         graphics_device: &dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
-        // Build layout description from bindings
+        // Build layout description from bindings.
+        // For UBO/SSBO bindings we pick the static or dynamic variant based on
+        // the underlying buffer's `update_mode()`, so a Dynamic buffer wired
+        // here automatically lands on `*BufferDynamic`. The descriptor backend
+        // then computes `slot * slot_size` at bind time.
         let layout = BindingGroupLayoutDesc {
             entries: bindings.iter().enumerate().map(|(i, b)| {
                 BindingSlotDesc {
                     binding: i as u32,
                     binding_type: match b {
-                        SceneBinding::UniformBuffer(_) => BindingType::UniformBuffer,
-                        SceneBinding::StorageBuffer(_) => BindingType::StorageBuffer,
+                        SceneBinding::UniformBuffer(buf) => match buf.graphics_device_buffer().update_mode() {
+                            graphics_device::BufferUpdateMode::Static => BindingType::UniformBuffer,
+                            graphics_device::BufferUpdateMode::Dynamic => BindingType::UniformBufferDynamic,
+                        },
+                        SceneBinding::StorageBuffer(buf) => match buf.graphics_device_buffer().update_mode() {
+                            graphics_device::BufferUpdateMode::Static => BindingType::StorageBuffer,
+                            graphics_device::BufferUpdateMode::Dynamic => BindingType::StorageBufferDynamic,
+                        },
                         SceneBinding::SampledTexture(_, _) => BindingType::CombinedImageSampler,
                     },
                     count: 1,
@@ -64,9 +79,9 @@ impl ScenePassAction {
         let resources: Vec<BindingResource> = bindings.iter()
             .map(|b| match b {
                 SceneBinding::UniformBuffer(buf) =>
-                    BindingResource::UniformBuffer(buf.graphics_device_buffer().as_ref()),
+                    BindingResource::UniformBuffer(buf.graphics_device_buffer()),
                 SceneBinding::StorageBuffer(buf) =>
-                    BindingResource::StorageBuffer(buf.graphics_device_buffer().as_ref()),
+                    BindingResource::StorageBuffer(buf.graphics_device_buffer()),
                 SceneBinding::SampledTexture(tex, sampler_type) =>
                     BindingResource::SampledTexture(
                         tex.graphics_device_texture().as_ref(), *sampler_type,
@@ -81,7 +96,27 @@ impl ScenePassAction {
             &resources,
         )?;
 
-        Ok(Self { scene, drawer, render_view, binding_group, bind_textures })
+        // Pre-compute the dynamic-bindings mask for set 1 from the same scene
+        // bindings. Reused at every execute and forwarded to the drawer so any
+        // pipeline cache miss creates a layout matching the dynamic-offset
+        // descriptor types the BindingGroup just registered for set 1.
+        let mut dynamic_bindings = graphics_device::DynamicBindings::new();
+        for (i, b) in bindings.iter().enumerate() {
+            let is_dynamic = match b {
+                SceneBinding::UniformBuffer(buf) | SceneBinding::StorageBuffer(buf) => matches!(
+                    buf.graphics_device_buffer().update_mode(),
+                    graphics_device::BufferUpdateMode::Dynamic
+                ),
+                SceneBinding::SampledTexture(_, _) => false,
+            };
+            if is_dynamic {
+                dynamic_bindings.add(1, i as u32);
+            }
+        }
+
+        Ok(Self {
+            scene, drawer, render_view, binding_group, bind_textures, dynamic_bindings,
+        })
     }
 }
 
@@ -98,6 +133,7 @@ impl PassAction for ScenePassAction {
         if let Some(ref view) = *view {
             drawer.draw(
                 &mut scene, view, cmd, pass_info, &self.binding_group, self.bind_textures,
+                &self.dynamic_bindings,
                 graphics_device,
             )?;
         }

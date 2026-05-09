@@ -27,10 +27,10 @@ use crate::engine_err;
 use crate::error::Result;
 use crate::graphics_device::{
     self, BindingGroup, BindingGroupLayoutDesc, BindingResource, BindingSlotDesc, BindingType,
-    BlendFactor, BlendOp, Buffer, BufferDesc, BufferFormat, BufferUsage, ColorBlendState,
-    ColorWriteMask, CommandList, CullMode, DynamicRenderState, IndexType, MultisampleState,
-    PolygonMode, PrimitiveTopology, RasterizationState, ShaderStageFlags, VertexAttribute,
-    VertexBinding, VertexInputRate, VertexLayout,
+    BlendFactor, BlendOp, Buffer, BufferDesc, BufferFormat, BufferUpdateMode, BufferUsage,
+    ColorBlendState, ColorWriteMask, CommandList, CullMode, DynamicRenderState, IndexType,
+    MultisampleState, PolygonMode, PrimitiveTopology, RasterizationState, ShaderStageFlags,
+    VertexAttribute, VertexBinding, VertexInputRate, VertexLayout,
 };
 use crate::resource::pipeline::PipelineDesc;
 use crate::resource::resource_manager::{PassInfo, PipelineKey, ShaderKey};
@@ -188,6 +188,13 @@ pub struct DebugPassAction {
     fragment_shader: ShaderKey,
     binding_group: Arc<dyn BindingGroup>,
     bind_textures: bool,
+    /// Pre-computed dynamic-bindings mask for set 1, derived from the
+    /// `SceneBinding` list at `new()` (any binding referencing a
+    /// `BufferUpdateMode::Dynamic` buffer becomes dynamic). Reused for every
+    /// pipeline this action lazily creates so the pipeline layout matches
+    /// the dynamic-offset descriptor sets built by `ScenePassAction`-style
+    /// binding groups.
+    dynamic_bindings: graphics_device::DynamicBindings,
     /// Lazily-populated cache of pipelines keyed by (vs, fs, mode).
     pipeline_cache: FxHashMap<DebugPipelineCacheKey, PipelineKey>,
 }
@@ -216,6 +223,9 @@ impl DebugPassAction {
         bind_textures: bool,
         graphics_device: &mut dyn graphics_device::GraphicsDevice,
     ) -> Result<Self> {
+        // Layout: for UBO/SSBO we auto-detect the dynamic variant from the
+        // buffer's `update_mode()` so a Dynamic buffer wires correctly without
+        // any extra plumbing on the caller side.
         let layout = BindingGroupLayoutDesc {
             entries: bindings
                 .iter()
@@ -223,8 +233,14 @@ impl DebugPassAction {
                 .map(|(i, b)| BindingSlotDesc {
                     binding: i as u32,
                     binding_type: match b {
-                        SceneBinding::UniformBuffer(_) => BindingType::UniformBuffer,
-                        SceneBinding::StorageBuffer(_) => BindingType::StorageBuffer,
+                        SceneBinding::UniformBuffer(buf) => match buf.graphics_device_buffer().update_mode() {
+                            graphics_device::BufferUpdateMode::Static => BindingType::UniformBuffer,
+                            graphics_device::BufferUpdateMode::Dynamic => BindingType::UniformBufferDynamic,
+                        },
+                        SceneBinding::StorageBuffer(buf) => match buf.graphics_device_buffer().update_mode() {
+                            graphics_device::BufferUpdateMode::Static => BindingType::StorageBuffer,
+                            graphics_device::BufferUpdateMode::Dynamic => BindingType::StorageBufferDynamic,
+                        },
                         SceneBinding::SampledTexture(_, _) => BindingType::CombinedImageSampler,
                     },
                     count: 1,
@@ -237,10 +253,10 @@ impl DebugPassAction {
             .iter()
             .map(|b| match b {
                 SceneBinding::UniformBuffer(buf) => {
-                    BindingResource::UniformBuffer(buf.graphics_device_buffer().as_ref())
+                    BindingResource::UniformBuffer(buf.graphics_device_buffer())
                 }
                 SceneBinding::StorageBuffer(buf) => {
-                    BindingResource::StorageBuffer(buf.graphics_device_buffer().as_ref())
+                    BindingResource::StorageBuffer(buf.graphics_device_buffer())
                 }
                 SceneBinding::SampledTexture(tex, sampler_type) => {
                     BindingResource::SampledTexture(
@@ -261,6 +277,7 @@ impl DebugPassAction {
         let cube_vertex_buffer = graphics_device.create_buffer(BufferDesc {
             size: CUBE_VERTEX_BUFFER_SIZE,
             usage: BufferUsage::Vertex,
+            update_mode: BufferUpdateMode::Static,
         })?;
         cube_vertex_buffer.update(0, bytemuck::cast_slice(&CUBE_VERTICES))?;
 
@@ -268,8 +285,27 @@ impl DebugPassAction {
         let cube_index_buffer = graphics_device.create_buffer(BufferDesc {
             size: CUBE_INDEX_BUFFER_SIZE,
             usage: BufferUsage::Index,
+            update_mode: BufferUpdateMode::Static,
         })?;
         cube_index_buffer.update(0, bytemuck::cast_slice(&CUBE_INDICES))?;
+
+        // Pre-compute the dynamic-bindings mask for set 1 from the scene
+        // bindings: any (set=1, binding=i) referencing a Dynamic buffer is
+        // marked dynamic so pipelines created on the fly later get a layout
+        // with `*_BUFFER_DYNAMIC` for those slots.
+        let mut dynamic_bindings = graphics_device::DynamicBindings::new();
+        for (i, b) in bindings.iter().enumerate() {
+            let is_dynamic = match b {
+                SceneBinding::UniformBuffer(buf) | SceneBinding::StorageBuffer(buf) => matches!(
+                    buf.graphics_device_buffer().update_mode(),
+                    graphics_device::BufferUpdateMode::Dynamic
+                ),
+                SceneBinding::SampledTexture(_, _) => false,
+            };
+            if is_dynamic {
+                dynamic_bindings.add(1, i as u32);
+            }
+        }
 
         Ok(Self {
             scene,
@@ -281,6 +317,7 @@ impl DebugPassAction {
             fragment_shader,
             binding_group,
             bind_textures,
+            dynamic_bindings,
             pipeline_cache: FxHashMap::default(),
         })
     }
@@ -437,6 +474,7 @@ impl PassAction for DebugPassAction {
                     },
                     color_formats: pass_info.color_formats.clone(),
                     depth_format: pass_info.depth_format,
+                    dynamic_bindings: self.dynamic_bindings,
                 };
 
                 let new_key = rm.create_pipeline(pipeline_name, desc, graphics_device)?;
@@ -551,6 +589,7 @@ impl PassAction for DebugPassAction {
                     },
                     color_formats: pass_info.color_formats.clone(),
                     depth_format: pass_info.depth_format,
+                    dynamic_bindings: self.dynamic_bindings,
                 };
 
                 let new_key = rm.create_pipeline(pipeline_name, desc, graphics_device)?;

@@ -10,10 +10,10 @@ use galaxy_3d_engine::galaxy3d::render::{
     Framebuffer as RendererFramebuffer, FramebufferDesc, FramebufferAttachment,
     RenderPassDesc,
     TextureDesc, TextureData, TextureInfo, TextureType, BufferDesc, ShaderDesc, PipelineDesc,
-    BindingResource, BindingType, BindingGroupLayoutDesc, ShaderStageFlags,
+    BindingResource, BindingType, BindingGroupLayoutDesc, DynamicBindings, ShaderStageFlags,
     ReflectedBinding, ReflectedPushConstant, ReflectedMember, ReflectedMemberType,
     ScalarKind, PipelineReflection,
-    TextureFormat, BufferFormat, ShaderStage, BufferUsage, PrimitiveTopology,
+    TextureFormat, BufferFormat, ShaderStage, BufferUpdateMode, BufferUsage, PrimitiveTopology,
     ImageLayout,
     GraphicsDeviceStats, VertexInputRate,
     Config, BindlessConfig, TextureUsage, SamplerType,
@@ -26,7 +26,7 @@ use galaxy_3d_engine::galaxy3d::render::DebugSeverity;
 use galaxy_3d_engine::galaxy3d::utils::SlotAllocator;
 use ash::vk;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::ffi::CString;
 use std::mem::ManuallyDrop;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
@@ -316,10 +316,11 @@ pub struct VulkanGraphicsDevice {
     allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
 
     /// Fences for submit synchronization (one per frame in flight).
-    /// Indexed by `current_submit_fence`, which advances modulo
-    /// `FRAMES_IN_FLIGHT` after each successful submit.
+    /// Indexed by `gpu_context.current_submit_fence`, which advances modulo
+    /// `FRAMES_IN_FLIGHT` after each successful submit. The cursor lives in
+    /// `GpuContext` so resources (Buffer, BindingGroup, CommandList) can read
+    /// the current slot via their shared `Arc<GpuContext>`.
     submit_fences: Vec<vk::Fence>,
-    current_submit_fence: AtomicUsize,
 
     /// Descriptor pools for binding group allocation (grows dynamically when exhausted)
     descriptor_pools: Mutex<Vec<vk::DescriptorPool>>,
@@ -352,7 +353,7 @@ impl VulkanGraphicsDevice {
         wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
         signal: &[(vk::Semaphore, vk::PipelineStageFlags2)],
     ) -> Result<()> {
-        let idx = self.current_submit_fence.load(Ordering::Relaxed);
+        let idx = self.gpu_context.current_submit_fence.load(Ordering::Relaxed);
         let fence = self.submit_fences[idx];
 
         unsafe {
@@ -382,7 +383,7 @@ impl VulkanGraphicsDevice {
 
         // Advance only after a successful submit. On failure the same slot
         // is retried on the next call (the fence stays unsignaled).
-        self.current_submit_fence
+        self.gpu_context.current_submit_fence
             .store((idx + 1) % FRAMES_IN_FLIGHT, Ordering::Relaxed);
 
         Ok(())
@@ -856,6 +857,23 @@ impl VulkanGraphicsDevice {
                     Error::InitializationFailed(format!("Failed to create upload command pool: {:?}", e))
                 })?;
 
+            // Compute the unified alignment for dynamic buffer slots.
+            // Max of: minUniformBufferOffsetAlignment, minStorageBufferOffsetAlignment,
+            // 16 bytes (vec4 attribute alignment for VBs), 4 bytes (UINT32 index for IBs).
+            // In practice min_uniform_buffer_offset_alignment dominates (64-256 bytes).
+            let device_props = instance.get_physical_device_properties(physical_device);
+            let limits = &device_props.limits;
+            let dynamic_buffer_alignment: u64 = [
+                limits.min_uniform_buffer_offset_alignment,
+                limits.min_storage_buffer_offset_alignment,
+                16,
+                4,
+            ]
+            .iter()
+            .copied()
+            .max()
+            .unwrap();
+
             // Create shared GPU context for all resources
             // GpuContext owns device, instance, and debug messenger destruction
             let allocator_arc = Arc::new(Mutex::new(allocator));
@@ -865,6 +883,7 @@ impl VulkanGraphicsDevice {
                 graphics_queue,
                 graphics_family_index,
                 upload_command_pool,
+                dynamic_buffer_alignment,
                 instance.clone(),
                 #[cfg(feature = "vulkan-validation")]
                 debug_utils_loader,
@@ -886,7 +905,6 @@ impl VulkanGraphicsDevice {
                 present_queue_family: present_family_index,
                 allocator: ManuallyDrop::new(allocator_arc),
                 submit_fences,
-                current_submit_fence: AtomicUsize::new(0),
                 descriptor_pools: Mutex::new(vec![descriptor_pool]),
                 sampler_cache: Mutex::new(sampler_cache),
                 gpu_context,
@@ -1258,9 +1276,14 @@ impl VulkanGraphicsDevice {
     /// Set 0 is reserved for the bindless descriptor set (managed by BindlessState).
     /// This function only builds layouts for sets 1+. Bindings declared at set 0
     /// in the shader are skipped (they use the bindless layout).
+    ///
+    /// `dynamic_bindings` upgrades the descriptor type from `*_BUFFER` to
+    /// `*_BUFFER_DYNAMIC` for the listed `(set, binding)` pairs, so the
+    /// pipeline layout matches a `BindingGroup` built with dynamic offsets.
     fn build_descriptor_set_layouts(
         &self,
         merged_bindings: &[ReflectedBinding],
+        dynamic_bindings: &DynamicBindings,
     ) -> Result<Vec<vk::DescriptorSetLayout>> {
         // Only consider bindings for sets 1+ (set 0 = bindless, handled separately)
         let non_bindless_bindings: Vec<&ReflectedBinding> = merged_bindings.iter()
@@ -1274,9 +1297,21 @@ impl VulkanGraphicsDevice {
             let bindings_for_set: Vec<vk::DescriptorSetLayoutBinding> = non_bindless_bindings.iter()
                 .filter(|b| b.set == set_index)
                 .map(|b| {
+                    // Upgrade UniformBuffer/StorageBuffer to *_DYNAMIC if the
+                    // (set, binding) pair is listed in dynamic_bindings. The
+                    // SPIR-V reflection cannot distinguish the two on its own.
+                    let binding_type = if dynamic_bindings.contains(b.set, b.binding) {
+                        match b.binding_type {
+                            BindingType::UniformBuffer => BindingType::UniformBufferDynamic,
+                            BindingType::StorageBuffer => BindingType::StorageBufferDynamic,
+                            other => other, // textures etc. never become dynamic
+                        }
+                    } else {
+                        b.binding_type
+                    };
                     vk::DescriptorSetLayoutBinding::default()
                         .binding(b.binding)
-                        .descriptor_type(Self::binding_type_to_vk(b.binding_type))
+                        .descriptor_type(Self::binding_type_to_vk(binding_type))
                         .descriptor_count(1)
                         .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 })
@@ -1462,8 +1497,10 @@ impl VulkanGraphicsDevice {
     fn binding_type_to_vk(binding_type: BindingType) -> vk::DescriptorType {
         match binding_type {
             BindingType::UniformBuffer => vk::DescriptorType::UNIFORM_BUFFER,
+            BindingType::UniformBufferDynamic => vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
             BindingType::CombinedImageSampler => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             BindingType::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
+            BindingType::StorageBufferDynamic => vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
         }
     }
 
@@ -1482,6 +1519,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
     fn create_command_list(&self) -> Result<Box<dyn RendererCommandList>> {
         let cmd_list = CommandList::new(
             self.device.clone(),
+            Arc::clone(&self.gpu_context),
             self.graphics_queue_family,
             self.bindless_state.descriptor_set,
         )?;
@@ -1589,6 +1627,27 @@ impl GraphicsDevice for VulkanGraphicsDevice {
 
             let descriptor_set = descriptor_sets[0];
 
+            // create_binding_group derives the descriptor types from SPIR-V
+            // reflection, which only knows static UBO/SSBO. Buffers in Dynamic
+            // mode therefore can't be bound here — use create_binding_group_from_layout
+            // with an explicit `*BufferDynamic` BindingType instead.
+            #[cfg(debug_assertions)]
+            for resource in resources.iter() {
+                let buf_to_check: Option<&crate::vulkan_buffer::Buffer> = match resource {
+                    BindingResource::UniformBuffer(buffer) => Some(&*(Arc::as_ref(*buffer) as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer)),
+                    BindingResource::StorageBuffer(buffer) => Some(&*(Arc::as_ref(*buffer) as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer)),
+                    _ => None,
+                };
+                if let Some(b) = buf_to_check {
+                    debug_assert!(
+                        matches!(b.update_mode, BufferUpdateMode::Static),
+                        "create_binding_group: cannot bind a Dynamic buffer here \
+                         (the descriptor layout from pipeline reflection is static-only). \
+                         Use create_binding_group_from_layout with *BufferDynamic instead."
+                    );
+                }
+            }
+
             // Write resources into descriptor set
             // We need to keep buffer_infos and image_infos alive for the duration of the write
             let mut buffer_infos: Vec<vk::DescriptorBufferInfo> = Vec::new();
@@ -1598,7 +1657,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             for (binding_index, resource) in resources.iter().enumerate() {
                 match resource {
                     BindingResource::UniformBuffer(buffer) => {
-                        let vk_buffer = *buffer as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = Arc::as_ref(*buffer) as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
                         let vk_buffer = &*vk_buffer;
 
                         buffer_infos.push(
@@ -1621,7 +1680,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                         );
                     }
                     BindingResource::StorageBuffer(buffer) => {
-                        let vk_buffer = *buffer as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = Arc::as_ref(*buffer) as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
                         let vk_buffer = &*vk_buffer;
 
                         buffer_infos.push(
@@ -1683,6 +1742,8 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             Ok(Arc::new(BindingGroup {
                 descriptor_set,
                 set_index,
+                dynamic_slot_sizes: Vec::new(),
+                dynamic_buffers: Vec::new(),
             }))
         }
     }
@@ -1743,20 +1804,42 @@ impl GraphicsDevice for VulkanGraphicsDevice {
 
             let descriptor_set = descriptor_sets[0];
 
+            // Sanity-check layout / resources arity before walking the writes.
+            if layout.entries.len() != resources.len() {
+                self.device.destroy_descriptor_set_layout(ds_layout, None);
+                engine_bail!("galaxy3d::vulkan",
+                    "create_binding_group_from_layout: layout has {} bindings but {} resources were provided",
+                    layout.entries.len(), resources.len());
+            }
+
             // Write resources into descriptor set (same logic as create_binding_group)
             let mut buffer_infos: Vec<vk::DescriptorBufferInfo> = Vec::new();
             let mut image_infos: Vec<vk::DescriptorImageInfo> = Vec::new();
+            // Per-binding slot stride for every Dynamic UBO/SSBO, in binding order.
+            // The CommandList multiplies this by the current frame slot to produce
+            // pDynamicOffsets when binding.
+            let mut dynamic_slot_sizes: Vec<u64> = Vec::new();
+            // Strong references to every Dynamic buffer in this set, in binding
+            // order matching `dynamic_slot_sizes`. The CommandList walks this
+            // list at bind time to call `ensure_slot_synced()` before the GPU
+            // reads the descriptor.
+            let mut dynamic_buffers: Vec<Arc<dyn RendererBuffer>> = Vec::new();
 
             for resource in resources.iter() {
                 match resource {
                     BindingResource::UniformBuffer(buffer) => {
-                        let vk_buffer = *buffer as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = Arc::as_ref(*buffer) as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
                         let vk_buffer = &*vk_buffer;
                         buffer_infos.push(
                             vk::DescriptorBufferInfo::default()
                                 .buffer(vk_buffer.buffer)
                                 .offset(0)
-                                .range(vk::WHOLE_SIZE)
+                                // For dynamic descriptors, range must NOT be WHOLE_SIZE
+                                // (Vulkan would interpret it relative to the dynamic offset
+                                // and validation layers reject it). Use slot_size, which
+                                // equals the user size for Static and the padded slot stride
+                                // for Dynamic.
+                                .range(vk_buffer.slot_size)
                         );
                     }
                     BindingResource::SampledTexture(texture, sampler_type) => {
@@ -1771,13 +1854,13 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                         );
                     }
                     BindingResource::StorageBuffer(buffer) => {
-                        let vk_buffer = *buffer as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = Arc::as_ref(*buffer) as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
                         let vk_buffer = &*vk_buffer;
                         buffer_infos.push(
                             vk::DescriptorBufferInfo::default()
                                 .buffer(vk_buffer.buffer)
                                 .offset(0)
-                                .range(vk::WHOLE_SIZE)
+                                .range(vk_buffer.slot_size)
                         );
                     }
                 }
@@ -1788,14 +1871,37 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             let mut writes: Vec<vk::WriteDescriptorSet> = Vec::new();
 
             for (binding_index, resource) in resources.iter().enumerate() {
+                let entry = &layout.entries[binding_index];
+                let descriptor_type = Self::binding_type_to_vk(entry.binding_type);
+
                 match resource {
-                    BindingResource::UniformBuffer(_) => {
+                    BindingResource::UniformBuffer(buffer) => {
+                        let vk_buffer = Arc::as_ref(*buffer) as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = &*vk_buffer;
+
+                        // Debug-only consistency: layout.binding_type must match
+                        // the buffer's update_mode for buffers (UBO/SSBO).
+                        debug_assert!(
+                            match entry.binding_type {
+                                BindingType::UniformBuffer => matches!(vk_buffer.update_mode, BufferUpdateMode::Static),
+                                BindingType::UniformBufferDynamic => matches!(vk_buffer.update_mode, BufferUpdateMode::Dynamic),
+                                _ => false,
+                            },
+                            "create_binding_group_from_layout: binding {} type {:?} does not match buffer update_mode {:?}",
+                            binding_index, entry.binding_type, vk_buffer.update_mode
+                        );
+
+                        if matches!(entry.binding_type, BindingType::UniformBufferDynamic) {
+                            dynamic_slot_sizes.push(vk_buffer.slot_size);
+                            dynamic_buffers.push(Arc::clone(*buffer));
+                        }
+
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .dst_set(descriptor_set)
-                                .dst_binding(binding_index as u32)
+                                .dst_binding(entry.binding)
                                 .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                                .descriptor_type(descriptor_type)
                                 .buffer_info(std::slice::from_ref(&buffer_infos[buffer_idx]))
                         );
                         buffer_idx += 1;
@@ -1804,20 +1910,38 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .dst_set(descriptor_set)
-                                .dst_binding(binding_index as u32)
+                                .dst_binding(entry.binding)
                                 .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_type(descriptor_type)
                                 .image_info(std::slice::from_ref(&image_infos[image_idx]))
                         );
                         image_idx += 1;
                     }
-                    BindingResource::StorageBuffer(_) => {
+                    BindingResource::StorageBuffer(buffer) => {
+                        let vk_buffer = Arc::as_ref(*buffer) as *const dyn RendererBuffer as *const crate::vulkan_buffer::Buffer;
+                        let vk_buffer = &*vk_buffer;
+
+                        debug_assert!(
+                            match entry.binding_type {
+                                BindingType::StorageBuffer => matches!(vk_buffer.update_mode, BufferUpdateMode::Static),
+                                BindingType::StorageBufferDynamic => matches!(vk_buffer.update_mode, BufferUpdateMode::Dynamic),
+                                _ => false,
+                            },
+                            "create_binding_group_from_layout: binding {} type {:?} does not match buffer update_mode {:?}",
+                            binding_index, entry.binding_type, vk_buffer.update_mode
+                        );
+
+                        if matches!(entry.binding_type, BindingType::StorageBufferDynamic) {
+                            dynamic_slot_sizes.push(vk_buffer.slot_size);
+                            dynamic_buffers.push(Arc::clone(*buffer));
+                        }
+
                         writes.push(
                             vk::WriteDescriptorSet::default()
                                 .dst_set(descriptor_set)
-                                .dst_binding(binding_index as u32)
+                                .dst_binding(entry.binding)
                                 .dst_array_element(0)
-                                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                                .descriptor_type(descriptor_type)
                                 .buffer_info(std::slice::from_ref(&buffer_infos[buffer_idx]))
                         );
                         buffer_idx += 1;
@@ -1833,6 +1957,8 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             Ok(Arc::new(BindingGroup {
                 descriptor_set,
                 set_index,
+                dynamic_slot_sizes,
+                dynamic_buffers,
             }))
         }
     }
@@ -2578,14 +2704,31 @@ impl GraphicsDevice for VulkanGraphicsDevice {
                 BufferUsage::Storage => vk::BufferUsageFlags::STORAGE_BUFFER,
             };
 
+            // Compute the underlying VkBuffer size depending on update_mode.
+            // - Static  : exactly desc.size, no padding.
+            // - Dynamic : FRAMES_IN_FLIGHT × align_up(desc.size, dynamic_alignment).
+            let (slot_size, total_size) = match desc.update_mode {
+                BufferUpdateMode::Static => (desc.size, desc.size),
+                BufferUpdateMode::Dynamic => {
+                    let alignment = self.gpu_context.dynamic_buffer_alignment;
+                    let slot = crate::vulkan_buffer::align_up(desc.size, alignment);
+                    let total = slot.checked_mul(FRAMES_IN_FLIGHT as u64)
+                        .ok_or_else(|| engine_err!("galaxy3d::vulkan",
+                            "Buffer creation: total size overflow (slot {} × {} frames)",
+                            slot, FRAMES_IN_FLIGHT))?;
+                    (slot, total)
+                }
+            };
+
             // Create buffer
             let buffer_create_info = vk::BufferCreateInfo::default()
-                .size(desc.size)
+                .size(total_size)
                 .usage(usage | vk::BufferUsageFlags::TRANSFER_DST)
                 .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
             let buffer = self.device.create_buffer(&buffer_create_info, None)
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to create buffer of size {} bytes: {:?}", desc.size, e))?;
+                .map_err(|e| engine_err!("galaxy3d::vulkan",
+                    "Failed to create buffer of size {} bytes: {:?}", total_size, e))?;
 
             // Allocate memory
             let requirements = self.device.get_buffer_memory_requirements(buffer);
@@ -2607,12 +2750,22 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             self.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
                 .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to bind buffer memory: {:?}", e))?;
 
-            Ok(Arc::new(Buffer::new(
-                Arc::clone(&self.gpu_context),
-                buffer,
-                allocation,
-                desc.size,
-            )))
+            let result: Arc<dyn RendererBuffer> = match desc.update_mode {
+                BufferUpdateMode::Static => Arc::new(Buffer::new_static(
+                    Arc::clone(&self.gpu_context),
+                    buffer,
+                    allocation,
+                    desc.size,
+                )),
+                BufferUpdateMode::Dynamic => Arc::new(Buffer::new_dynamic(
+                    Arc::clone(&self.gpu_context),
+                    buffer,
+                    allocation,
+                    desc.size,
+                    slot_size,
+                )),
+            };
+            Ok(result)
         }
     }
 
@@ -2835,7 +2988,14 @@ impl GraphicsDevice for VulkanGraphicsDevice {
             )?;
 
             // Build VkDescriptorSetLayouts from merged reflected bindings (sets 1+)
-            let reflected_set_layouts = self.build_descriptor_set_layouts(&merged_bindings)?;
+            // `desc.dynamic_bindings` upgrades selected `(set, binding)` pairs from
+            // the static UBO/SSBO inferred by SPIR-V reflection to `*_DYNAMIC`,
+            // so the pipeline layout matches the dynamic-offset descriptor sets
+            // built by `create_binding_group_from_layout` for Dynamic buffers.
+            let reflected_set_layouts = self.build_descriptor_set_layouts(
+                &merged_bindings,
+                &desc.dynamic_bindings,
+            )?;
 
             // Inject the bindless layout at set 0 whenever the pipeline has at
             // least one descriptor set so the SPIR-V `set N` decorations always
@@ -2981,7 +3141,7 @@ impl GraphicsDevice for VulkanGraphicsDevice {
     }
 
     fn wait_for_previous_submit(&self) -> Result<()> {
-        let idx = self.current_submit_fence.load(Ordering::Relaxed);
+        let idx = self.gpu_context.current_submit_fence.load(Ordering::Relaxed);
         unsafe {
             self.device
                 .wait_for_fences(

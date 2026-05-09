@@ -7,7 +7,7 @@ use crate::graphics_device::mock_graphics_device::*;
 use crate::graphics_device::{
     GraphicsDevice, Buffer, Texture, Pipeline, CommandList,
     RenderPass, Swapchain, BindingGroup, Framebuffer, FramebufferAttachment,
-    BufferDesc, BufferUsage, TextureDesc, TextureFormat,
+    BufferDesc, BufferUpdateMode, BufferUsage, DynamicBindings, TextureDesc, TextureFormat,
     TextureUsage, MipmapMode, ShaderDesc, ShaderStage, PipelineDesc,
     RenderPassDesc, FramebufferDesc,
     Viewport, Rect2D, ClearValue,
@@ -357,6 +357,7 @@ fn test_mock_graphics_device_create_buffer() {
     let desc = BufferDesc {
         size: 1024,
         usage: BufferUsage::Vertex,
+        update_mode: BufferUpdateMode::Static,
     };
 
     let _buffer = graphics_device.create_buffer(desc).unwrap();
@@ -442,6 +443,7 @@ fn test_mock_graphics_device_create_pipeline() {
         multisample: Default::default(),
         color_formats: vec![],
         depth_format: None,
+        dynamic_bindings: DynamicBindings::new(),
     };
 
     let _pipeline = graphics_device.create_pipeline(desc, &vertex_shader, &fragment_shader).unwrap();
@@ -641,6 +643,7 @@ fn test_mock_graphics_device_multiple_resources() {
         let buffer_desc = BufferDesc {
             size: 1024 * (i + 1) as u64,
             usage: BufferUsage::Vertex,
+            update_mode: BufferUpdateMode::Static,
         };
         graphics_device.create_buffer(buffer_desc).unwrap();
 
@@ -673,6 +676,7 @@ fn test_mock_graphics_device_tracking_persistence() {
         let desc = BufferDesc {
             size: 2048,
             usage: BufferUsage::Index,
+            update_mode: BufferUpdateMode::Static,
         };
         r.create_buffer(desc).unwrap();
     }

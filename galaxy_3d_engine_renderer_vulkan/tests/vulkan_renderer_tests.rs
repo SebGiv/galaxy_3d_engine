@@ -8,7 +8,7 @@
 use galaxy_3d_engine::galaxy3d::GraphicsDevice;
 use galaxy_3d_engine::galaxy3d::render::{
     TextureDesc, TextureFormat, TextureUsage, TextureType, MipmapMode, TextureData, SampleCount,
-    BufferDesc, BufferUsage, ShaderDesc, ShaderStage,
+    BufferDesc, BufferUpdateMode, BufferUsage, ShaderDesc, ShaderStage,
     Config,
 };
 use galaxy_3d_engine_renderer_vulkan::galaxy3d::VulkanGraphicsDevice;
@@ -147,6 +147,7 @@ fn test_vulkan_create_vertex_buffer() {
     let desc = BufferDesc {
         size: 1024,
         usage: BufferUsage::Vertex,
+        update_mode: BufferUpdateMode::Static,
     };
 
     let buffer = graphics_device.create_buffer(desc).unwrap();
@@ -165,6 +166,7 @@ fn test_vulkan_create_index_buffer() {
     let desc = BufferDesc {
         size: 512,
         usage: BufferUsage::Index,
+        update_mode: BufferUpdateMode::Static,
     };
 
     let buffer = graphics_device.create_buffer(desc).unwrap();
@@ -187,6 +189,7 @@ fn test_vulkan_create_uniform_buffer() {
     let desc = BufferDesc {
         size: 256,
         usage: BufferUsage::Uniform,
+        update_mode: BufferUpdateMode::Static,
     };
 
     let buffer = graphics_device.create_buffer(desc).unwrap();

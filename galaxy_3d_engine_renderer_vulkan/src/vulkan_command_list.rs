@@ -47,6 +47,9 @@ const SCRATCH_CAPACITY: usize = 8;
 pub struct CommandList {
     /// Vulkan device
     device: Arc<ash::Device>,
+    /// Shared GPU context, used to look up the current frame-in-flight slot
+    /// at bind time (for Dynamic buffers and dynamic descriptor offsets).
+    ctx: Arc<crate::vulkan_context::GpuContext>,
     /// Command pool for allocating command buffers
     command_pool: vk::CommandPool,
     /// Command buffer for recording
@@ -71,6 +74,9 @@ pub struct CommandList {
     /// per-color-attachment `VkRenderingAttachmentInfo`. Same policy as
     /// `barriers_scratch`.
     color_infos_scratch: Vec<vk::RenderingAttachmentInfo<'static>>,
+    /// Scratch buffer reused on every `bind_binding_group` to compute
+    /// dynamic offsets. Empty for binding groups without any dynamic binding.
+    dynamic_offsets_scratch: Vec<u32>,
 }
 
 impl CommandList {
@@ -79,9 +85,12 @@ impl CommandList {
     /// # Arguments
     ///
     /// * `device` - Vulkan logical device
+    /// * `ctx` - Shared GPU context (provides the current frame-in-flight slot)
     /// * `graphics_queue_family` - Graphics queue family index
+    /// * `bindless_descriptor_set` - Bindless texture/sampler set bound on every pipeline bind
     pub fn new(
         device: Arc<ash::Device>,
+        ctx: Arc<crate::vulkan_context::GpuContext>,
         graphics_queue_family: u32,
         bindless_descriptor_set: vk::DescriptorSet,
     ) -> Result<Self> {
@@ -105,6 +114,7 @@ impl CommandList {
 
             Ok(Self {
                 device,
+                ctx,
                 command_pool,
                 command_buffer: command_buffers[0],
                 is_recording: false,
@@ -114,6 +124,7 @@ impl CommandList {
                 barriers_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
                 buffer_barriers_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
                 color_infos_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
+                dynamic_offsets_scratch: Vec::with_capacity(SCRATCH_CAPACITY),
             })
         }
     }
@@ -667,11 +678,20 @@ impl RendererCommandList for CommandList {
             let vk_buffer = buffer.as_ref() as *const dyn RendererBuffer as *const Buffer;
             let vk_buffer = &*vk_buffer;
 
+            // Ensure the slot for the current frame-in-flight is synchronised
+            // from the CPU master before the GPU reads it. No-op for Static
+            // buffers and for Dynamic slots already synced this frame.
+            vk_buffer.ensure_slot_synced();
+
+            // For Dynamic buffers, prepend the current frame slot's base offset
+            // (slot * slot_size). Static buffers return 0.
+            let total_offset = vk_buffer.current_slot_offset() + offset;
+
             self.device.cmd_bind_vertex_buffers(
                 self.command_buffer,
                 0,
                 &[vk_buffer.buffer],
-                &[offset],
+                &[total_offset],
             );
 
             Ok(())
@@ -688,16 +708,23 @@ impl RendererCommandList for CommandList {
             let vk_buffer = buffer.as_ref() as *const dyn RendererBuffer as *const Buffer;
             let vk_buffer = &*vk_buffer;
 
+            // Ensure the slot for the current frame-in-flight is synchronised
+            // from the CPU master before the GPU reads it. No-op for Static.
+            vk_buffer.ensure_slot_synced();
+
             // Convert engine IndexType to Vulkan IndexType
             let vk_index_type = match index_type {
                 IndexType::U16 => vk::IndexType::UINT16,
                 IndexType::U32 => vk::IndexType::UINT32,
             };
 
+            // Same as VB: prepend the slot offset for Dynamic buffers.
+            let total_offset = vk_buffer.current_slot_offset() + offset;
+
             self.device.cmd_bind_index_buffer(
                 self.command_buffer,
                 vk_buffer.buffer,
-                offset,
+                total_offset,
                 vk_index_type,
             );
 
@@ -766,9 +793,34 @@ impl RendererCommandList for CommandList {
             let vk_pipeline = &*vk_pipeline;
             let pipeline_layout = vk_pipeline.pipeline_layout;
 
-            // Downcast binding group to extract descriptor set
+            // Downcast binding group to extract descriptor set + dynamic strides
             let vk_bg = binding_group.as_ref() as *const dyn RendererBindingGroup as *const BindingGroup;
             let vk_bg = &*vk_bg;
+
+            // Ensure every Dynamic buffer in this set has its current-frame slot
+            // synchronised with its CPU master before the GPU reads from it.
+            // No-op for slots that were already synced this frame.
+            for arc_buf in &vk_bg.dynamic_buffers {
+                let raw = arc_buf.as_ref() as *const dyn RendererBuffer
+                    as *const Buffer;
+                (*raw).ensure_slot_synced();
+            }
+
+            // Build dynamic offsets for this frame's slot (zero-alloc: scratch reused).
+            self.dynamic_offsets_scratch.clear();
+            if !vk_bg.dynamic_slot_sizes.is_empty() {
+                let slot = self.ctx.current_submit_fence
+                    .load(std::sync::atomic::Ordering::Relaxed) as u64;
+                self.dynamic_offsets_scratch.reserve(vk_bg.dynamic_slot_sizes.len());
+                for &slot_size in &vk_bg.dynamic_slot_sizes {
+                    let offset = slot * slot_size;
+                    if offset > u32::MAX as u64 {
+                        engine_bail!("galaxy3d::vulkan",
+                            "bind_binding_group: dynamic offset {} overflows u32", offset);
+                    }
+                    self.dynamic_offsets_scratch.push(offset as u32);
+                }
+            }
 
             // Bind single descriptor set at the given set index
             self.device.cmd_bind_descriptor_sets(
@@ -777,7 +829,7 @@ impl RendererCommandList for CommandList {
                 pipeline_layout,
                 set_index,
                 &[vk_bg.descriptor_set],
-                &[], // dynamic_offsets
+                &self.dynamic_offsets_scratch,
             );
 
             Ok(())
