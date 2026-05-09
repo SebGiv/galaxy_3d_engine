@@ -11,6 +11,7 @@ use galaxy_3d_engine::{engine_error, engine_err, engine_bail};
 use ash::vk;
 use std::sync::Arc;
 
+use crate::vulkan::FRAMES_IN_FLIGHT;
 use crate::vulkan_command_list::CommandList as VulkanCommandList;
 use crate::vulkan_texture::Texture as VulkanTexture;
 
@@ -162,12 +163,10 @@ impl Swapchain {
             let image_count = swapchain_images.len();
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
-            const MAX_FRAMES_IN_FLIGHT: usize = 2;
-
-            let mut image_available_semaphores = Vec::with_capacity(MAX_FRAMES_IN_FLIGHT);
+            let mut image_available_semaphores = Vec::with_capacity(FRAMES_IN_FLIGHT);
             let mut render_finished_semaphores = Vec::with_capacity(image_count);
 
-            for _ in 0..MAX_FRAMES_IN_FLIGHT {
+            for _ in 0..FRAMES_IN_FLIGHT {
                 image_available_semaphores.push(
                     device.create_semaphore(&semaphore_create_info, None)
                         .map_err(|e| {
@@ -202,7 +201,7 @@ impl Swapchain {
                 image_available_semaphores,
                 render_finished_semaphores,
                 current_frame: 0,
-                max_frames_in_flight: MAX_FRAMES_IN_FLIGHT,
+                max_frames_in_flight: FRAMES_IN_FLIGHT,
             })
         }
     }

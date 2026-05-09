@@ -3273,7 +3273,11 @@ Flow per frame:
      `COLOR_ATTACHMENT_OUTPUT` stage.
    - Signal semaphore: `render_finished_semaphores[image_index]` at
      `COLOR_ATTACHMENT_OUTPUT` stage (so present waits for color writes to finish).
-   - Signal fence: `submit_fences[current_frame]` (for `wait_for_previous_submit`).
+   - Signal fence: `submit_fences[current_submit_fence]` (for `wait_for_previous_submit`).
+     Note: `current_submit_fence` lives on the device and advances after each
+     submit; it is distinct from the swapchain's `current_frame` (which advances
+     after each present). Both happen to stay equal under the standard
+     1-submit-per-1-present flow but they are independent counters.
 4. **`swapchain.present(image_index)`** —
    `vkQueuePresentKHR(present_queue, &VkPresentInfoKHR { wait_semaphores:
    [render_finished_semaphores[image_index]], swapchains: [self.swapchain],
@@ -3298,13 +3302,31 @@ The backend uses Vulkan 1.3 sync primitives only. Per-frame state is laid out as
 
 | Primitive | Count | Resets when |
 |---|---|---|
-| `submit_fence[i]` (per frame in flight) | `frames_in_flight` | `wait_for_previous_submit` |
-| `image_available_semaphore[i]` | `max_frames_in_flight` | reused on `acquire_next_image` |
+| `submit_fence[i]` (per frame in flight) | `FRAMES_IN_FLIGHT` | start of `submit_inner` (next reuse of the slot) |
+| `image_available_semaphore[i]` | `FRAMES_IN_FLIGHT` | reused on `acquire_next_image` |
 | `render_finished_semaphore[image_index]` | `image_count` | reused on present |
 
-`wait_for_previous_submit` is just a `vkWaitForFences` + `vkResetFences` of the current
-frame's submit fence. The engine calls it once per frame at the start, before any GPU
-buffer write, to ensure the previous frame's GPU work has completed.
+`FRAMES_IN_FLIGHT` is the single source of truth for the CPU/GPU pipelining depth.
+It is defined in `vulkan.rs` and shared with the swapchain to keep the device's
+fence ring and the swapchain's `image_available_semaphores` in lockstep. It is
+independent from the swapchain image count: the swapchain may expose 3+ images for
+triple-buffered presentation while `FRAMES_IN_FLIGHT` stays at 2 to keep
+input-to-display latency minimal.
+
+`wait_for_previous_submit` is a `vkWaitForFences` of the current submit fence
+(no reset — the reset happens inside `submit_inner` just before the next submit
+on the same slot). The engine calls it once per frame at the start, before any
+GPU buffer write, to ensure the previous frame's GPU work on that slot has
+completed.
+
+`submit_inner` is the single private helper that owns the fence ring lifecycle.
+All public submit paths (`submit`, `submit_with_swapchain`, `submit_with_sync`)
+funnel through it. Per call it (1) loads `current_submit_fence`, (2) waits on
+the corresponding fence, (3) resets it, (4) issues `vkQueueSubmit2`, and (5)
+advances `current_submit_fence` modulo `FRAMES_IN_FLIGHT`. Centralizing this
+flow makes it impossible for a submit path to forget to advance the cursor.
+`current_submit_fence` uses `AtomicUsize` for interior mutability so the public
+submit methods keep their `&self` signatures.
 
 `submit_command_buffers` (in `vulkan_sync.rs`) emits a single `vkQueueSubmit2` with
 stack-allocated arrays:

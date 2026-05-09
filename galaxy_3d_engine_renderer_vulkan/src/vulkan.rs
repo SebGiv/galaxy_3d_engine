@@ -26,6 +26,7 @@ use galaxy_3d_engine::galaxy3d::render::DebugSeverity;
 use galaxy_3d_engine::galaxy3d::utils::SlotAllocator;
 use ash::vk;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::ffi::CString;
 use std::mem::ManuallyDrop;
 use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
@@ -43,6 +44,17 @@ use crate::vulkan_swapchain::Swapchain;
 use crate::vulkan_sampler::SamplerCache;
 use crate::vulkan_binding_group::BindingGroup;
 use crate::vulkan_context::GpuContext;
+
+/// Number of frames that can be in-flight simultaneously between CPU and GPU.
+///
+/// Single source of truth for the CPU/GPU pipelining depth. Governs:
+/// - The number of submit fences allocated by `VulkanGraphicsDevice`.
+/// - The number of `image_available` semaphores allocated by `Swapchain`.
+///
+/// Independent from the swapchain image count: the swapchain may expose 3+
+/// images for triple buffering at the presentation level, while frames in
+/// flight stays at 2 to keep input-to-display latency minimal.
+pub(crate) const FRAMES_IN_FLIGHT: usize = 2;
 
 /// Runtime capabilities for optional dynamic states (EXT_extended_dynamic_state3 / EXT_color_write_enable).
 ///
@@ -303,9 +315,11 @@ pub struct VulkanGraphicsDevice {
     /// GPU memory allocator reference (stored in GpuContext)
     allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
 
-    /// Fences for submit synchronization
+    /// Fences for submit synchronization (one per frame in flight).
+    /// Indexed by `current_submit_fence`, which advances modulo
+    /// `FRAMES_IN_FLIGHT` after each successful submit.
     submit_fences: Vec<vk::Fence>,
-    current_submit_fence: usize,
+    current_submit_fence: AtomicUsize,
 
     /// Descriptor pools for binding group allocation (grows dynamically when exhausted)
     descriptor_pools: Mutex<Vec<vk::DescriptorPool>>,
@@ -321,6 +335,59 @@ pub struct VulkanGraphicsDevice {
 }
 
 impl VulkanGraphicsDevice {
+    /// Centralized submit helper.
+    ///
+    /// Single point of contact for `submit_fences` and `current_submit_fence`:
+    /// 1. Read the current in-flight slot.
+    /// 2. Wait on the fence for that slot (ensures the previous submit using
+    ///    the same slot has completed on the GPU).
+    /// 3. Reset the fence.
+    /// 4. Submit the command buffers via `vkQueueSubmit2`.
+    /// 5. Advance the in-flight cursor modulo `FRAMES_IN_FLIGHT`.
+    ///
+    /// All public submit methods delegate here.
+    fn submit_inner(
+        &self,
+        cmd_buffers: &[vk::CommandBuffer],
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        signal: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+    ) -> Result<()> {
+        let idx = self.current_submit_fence.load(Ordering::Relaxed);
+        let fence = self.submit_fences[idx];
+
+        unsafe {
+            self.device
+                .wait_for_fences(&[fence], true, u64::MAX)
+                .map_err(|e| engine_err!(
+                    "galaxy3d::vulkan",
+                    "submit_inner: failed to wait for fence: {:?}", e
+                ))?;
+
+            self.device
+                .reset_fences(&[fence])
+                .map_err(|e| engine_err!(
+                    "galaxy3d::vulkan",
+                    "submit_inner: failed to reset fence: {:?}", e
+                ))?;
+
+            crate::vulkan_sync::submit_command_buffers(
+                &self.device,
+                self.graphics_queue,
+                cmd_buffers,
+                wait,
+                signal,
+                fence,
+            )?;
+        }
+
+        // Advance only after a successful submit. On failure the same slot
+        // is retried on the next call (the fence stays unsignaled).
+        self.current_submit_fence
+            .store((idx + 1) % FRAMES_IN_FLIGHT, Ordering::Relaxed);
+
+        Ok(())
+    }
+
     /// Submit command lists with synchronization for swapchain presentation
     ///
     /// # Arguments
@@ -334,48 +401,26 @@ impl VulkanGraphicsDevice {
         wait_semaphore: vk::Semaphore,
         signal_semaphore: vk::Semaphore,
     ) -> Result<()> {
-        unsafe {
-            // Wait for previous submit with this fence
-            self.device
-                .wait_for_fences(
-                    &[self.submit_fences[self.current_submit_fence]],
-                    true,
-                    u64::MAX,
-                )
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to wait for submit fence: {:?}", e))?;
-
-            // Reset fence
-            self.device
-                .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to reset submit fence: {:?}", e))?;
-
-            // Collect command buffers into a stack-allocated fixed-capacity
-            // array (no heap allocation per submit).
-            const MAX_CMDS: usize = 8;
-            if commands.len() > MAX_CMDS {
-                engine_bail!("galaxy3d::vulkan",
-                    "submit_with_swapchain: too many command buffers ({} > {})",
-                    commands.len(), MAX_CMDS);
-            }
-            let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
-                [vk::CommandBuffer::null(); MAX_CMDS];
-            for (i, cmd) in commands.iter().enumerate() {
-                let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
-                cmd_bufs[i] = (*vk_cmd).command_buffer();
-            }
-
-            // Submit with synchronization (vkQueueSubmit2 via helper).
-            crate::vulkan_sync::submit_command_buffers(
-                &self.device,
-                self.graphics_queue,
-                &cmd_bufs[..commands.len()],
-                &[(wait_semaphore, vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)],
-                &[(signal_semaphore, vk::PipelineStageFlags2::ALL_COMMANDS)],
-                self.submit_fences[self.current_submit_fence],
-            )?;
-
-            Ok(())
+        // Collect command buffers into a stack-allocated fixed-capacity
+        // array (no heap allocation per submit).
+        const MAX_CMDS: usize = 8;
+        if commands.len() > MAX_CMDS {
+            engine_bail!("galaxy3d::vulkan",
+                "submit_with_sync: too many command buffers ({} > {})",
+                commands.len(), MAX_CMDS);
         }
+        let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
+            [vk::CommandBuffer::null(); MAX_CMDS];
+        for (i, cmd) in commands.iter().enumerate() {
+            let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
+            cmd_bufs[i] = unsafe { (*vk_cmd).command_buffer() };
+        }
+
+        self.submit_inner(
+            &cmd_bufs[..commands.len()],
+            &[(wait_semaphore, vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)],
+            &[(signal_semaphore, vk::PipelineStageFlags2::ALL_COMMANDS)],
+        )
     }
 
     /// Create a new Vulkan device
@@ -782,13 +827,12 @@ impl VulkanGraphicsDevice {
                 Error::InitializationFailed(format!("Failed to create allocator: {:?}", e))
             })?;
 
-            // Create submit fences (2 for double buffering)
-            const MAX_SUBMITS_IN_FLIGHT: usize = 2;
+            // Create submit fences (one per frame in flight)
             let fence_create_info = vk::FenceCreateInfo::default()
                 .flags(vk::FenceCreateFlags::SIGNALED);
 
-            let mut submit_fences = Vec::with_capacity(MAX_SUBMITS_IN_FLIGHT);
-            for _ in 0..MAX_SUBMITS_IN_FLIGHT {
+            let mut submit_fences = Vec::with_capacity(FRAMES_IN_FLIGHT);
+            for _ in 0..FRAMES_IN_FLIGHT {
                 submit_fences.push(
                     device.create_fence(&fence_create_info, None)
                         .map_err(|e| {
@@ -842,7 +886,7 @@ impl VulkanGraphicsDevice {
                 present_queue_family: present_family_index,
                 allocator: ManuallyDrop::new(allocator_arc),
                 submit_fences,
-                current_submit_fence: 0,
+                current_submit_fence: AtomicUsize::new(0),
                 descriptor_pools: Mutex::new(vec![descriptor_pool]),
                 sampler_cache: Mutex::new(sampler_cache),
                 gpu_context,
@@ -2875,48 +2919,22 @@ impl GraphicsDevice for VulkanGraphicsDevice {
     }
 
     fn submit(&self, commands: &[&dyn RendererCommandList]) -> Result<()> {
-        unsafe {
-            // Wait for previous submit with this fence
-            self.device
-                .wait_for_fences(
-                    &[self.submit_fences[self.current_submit_fence]],
-                    true,
-                    u64::MAX,
-                )
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "submit: failed to wait for fence: {:?}", e))?;
-
-            // Reset fence
-            self.device
-                .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "submit: failed to reset fence: {:?}", e))?;
-
-            // Collect command buffers into a stack-allocated fixed-capacity
-            // array (no heap allocation per submit).
-            const MAX_CMDS: usize = 8;
-            if commands.len() > MAX_CMDS {
-                engine_bail!("galaxy3d::vulkan",
-                    "submit: too many command buffers ({} > {})",
-                    commands.len(), MAX_CMDS);
-            }
-            let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
-                [vk::CommandBuffer::null(); MAX_CMDS];
-            for (i, cmd) in commands.iter().enumerate() {
-                let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
-                cmd_bufs[i] = (*vk_cmd).command_buffer();
-            }
-
-            // Submit (vkQueueSubmit2 via helper, no semaphores).
-            crate::vulkan_sync::submit_command_buffers(
-                &self.device,
-                self.graphics_queue,
-                &cmd_bufs[..commands.len()],
-                &[],
-                &[],
-                self.submit_fences[self.current_submit_fence],
-            )?;
-
-            Ok(())
+        // Collect command buffers into a stack-allocated fixed-capacity
+        // array (no heap allocation per submit).
+        const MAX_CMDS: usize = 8;
+        if commands.len() > MAX_CMDS {
+            engine_bail!("galaxy3d::vulkan",
+                "submit: too many command buffers ({} > {})",
+                commands.len(), MAX_CMDS);
         }
+        let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
+            [vk::CommandBuffer::null(); MAX_CMDS];
+        for (i, cmd) in commands.iter().enumerate() {
+            let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
+            cmd_bufs[i] = unsafe { (*vk_cmd).command_buffer() };
+        }
+
+        self.submit_inner(&cmd_bufs[..commands.len()], &[], &[])
     }
 
     fn submit_with_swapchain(
@@ -2932,48 +2950,26 @@ impl GraphicsDevice for VulkanGraphicsDevice {
         // Get synchronization primitives from swapchain (now private)
         let (wait_semaphore, signal_semaphore) = vk_swapchain.sync_info(image_index);
 
-        unsafe {
-            // Wait for previous submit with this fence
-            self.device
-                .wait_for_fences(
-                    &[self.submit_fences[self.current_submit_fence]],
-                    true,
-                    u64::MAX,
-                )
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to wait for submit fence (swapchain): {:?}", e))?;
-
-            // Reset fence
-            self.device
-                .reset_fences(&[self.submit_fences[self.current_submit_fence]])
-                .map_err(|e| engine_err!("galaxy3d::vulkan", "Failed to reset submit fence (swapchain): {:?}", e))?;
-
-            // Collect command buffers into a stack-allocated fixed-capacity
-            // array (no heap allocation per submit).
-            const MAX_CMDS: usize = 8;
-            if commands.len() > MAX_CMDS {
-                engine_bail!("galaxy3d::vulkan",
-                    "submit_with_swapchain: too many command buffers ({} > {})",
-                    commands.len(), MAX_CMDS);
-            }
-            let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
-                [vk::CommandBuffer::null(); MAX_CMDS];
-            for (i, cmd) in commands.iter().enumerate() {
-                let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
-                cmd_bufs[i] = (*vk_cmd).command_buffer();
-            }
-
-            // Submit with synchronization (vkQueueSubmit2 via helper).
-            crate::vulkan_sync::submit_command_buffers(
-                &self.device,
-                self.graphics_queue,
-                &cmd_bufs[..commands.len()],
-                &[(wait_semaphore, vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)],
-                &[(signal_semaphore, vk::PipelineStageFlags2::ALL_COMMANDS)],
-                self.submit_fences[self.current_submit_fence],
-            )?;
-
-            Ok(())
+        // Collect command buffers into a stack-allocated fixed-capacity
+        // array (no heap allocation per submit).
+        const MAX_CMDS: usize = 8;
+        if commands.len() > MAX_CMDS {
+            engine_bail!("galaxy3d::vulkan",
+                "submit_with_swapchain: too many command buffers ({} > {})",
+                commands.len(), MAX_CMDS);
         }
+        let mut cmd_bufs: [vk::CommandBuffer; MAX_CMDS] =
+            [vk::CommandBuffer::null(); MAX_CMDS];
+        for (i, cmd) in commands.iter().enumerate() {
+            let vk_cmd = *cmd as *const dyn RendererCommandList as *const CommandList;
+            cmd_bufs[i] = unsafe { (*vk_cmd).command_buffer() };
+        }
+
+        self.submit_inner(
+            &cmd_bufs[..commands.len()],
+            &[(wait_semaphore, vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)],
+            &[(signal_semaphore, vk::PipelineStageFlags2::ALL_COMMANDS)],
+        )
     }
 
     fn wait_idle(&self) -> Result<()> {
@@ -2985,10 +2981,11 @@ impl GraphicsDevice for VulkanGraphicsDevice {
     }
 
     fn wait_for_previous_submit(&self) -> Result<()> {
+        let idx = self.current_submit_fence.load(Ordering::Relaxed);
         unsafe {
             self.device
                 .wait_for_fences(
-                    &[self.submit_fences[self.current_submit_fence]],
+                    &[self.submit_fences[idx]],
                     true,
                     u64::MAX,
                 )
